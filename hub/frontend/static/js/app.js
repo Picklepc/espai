@@ -1523,37 +1523,80 @@ function _abWireEvents() {
     ]);
   };
 
-  document.getElementById("btnAbDoctor").onclick = async () => {
+  const _PORTAL_INSTALLABLE = new Set(["pio", "codex", "claude"]);
+
+  async function _runDoctor() {
     const d = await api.agentBench.doctor().catch(err => ({ error: err.message }));
-    if (d.error) { openModal("Doctor", `<p class="empty-state">${d.error}</p>`, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]); return; }
+    if (d.error) {
+      openModal("Doctor", `<p class="empty-state">${d.error}</p>`,
+        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      return;
+    }
+
     const toolRows = Object.entries(d.tools || {}).map(([name, info]) => {
       const ok = info.found;
-      const hint = !ok && info.install_hint
-        ? `<div class="doctor-hint">Install: <code>${info.install_hint}</code></div>` : "";
+      const canInstall = !ok && _PORTAL_INSTALLABLE.has(name);
+      const installBtn = canInstall
+        ? `<button class="btn btn-secondary btn-sm doctor-install-btn" data-tool="${name}" style="margin-left:auto">Install</button>` : "";
+      const hint = !ok && !canInstall && info.install_hint
+        ? `<div class="doctor-hint"><code>${info.install_hint}</code></div>` : "";
       return `<div class="doctor-row">
         <span class="doctor-icon ${ok ? "ok" : "miss"}">${ok ? "✓" : "✗"}</span>
         <span class="doctor-name">${name}</span>
         <span class="doctor-val">${ok ? (info.version || "found") : '<span style="color:var(--color-danger)">not found</span>'}</span>
+        ${installBtn}
       </div>${hint}`;
     }).join("");
+
     const adapterRows = Object.entries(d.adapters_ready || {}).map(([k, v]) => {
-      // v is now an object {ready, install_hint} from updated backend, or boolean from old
       const ready = (typeof v === "object") ? v.ready : v;
       const hint  = !ready && v?.install_hint
-        ? `<div class="doctor-hint">Install: <code>${v.install_hint}</code></div>` : "";
+        ? `<div class="doctor-hint"><code>${v.install_hint}</code></div>` : "";
       return `<div class="doctor-row">
         <span class="doctor-icon ${ready ? "ok" : "miss"}">${ready ? "✓" : "✗"}</span>
         <span class="doctor-name">${k}</span>
         <span class="doctor-val" style="color:${ready ? "var(--color-success)" : "var(--color-danger)"}">${ready ? "ready" : "not installed"}</span>
       </div>${hint}`;
     }).join("");
+
     openModal("Agent Bench Doctor", `
       <p class="doctor-section-label">Tools</p>
       ${toolRows}
       <p class="doctor-section-label" style="margin-top:16px">Adapters</p>
       ${adapterRows}
     `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
-  };
+
+    // Wire Install buttons (after innerHTML is set by openModal)
+    document.querySelectorAll(".doctor-install-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const tool = btn.dataset.tool;
+        btn.disabled = true;
+        btn.textContent = "Installing…";
+
+        let result;
+        try {
+          result = await api.agentBench.install(tool);
+        } catch (err) {
+          result = { ok: false, output: err.message, now_found: false };
+        }
+
+        const color   = result.ok ? "var(--color-success)" : "var(--color-danger)";
+        const headline = result.ok
+          ? `✓ ${result.display_name || tool} installed — ${result.version || ""}`
+          : `✗ Install failed (exit ${result.exit_code ?? "?"})`;
+
+        openModal(`Install — ${tool}`, `
+          <p style="color:${color};font-weight:700;margin-bottom:12px">${headline}</p>
+          <pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;background:var(--color-card);border:1px solid var(--color-card-border);border-radius:6px;padding:10px;line-height:1.5">${(result.output || "(no output)").replace(/</g,"&lt;")}</pre>
+        `, [
+          { label: "Run Doctor Again", cls: "btn btn-primary", action: () => { closeModal(); _runDoctor(); } },
+          { label: "Close", cls: "btn btn-secondary", action: closeModal },
+        ]);
+      });
+    });
+  }
+
+  document.getElementById("btnAbDoctor").onclick = _runDoctor;
 
   document.getElementById("btnAbSettings").onclick = async () => {
     let cfg = { enabled: true, allow_dev_device_deploy: false, require_human_review: true, allowed_adapters: ["manual"] };

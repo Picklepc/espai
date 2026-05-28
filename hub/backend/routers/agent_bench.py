@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -173,6 +174,40 @@ def _detect_tool(cmd: str, version_flag: str = "--version") -> dict:
         return {"found": True, "path": found_path, "version": version, "install_hint": hint}
     except Exception:
         return {"found": True, "path": found_path, "version": "?", "install_hint": hint}
+
+
+def _find_npm() -> str | None:
+    """Locate npm (or npm.cmd on Windows) using the augmented path."""
+    augmented = os.pathsep.join([os.environ.get("PATH", "")] + _extra_tool_dirs())
+    for name in ("npm.cmd", "npm"):
+        found = shutil.which(name, path=augmented)
+        if found:
+            return found
+    return None
+
+
+# Tools the portal can install on behalf of the user.
+# Each entry: display_name, the command list to run, and which _detect_tool
+# key to re-check afterwards to confirm success.
+_INSTALLABLE: dict[str, dict] = {
+    "pio": {
+        "display_name": "PlatformIO",
+        "cmd_fn": lambda _npm: [sys.executable, "-m", "pip", "install", "platformio", "--user"],
+        "check": "pio",
+    },
+    "codex": {
+        "display_name": "OpenAI Codex CLI",
+        "cmd_fn": lambda npm: [npm, "install", "-g", "@openai/codex"],
+        "needs_npm": True,
+        "check": "codex",
+    },
+    "claude": {
+        "display_name": "Claude Code CLI",
+        "cmd_fn": lambda npm: [npm, "install", "-g", "@anthropic-ai/claude-code"],
+        "needs_npm": True,
+        "check": "claude",
+    },
+}
 
 
 def _snapshot_paths(allowed_paths: list[str]) -> dict[str, str | None]:
@@ -408,6 +443,73 @@ def agent_doctor():
         "tools": tools,
         "adapters_ready": adapters_ready,
         "agent_bench_enabled": _is_enabled(),
+    }
+
+
+# ── Install endpoint ──────────────────────────────────────────────────────────
+
+@router.post("/install/{tool_name}")
+def install_tool(tool_name: str):
+    """
+    Install a supported tool (pio, codex, claude) on behalf of the user.
+    Runs pip or npm in a subprocess and returns combined stdout+stderr.
+    """
+    _require_enabled()
+
+    if tool_name not in _INSTALLABLE:
+        raise HTTPException(
+            400,
+            f"'{tool_name}' cannot be installed from the portal. "
+            f"Supported: {', '.join(_INSTALLABLE)}",
+        )
+
+    meta = _INSTALLABLE[tool_name]
+    npm: str | None = None
+
+    if meta.get("needs_npm"):
+        npm = _find_npm()
+        if not npm:
+            raise HTTPException(
+                400,
+                "npm not found — install Node.js first (https://nodejs.org/) then try again.",
+            )
+
+    cmd = meta["cmd_fn"](npm)
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            cwd=str(ROOT),
+        )
+        output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        success = proc.returncode == 0
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False, "tool": tool_name,
+            "output": "Install timed out after 3 minutes.",
+            "exit_code": -1, "now_found": False, "version": None,
+        }
+    except Exception as exc:
+        return {
+            "ok": False, "tool": tool_name,
+            "output": str(exc),
+            "exit_code": -1, "now_found": False, "version": None,
+        }
+
+    # Re-detect to confirm and grab the new version string
+    check_key = meta["check"]
+    detected = _detect_tool(check_key)
+    return {
+        "ok": success,
+        "tool": tool_name,
+        "display_name": meta["display_name"],
+        "output": output,
+        "exit_code": proc.returncode,
+        "now_found": detected["found"],
+        "version": detected.get("version"),
     }
 
 

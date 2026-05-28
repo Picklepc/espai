@@ -148,5 +148,6 @@ const api = {
     runTask:       (id, body)   => apiFetch(`/api/agent-bench/tasks/${id}/run`,     { method: "POST", body: JSON.stringify(body) }),
     review:        (id, body)   => apiFetch(`/api/agent-bench/tasks/${id}/review`,  { method: "POST", body: JSON.stringify(body) }),
     listRuns:      (taskId)     => apiFetch(`/api/agent-bench/runs${taskId ? "?task_id=" + taskId : ""}`),
+    install:       (tool)       => apiFetch(`/api/agent-bench/install/${encodeURIComponent(tool)}`, { method: "POST" }),
   },
 };
