@@ -954,14 +954,28 @@ def run_task(task_id: str, data: RunCreate):
             "message": "Copy the prompt to your agent, then paste the response as a message.",
         }
 
-    # CLI adapters — run in background thread
+    # CLI adapters — locate binary using the same augmented PATH the Doctor uses
     meta = _KNOWN_ADAPTERS[adapter]
     cli_cmd = meta.get("cli_command")
-    if not shutil.which(cli_cmd):
+    augmented_path = os.pathsep.join([os.environ.get("PATH", "")] + _extra_tool_dirs())
+    cli_bin = shutil.which(cli_cmd, path=augmented_path)
+
+    if not cli_bin:
+        err_log = (
+            f"{cli_cmd!r} not found on PATH or in common install locations.\n"
+            f"Searched: {augmented_path[:500]}\n"
+            f"Install with: {meta.get('install_hint', 'see Doctor')}"
+        )
         with get_conn() as conn:
             conn.execute(
                 "UPDATE agent_runs SET status='failed', finished=?, log=? WHERE id=?",
-                (_now(), f"{cli_cmd} not found on PATH", run_id),
+                (_now(), err_log, run_id),
+            )
+            conn.execute(
+                "INSERT INTO agent_task_messages (id, task_id, role, content, timestamp) VALUES (?,?,?,?,?)",
+                (str(uuid.uuid4()), task_id, "system",
+                 f"ERROR: {cli_cmd} not found. Run Doctor to diagnose, or check PATH.\n\n{err_log}",
+                 _now()),
             )
             conn.execute(
                 "UPDATE agent_tasks SET status='draft', updated=? WHERE id=?",
@@ -969,13 +983,31 @@ def run_task(task_id: str, data: RunCreate):
             )
         raise HTTPException(
             400,
-            f"{cli_cmd} not found. Install with: {meta.get('install_hint', '')}",
+            f"{cli_cmd} not found. Run Agent Bench → Doctor to diagnose. "
+            f"Install with: {meta.get('install_hint', '')}",
+        )
+
+    # Build subprocess env: inherit current env + augmented PATH so the CLI can
+    # find its own dependencies (node, npm-linked tools, etc.)
+    cli_env = {**os.environ, "PATH": augmented_path}
+
+    # Post a "starting" message so the thread shows activity immediately
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO agent_task_messages (id, task_id, role, content, timestamp) VALUES (?,?,?,?,?)",
+            (str(uuid.uuid4()), task_id, "system",
+             f"[{adapter}] Starting — using {cli_bin}",
+             _now()),
         )
 
     def _run_cli():
+        proc = None
         try:
             if adapter == "claude-code-cli":
-                args = [cli_cmd, "--print", "--dangerously-skip-permissions"]
+                # --print: non-interactive output; --dangerously-skip-permissions:
+                # execute file-editing tools without confirmation prompts.
+                # Prompt is piped via stdin; cwd is repo root so relative paths work.
+                args = [cli_bin, "--print", "--dangerously-skip-permissions"]
                 proc = subprocess.Popen(
                     args,
                     stdin=subprocess.PIPE,
@@ -983,10 +1015,12 @@ def run_task(task_id: str, data: RunCreate):
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=str(ROOT),
+                    env=cli_env,
                 )
-                stdout, stderr = proc.communicate(input=prompt, timeout=300)
+                stdout, stderr = proc.communicate(input=prompt, timeout=600)
+
             elif adapter == "codex-cli":
-                args = [cli_cmd, "exec", "--json", "-"]
+                args = [cli_bin, "exec", "--json", "-"]
                 proc = subprocess.Popen(
                     args,
                     stdin=subprocess.PIPE,
@@ -994,15 +1028,17 @@ def run_task(task_id: str, data: RunCreate):
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=str(ROOT),
+                    env=cli_env,
                 )
-                stdout, stderr = proc.communicate(input=prompt, timeout=300)
+                stdout, stderr = proc.communicate(input=prompt, timeout=600)
+
             else:
                 stdout, stderr = "", "Unknown adapter"
                 proc = type("P", (), {"returncode": 1})()
 
-            output = stdout or stderr or "(no output)"
-            snapshot_after = _snapshot_paths(allowed)
             finished = _now()
+            output = (stdout or "").strip() or (stderr or "").strip() or "(no output)"
+            snapshot_after = _snapshot_paths(allowed)
 
             with get_conn() as conn:
                 conn.execute(
@@ -1026,22 +1062,34 @@ def run_task(task_id: str, data: RunCreate):
                     "UPDATE agent_tasks SET status='awaiting_review', updated=? WHERE id=?",
                     (finished, task_id),
                 )
+
         except subprocess.TimeoutExpired:
-            proc.kill()
+            if proc:
+                proc.kill()
+            err = "Agent run timed out after 600 seconds. The task may be too large — try narrowing the scope."
             with get_conn() as conn:
                 conn.execute(
                     "UPDATE agent_runs SET status='failed', finished=?, log=? WHERE id=?",
-                    (_now(), "Timed out after 300s", run_id),
+                    (_now(), err, run_id),
+                )
+                conn.execute(
+                    "INSERT INTO agent_task_messages (id, task_id, role, content, timestamp) VALUES (?,?,?,?,?)",
+                    (str(uuid.uuid4()), task_id, "system", f"ERROR: {err}", _now()),
                 )
                 conn.execute(
                     "UPDATE agent_tasks SET status='draft', updated=? WHERE id=?",
                     (_now(), task_id),
                 )
         except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
             with get_conn() as conn:
                 conn.execute(
                     "UPDATE agent_runs SET status='failed', finished=?, log=? WHERE id=?",
-                    (_now(), str(exc)[:2048], run_id),
+                    (_now(), err[:2048], run_id),
+                )
+                conn.execute(
+                    "INSERT INTO agent_task_messages (id, task_id, role, content, timestamp) VALUES (?,?,?,?,?)",
+                    (str(uuid.uuid4()), task_id, "system", f"ERROR: {err}", _now()),
                 )
                 conn.execute(
                     "UPDATE agent_tasks SET status='draft', updated=? WHERE id=?",

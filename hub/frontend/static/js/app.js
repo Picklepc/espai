@@ -1770,31 +1770,45 @@ async function _abLoadThread(taskId) {
     const div = el("div", `ab-msg ab-msg-${m.role}`);
     const ts = el("div", "ab-msg-ts", timeAgo(m.timestamp));
     if (m.role === "system") {
-      div.innerHTML = `
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-          <span style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--color-accent)">Prompt Generated</span>
-          <button class="btn btn-secondary btn-sm" style="padding:3px 9px;font-size:11px">Copy Prompt</button>
-          <button class="btn btn-secondary btn-sm" style="padding:3px 9px;font-size:11px">View Full</button>
-        </div>
-        <div style="font-size:12px;color:var(--color-text-muted);font-style:italic">The prompt is ready — copy it into Claude, ChatGPT, or another AI, apply the file changes it describes, then paste the response back in the panel below.</div>
-      `;
-      const [copyBtn, viewBtn] = div.querySelectorAll("button");
-      copyBtn.onclick = () => {
-        navigator.clipboard?.writeText(m.content).then(() => {
-          const orig = copyBtn.textContent; copyBtn.textContent = "Copied!"; setTimeout(() => copyBtn.textContent = orig, 1500);
-        }).catch(() => {});
-      };
-      viewBtn.onclick = () => openModal("Agent Prompt", `
-        <pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow:auto;line-height:1.5">${m.content}</pre>
-      `, [
-        { label: "Copy to Clipboard", cls: "btn btn-primary", action: () => {
-          navigator.clipboard?.writeText(m.content).catch(() => {});
-          closeModal();
-        }},
-        { label: "Close", cls: "btn btn-secondary", action: closeModal },
-      ]);
+      const isError   = m.content.startsWith("ERROR:");
+      const isStarted = m.content.startsWith("[") && m.content.includes("] Starting");
+      const isPrompt  = m.content.startsWith("You are") || m.content.includes("## Task:");
+
+      if (isError) {
+        div.innerHTML = `
+          <div style="color:var(--color-danger);font-size:12px;font-weight:700;margin-bottom:4px">&#x2715; Run Failed</div>
+          <pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--color-danger);opacity:.85">${m.content.replace(/</g,"&lt;")}</pre>
+        `;
+      } else if (isStarted) {
+        div.innerHTML = `<span style="font-size:12px;color:var(--color-text-muted);font-style:italic">&#x25B6; ${m.content.replace(/</g,"&lt;")}</span>`;
+      } else if (isPrompt) {
+        div.innerHTML = `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <span style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--color-accent)">Prompt Generated</span>
+            <button class="btn btn-secondary btn-sm" style="padding:3px 9px;font-size:11px">Copy Prompt</button>
+            <button class="btn btn-secondary btn-sm" style="padding:3px 9px;font-size:11px">View Full</button>
+          </div>
+          <div style="font-size:12px;color:var(--color-text-muted);font-style:italic">The prompt is ready — copy it into Claude, ChatGPT, or another AI, apply the file changes it describes, then paste the response back below.</div>
+        `;
+        const [copyBtn, viewBtn] = div.querySelectorAll("button");
+        copyBtn.onclick = () => {
+          navigator.clipboard?.writeText(m.content).then(() => {
+            const orig = copyBtn.textContent; copyBtn.textContent = "Copied!"; setTimeout(() => copyBtn.textContent = orig, 1500);
+          }).catch(() => {});
+        };
+        viewBtn.onclick = () => openModal("Agent Prompt", `
+          <pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow:auto;line-height:1.5">${m.content.replace(/</g,"&lt;")}</pre>
+        `, [
+          { label: "Copy to Clipboard", cls: "btn btn-primary", action: () => {
+            navigator.clipboard?.writeText(m.content).catch(() => {}); closeModal();
+          }},
+          { label: "Close", cls: "btn btn-secondary", action: closeModal },
+        ]);
+      } else {
+        div.innerHTML = `<span style="font-size:12px;color:var(--color-text-muted)">${m.content.replace(/</g,"&lt;")}</span>`;
+      }
     } else {
-      div.textContent = m.content.slice(0, 2000) + (m.content.length > 2000 ? "\n…(truncated)" : "");
+      div.textContent = m.content.slice(0, 4000) + (m.content.length > 4000 ? "\n…(truncated)" : "");
     }
     div.appendChild(ts);
     threadEl.appendChild(div);
