@@ -35,10 +35,42 @@ router = APIRouter()
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _BLOCKED_PATH_PATTERNS = [
+    # Secrets and private data — always blocked
     ".env", "secrets/", ".private.yaml", ".private.json",
     "local.yaml", "secrets.yaml", "data/", "backups/",
     "captures/private/", "firmware/seed/secrets.ini",
+    # ESPai platform code — agents work *on* projects, not *on* the hub itself
+    # (hub-feature tasks that legitimately need hub access must list paths explicitly)
+    "firmware/seed/",      # seed template protected — projects get their own copy
+    "firmware/provision/", # provision firmware protected
 ]
+
+# Per-template default acceptance criteria (used when user doesn't specify any)
+_TEMPLATE_DEFAULT_CRITERIA: dict[str, list[str]] = {
+    "firmware-feature": [
+        "Firmware compiles without errors (pio run)",
+        "No existing functionality regressed",
+    ],
+    "hub-feature": [
+        "Hub starts without errors after changes",
+        "New API endpoint returns expected response",
+        "All existing endpoints still respond correctly",
+    ],
+    "port-to-hub": [
+        "Firmware compiles without errors",
+        "Hub receives device events within 5 seconds of trigger",
+        "ESP32 falls back to its local web server when hub is unreachable (10s timeout)",
+        "No existing hub functionality regressed",
+    ],
+    "recipe-feature": [
+        "Recipe YAML validates without errors",
+        "Recipe pipeline processes test data correctly",
+    ],
+    "bug-fix": [
+        "The reported issue no longer occurs",
+        "No regressions introduced by the fix",
+    ],
+}
 
 _KNOWN_ADAPTERS = {
     "manual": {
@@ -256,6 +288,16 @@ def _build_prompt(task: dict, project: dict | None) -> str:
     criteria_text = "\n".join(f"- [ ] {c}" for c in criteria) if criteria else "- (none specified)"
     paths_text = "\n".join(f"- `{p}`" for p in allowed) if allowed else "- (all allowed paths for this template)"
 
+    context_line = ""
+    if task.get("context_type") == "project":
+        context_line = f"**Scope:** Project — only modify files inside `projects/{task.get('context_id', '')}/`"
+    elif task.get("context_type") == "worker":
+        context_line = f"**Scope:** Worker — only modify files inside `workers/{task.get('context_id', '')}/`"
+
+    thread_note = ""
+    if task.get("parent_task_id"):
+        thread_note = f"\n**Note:** This is a follow-up task (parent: `{task['parent_task_id']}`). Review the previous task's diff and address any remaining issues.\n"
+
     prompt = f"""{system}
 
 ---
@@ -264,7 +306,8 @@ def _build_prompt(task: dict, project: dict | None) -> str:
 
 **Project:** {project['name'] if project else '(no project)'}
 **Template:** {task.get('template', 'custom')}
-
+{context_line}
+{thread_note}
 ### Description
 
 {task['description']}
@@ -276,12 +319,65 @@ def _build_prompt(task: dict, project: dict | None) -> str:
 ### Acceptance criteria
 
 {criteria_text}
+
+### Protected paths (never touch)
+
+- `firmware/seed/` — seed template firmware, do not modify
+- `firmware/provision/` — provision firmware, do not modify
+- `secrets/`, `data/`, `backups/`, `*.env` — always blocked
+- Any path not listed in Allowed paths above
 """
     if task.get("context"):
-        prompt += f"\n### Context\n\n{task['context']}\n"
+        prompt += f"\n### Additional context\n\n{task['context']}\n"
 
     prompt += "\n---\n\nBegin. Make the changes, then summarize every file modified and why.\n"
     return prompt
+
+
+def _infer_allowed_paths(
+    context_type: str | None,
+    context_id: str | None,
+    project_id: str | None,
+    template: str,
+) -> list[str]:
+    """
+    Build a sensible default allowed_paths when the user doesn't specify any.
+
+    Priority:
+      1. context_type/context_id (most specific — project or worker scope)
+      2. template YAML default_allowed_paths
+      3. project_id alone (backward compat)
+    """
+    # 1. Context-scoped inference
+    if context_type == "project" and (context_id or project_id):
+        pid = context_id or project_id
+        paths = [f"projects/{pid}/firmware/", f"projects/{pid}/workers/"]
+        if template == "port-to-hub":
+            # Also needs the shared workers directory to create hub-side workers
+            paths.append("workers/")
+        return paths
+
+    if context_type == "worker" and context_id:
+        return [f"workers/{context_id}/"]
+
+    # 2. Template YAML defaults
+    templates_dir = AGENT_BENCH_DIR / "task-templates"
+    tmpl_path = templates_dir / f"{template}.yaml"
+    if tmpl_path.exists():
+        try:
+            import yaml
+            tmpl = yaml.safe_load(tmpl_path.read_text(encoding="utf-8"))
+            tmpl_paths = tmpl.get("default_allowed_paths", [])
+            if tmpl_paths:
+                return tmpl_paths
+        except Exception:
+            pass
+
+    # 3. project_id alone
+    if project_id:
+        return [f"projects/{project_id}/firmware/", f"projects/{project_id}/workers/"]
+
+    return []
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -294,6 +390,9 @@ class TaskCreate(BaseModel):
     acceptance_criteria: list[str] = []
     allowed_paths: list[str] = []
     context: Optional[str] = None
+    context_type: Optional[str] = None   # "project" | "worker" | "global"
+    context_id: Optional[str] = None     # project_id or worker folder name
+    parent_task_id: Optional[str] = None # threading: follow-up to an existing task
     lane: str = "dev"
     adapter_id: Optional[str] = None
 
@@ -556,28 +655,35 @@ def test_adapter(adapter_name: str):
 # ── Task endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/tasks")
-def list_tasks(project_id: Optional[str] = None, status: Optional[str] = None):
+def list_tasks(
+    project_id: Optional[str] = None,
+    status: Optional[str] = None,
+    context_type: Optional[str] = None,
+    context_id: Optional[str] = None,
+    parent_task_id: Optional[str] = None,
+):
     _require_enabled()
+    conditions: list[str] = []
+    params: list = []
+
+    if project_id:
+        # Match either direct project_id or context-scoped to the same project
+        conditions.append("(project_id=? OR (context_type='project' AND context_id=?))")
+        params.extend([project_id, project_id])
+    if status:
+        conditions.append("status=?"); params.append(status)
+    if context_type:
+        conditions.append("context_type=?"); params.append(context_type)
+    if context_id:
+        conditions.append("context_id=?"); params.append(context_id)
+    if parent_task_id is not None:
+        conditions.append("parent_task_id=?"); params.append(parent_task_id)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    sql = f"SELECT * FROM agent_tasks {where} ORDER BY created DESC LIMIT 200"
+
     with get_conn() as conn:
-        if project_id and status:
-            rows = conn.execute(
-                "SELECT * FROM agent_tasks WHERE project_id=? AND status=? ORDER BY created DESC",
-                (project_id, status),
-            ).fetchall()
-        elif project_id:
-            rows = conn.execute(
-                "SELECT * FROM agent_tasks WHERE project_id=? ORDER BY created DESC",
-                (project_id,),
-            ).fetchall()
-        elif status:
-            rows = conn.execute(
-                "SELECT * FROM agent_tasks WHERE status=? ORDER BY created DESC",
-                (status,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM agent_tasks ORDER BY created DESC LIMIT 100"
-            ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -586,38 +692,44 @@ def create_task(data: TaskCreate):
     _require_enabled()
     if data.lane != "dev":
         raise HTTPException(400, "Agent Bench MVP only supports dev lane tasks.")
+
+    # Infer effective project_id from context when not set directly
+    effective_project_id = data.project_id
+    if not effective_project_id and data.context_type == "project" and data.context_id:
+        effective_project_id = data.context_id
+
+    # Infer allowed_paths when not explicitly provided
+    allowed = data.allowed_paths or _infer_allowed_paths(
+        data.context_type, data.context_id, effective_project_id, data.template
+    )
+
+    # Infer acceptance_criteria when not explicitly provided
+    criteria = data.acceptance_criteria or _TEMPLATE_DEFAULT_CRITERIA.get(data.template, [])
+
     task_id = str(uuid.uuid4())
     now = _now()
-
-    # Default allowed_paths from template if not specified
-    allowed = data.allowed_paths
-    if not allowed:
-        templates_dir = AGENT_BENCH_DIR / "task-templates"
-        tmpl_path = templates_dir / f"{data.template}.yaml"
-        if tmpl_path.exists():
-            try:
-                import yaml
-                tmpl = yaml.safe_load(tmpl_path.read_text(encoding="utf-8"))
-                allowed = tmpl.get("default_allowed_paths", [])
-            except Exception:
-                pass
 
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO agent_tasks
                (id, project_id, title, description, template, status,
-                allowed_paths, acceptance_criteria, context, lane, adapter_id, created, updated)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                allowed_paths, acceptance_criteria, context,
+                context_type, context_id, parent_task_id,
+                lane, adapter_id, created, updated)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 task_id,
-                data.project_id,
+                effective_project_id,
                 data.title,
                 data.description,
                 data.template,
                 "draft",
                 json.dumps(allowed),
-                json.dumps(data.acceptance_criteria),
+                json.dumps(criteria),
                 data.context,
+                data.context_type,
+                data.context_id,
+                data.parent_task_id,
                 data.lane,
                 data.adapter_id,
                 now,

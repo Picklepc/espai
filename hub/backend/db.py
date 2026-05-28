@@ -36,6 +36,18 @@ def get_conn():
         conn.close()
 
 
+def _migrate(conn) -> None:
+    """Additive column migrations — safe to run on any existing DB."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(agent_tasks)").fetchall()}
+    for col, ddl in [
+        ("context_type",   "ALTER TABLE agent_tasks ADD COLUMN context_type   TEXT"),
+        ("context_id",     "ALTER TABLE agent_tasks ADD COLUMN context_id     TEXT"),
+        ("parent_task_id", "ALTER TABLE agent_tasks ADD COLUMN parent_task_id TEXT"),
+    ]:
+        if col not in existing:
+            conn.execute(ddl)
+
+
 def init_db() -> None:
     with get_conn() as conn:
         conn.executescript("""
@@ -121,6 +133,9 @@ def init_db() -> None:
             allowed_paths       TEXT,
             acceptance_criteria TEXT,
             context             TEXT,
+            context_type        TEXT,
+            context_id          TEXT,
+            parent_task_id      TEXT,
             lane                TEXT NOT NULL DEFAULT 'dev',
             adapter_id          TEXT,
             created             TEXT NOT NULL,
@@ -158,8 +173,7 @@ def init_db() -> None:
             created       TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS agent_reviews (
-            id          TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS agent_reviews (            id          TEXT PRIMARY KEY,
             task_id     TEXT NOT NULL,
             run_id      TEXT,
             decision    TEXT NOT NULL,
@@ -175,3 +189,4 @@ def init_db() -> None:
             granted_at  TEXT NOT NULL
         );
         """)
+        _migrate(conn)

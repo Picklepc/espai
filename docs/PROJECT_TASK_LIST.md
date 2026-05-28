@@ -109,3 +109,80 @@
 - [x] Windows tray app scaffold (hub/tray/tray.py — pystray + PIL icon; Start/Stop/Open Dashboard/Exit menu; auto-starts hub; espai.py tray command)
 - [x] backup/restore (GET /api/admin/backup + download; POST /api/admin/restore with column allowlist guard; GET /api/admin/status; ⬇ Backup + ⬆ Restore buttons in OTA view)
 - [x] future VSCode extension API readiness (GET /api/meta — capabilities list, endpoint map, schema versions)
+
+## Milestone 13 — Agent Bench v2 (Contextual Tasks)
+
+### Completed this session
+- [x] Context-scoped tasks — `context_type` / `context_id` / `parent_task_id` columns in `agent_tasks` (additive migration)
+- [x] Seed and provision firmware path protection — agents blocked from touching `firmware/seed/` and `firmware/provision/`
+- [x] Inferred `allowed_paths` — backend derives paths from context (project → `projects/{id}/firmware/ + workers/`; worker → `workers/{name}/`; template YAML fallback; no manual entry required)
+- [x] Inferred `acceptance_criteria` — per-template defaults applied when user leaves criteria blank
+- [x] `GET /tasks` context filters — `context_type`, `context_id`, `parent_task_id` query params
+- [x] Unified `_openAgentTaskModal()` — full form when called from Agent Bench; simplified "scoped" form (paths/criteria hidden, context badge shown) when called from project or worker context
+- [x] Project detail → Agent Tasks section — task table with status badge, template label, time, follow-up button; tasks click through to Agent Bench detail view
+- [x] Project detail → `+ Agent Task` button — opens scoped modal pre-bound to the current project
+- [x] Worker cards → `⚡ Agent Task` button — opens scoped modal for that worker
+- [x] Agent Bench list → context and thread badges on task cards
+- [x] Thread follow-ups — `parent_task_id` links tasks; follow-up button on project task rows; thread note injected into agent prompt
+
+### Pending / follow-on
+- [ ] Thread grouping in Agent Bench list — collapse parent + children to one expandable row with run count
+- [ ] Cross-domain path inheritance — when a project task needs to create/modify a shared worker, prompt user to grant `workers/` access inline
+- [ ] Worker quarantine auto-lift — after agent task approved, prompt reviewer to lift quarantine on newly created workers
+- [ ] Agent Bench filter by context_type in sidebar
+
+## Milestone 14 — Registry Content Packs
+
+### Recipes
+- [ ] BLE integration recipe — Bluetooth speaker / BLE sink (common ESP32 + BLE peripheral, e.g. A2DP audio bridge or BLE sensor aggregator)
+- [ ] Additional starter recipes — temperature pipeline, motion-alert pipeline, battery monitor
+
+### Workers
+- [ ] Hotdog-or-not worker — OpenCV + image classifier; accepts image input (JPEG bytes or path), returns `{is_hotdog: bool, confidence: float, label: str}`; designed for ESP32-CAM integration; fully fleshed out with manifest, entrypoint, test data, and card binding
+- [ ] Flesh out existing opencv-motion-tagger scaffold with complete implementation, test fixture, and example card binding
+- [ ] ffmpeg-compressor — complete the existing scaffold
+
+### Cards
+- [ ] Card preview system — in-hub HTML preview pane using dummy data so cards render without a live device
+- [ ] Theme selector card — lets users switch the hub theme, create/delete themes, and pick per-project themes
+- [ ] Network manager card — WiFi STA (SSID scan + connect), AP mode toggle, hostname editor, IP display
+- [ ] File manager card — browse SD card or LittleFS/SPIFFS on-device file system; navigate, download, delete
+- [ ] Sensor dashboard card — live readings from a named event source with configurable fields and sparkline
+- [ ] OTA status card — shows current firmware version, channel, last update time, one-click push trigger
+- [ ] Device log card — tail of serial/log output from a connected device
+
+### Themes
+- [ ] Theme manager UI — hub-level theme switcher: list themes, select active, create new, delete (original default-dark is undeletable)
+- [ ] Theme color editor — pick colors per token with live preview, save as new theme or overwrite existing
+- [ ] Project-level theme selector — apply any hub theme to one or more projects from the project detail view
+- [ ] Additional pre-built themes (e.g. light, high-contrast, ocean, warm-amber)
+
+## Milestone 15 — In-Hub Code Editor
+
+- [ ] File click → in-hub text editor modal — syntax-highlighted code editor (CodeMirror or Monaco lite) for any project file
+- [ ] Save, delete, rename/move file operations from editor
+- [ ] New file creation within a project directory
+- [ ] Project / card / worker name rename from the hub portal (PATCH name in-place)
+- [ ] Diff view for staged agent changes with Accept / Reject per-file
+
+## Milestone 16 — ESPAI Context Files
+
+- [ ] Auto-generate `ESPAI.md` in every new and imported project — explains the platform, hub services, agent rules, firmware scaffold structure, capabilities and limitations
+- [ ] Include in agent prompt automatically when present (injected before task description)
+- [ ] Root-level `ESPAI.md` — platform overview for contributors and new developers
+- [ ] Agent rule file (`agents/rules.md`) — explicit do/do-not list included in every agent prompt
+
+## Milestone 17 — Local Project Access (Caddy / mDNS routing)
+
+- [ ] Caddy integration — auto-generate a Caddyfile mapping project names to hub-hosted project pages (e.g. `motion-sensor.local → hub:8080/projects/{id}`)
+- [ ] Project page nav — "Open" button on project detail that launches the device's own web UI or the hub proxy URL in a new tab
+- [ ] LAN device browser — scan for non-ESPAI HTTP devices (Tasmota, ESPHome, etc.) and list them with a direct link; import option to bring them into the hub
+- [ ] Device link from fleet — any discovered device with an HTTP UI gets a "Open Portal" link in Fleet view
+
+## Milestone 18 — Git Version Control
+
+- [ ] Per-project Git init on project create / import (if git available)
+- [ ] Auto-commit on file save and agent task approval
+- [ ] Version history view in project detail — list commits, show diff, restore to a prior version
+- [ ] OTA firmware version pinned to git tag — firmware push records the commit SHA in the audit log
+- [ ] Rollback to prior firmware tied to git branch / tag

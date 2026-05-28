@@ -143,6 +143,183 @@ document.addEventListener("mouseout", e => {
 document.addEventListener("scroll", _hideAppTip, true);
 document.addEventListener("click",  _hideAppTip, true);
 
+// ── Unified agent task modal (context-aware) ───────────────────────────────
+// Call with no args for the full form (from Agent Bench tab).
+// Pass ctx to pre-scope the task to a project or worker.
+async function _openAgentTaskModal(ctx = {}) {
+  const { context_type, context_id, context_label, parent_task_id } = ctx;
+  const hasContext = !!(context_type && context_id);
+
+  // Load project options only when no context (full form)
+  let projOptsHTML = '<option value="">— no project —</option>';
+  if (!hasContext) {
+    let projects = [];
+    try { projects = await api.projects.list(); } catch (_) {}
+    projOptsHTML = ['<option value="">— no project —</option>',
+      ...projects.map(p => `<option value="${p.id}">${p.name}</option>`)].join("");
+  }
+
+  const contextBanner = hasContext ? `
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;
+                background:var(--color-card);border:1px solid var(--color-card-border);
+                border-left:3px solid var(--color-accent);border-radius:6px;margin-bottom:14px;font-size:12px">
+      <span style="color:var(--color-text-muted)">Scoped to</span>
+      <strong>${context_type === "project" ? "🗂 Project" : "⚙ Worker"}: ${context_label || context_id}</strong>
+      <span style="color:var(--color-text-muted);margin-left:auto;opacity:.75">Paths &amp; criteria auto-inferred from template</span>
+    </div>` : `
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      Describe what you want to build. The agent reads the relevant code, makes changes,
+      and submits a diff for your review. Pick the closest template so it focuses on the right files.
+    </p>`;
+
+  const threadNote = parent_task_id ? `
+    <div style="font-size:12px;color:var(--color-warning);padding:6px 10px;background:rgba(240,168,32,.08);
+                border-radius:6px;margin-bottom:12px">
+      ↩ Follow-up task — include what needs to change from the previous run.
+    </div>` : "";
+
+  openModal(parent_task_id ? "Follow-up Task" : "New Agent Task", `
+    ${threadNote}${contextBanner}
+    <div class="form-field">
+      <label data-tip="Short label shown in the task list">Title</label>
+      <input type="text" id="abNewTitle" placeholder="${parent_task_id ? "e.g. Fix the issue flagged in the previous run" : "e.g. Add PIR motion sensor on GPIO 14"}">
+    </div>
+    <div class="form-field">
+      <label data-tip="Be specific — pin numbers, event types, API names, file names help the agent target the right code">Description</label>
+      <textarea id="abNewDesc" rows="${hasContext ? 4 : 5}" placeholder="${_templatePlaceholders["firmware-feature"]}"></textarea>
+    </div>
+    <div class="form-field">
+      <label data-tip="Tells the agent which codebase area to focus on">Template</label>
+      <select id="abNewTemplate">
+        <option value="firmware-feature">firmware-feature — ESP32 code</option>
+        <option value="hub-feature">hub-feature — hub backend or API</option>
+        <option value="port-to-hub">port-to-hub — mirror device to hub + ESP32 fallback</option>
+        <option value="recipe-feature">recipe-feature — YAML data pipeline</option>
+        <option value="bug-fix">bug-fix — diagnose and fix</option>
+        <option value="custom">custom — no constraints</option>
+      </select>
+    </div>
+    ${!hasContext ? `
+    <div class="form-field">
+      <label data-tip="Link to a project so the agent uses its description as context">Project</label>
+      <select id="abNewProject">${projOptsHTML}</select>
+    </div>` : ""}
+    <details style="margin-top:10px">
+      <summary style="font-size:12px;color:var(--color-text-muted);cursor:pointer;user-select:none;padding:4px 0"
+               data-tip="Override the inferred criteria or paths if you need finer control">
+        Advanced — override inferred criteria &amp; paths
+      </summary>
+      <div style="margin-top:10px">
+        <div class="form-field">
+          <label data-tip="Leave blank to auto-infer from template. One per line starting with -">Acceptance Criteria</label>
+          <textarea id="abNewCriteria" rows="3" placeholder="- Leave blank to auto-infer from template&#10;- e.g. Firmware compiles without errors"></textarea>
+        </div>
+        ${!hasContext ? `
+        <div class="form-field">
+          <label data-tip="Leave blank to infer from project and template. Seed/provision firmware is always protected.">Allowed Paths (one per line)</label>
+          <textarea id="abNewPaths" rows="2" placeholder="Leave blank to infer — e.g. projects/abc123/firmware/"></textarea>
+        </div>` : ""}
+      </div>
+    </details>
+  `, [
+    { label: "Create Task", cls: "btn btn-primary", action: async () => {
+      const title       = document.getElementById("abNewTitle").value.trim();
+      const desc        = document.getElementById("abNewDesc").value.trim();
+      if (!title || !desc) return;
+      const template    = document.getElementById("abNewTemplate").value;
+      const project_id  = hasContext ? null : (document.getElementById("abNewProject")?.value || null);
+      const criteriaRaw = document.getElementById("abNewCriteria")?.value?.trim() || "";
+      const pathsRaw    = !hasContext ? (document.getElementById("abNewPaths")?.value?.trim() || "") : "";
+      const acceptance_criteria = criteriaRaw ? criteriaRaw.split("\n").map(s => s.trim().replace(/^[-*]\s*/, "")).filter(Boolean) : [];
+      const allowed_paths       = pathsRaw ? pathsRaw.split("\n").map(s => s.trim()).filter(Boolean) : [];
+      try {
+        await api.agentBench.createTask({
+          title, description: desc, template,
+          ...(project_id    ? { project_id }    : {}),
+          ...(hasContext     ? { context_type, context_id } : {}),
+          ...(parent_task_id ? { parent_task_id } : {}),
+          ...(acceptance_criteria.length ? { acceptance_criteria } : {}),
+          ...(allowed_paths.length       ? { allowed_paths }       : {}),
+        });
+        closeModal();
+        _abLoadTaskList();
+        if (context_type === "project" && context_id) _loadProjectTasks(context_id);
+      } catch (err) { alert("Error: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+
+  // Live placeholder update on template change
+  const sel = document.getElementById("abNewTemplate");
+  const ta  = document.getElementById("abNewDesc");
+  if (sel && ta) {
+    const upd = () => { ta.placeholder = _templatePlaceholders[sel.value] || _templatePlaceholders["custom"]; };
+    sel.addEventListener("change", upd);
+    upd();
+  }
+}
+
+// ── Project task list ──────────────────────────────────────────────────────
+
+async function _loadProjectTasks(projectId) {
+  const listEl = document.getElementById("projTaskList");
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="empty-state" style="font-size:12px">Loading…</div>';
+
+  let tasks = [];
+  try {
+    // Fetch tasks scoped to this project (context OR project_id)
+    const [ctx, legacy] = await Promise.all([
+      api.agentBench.listTasks({ context_type: "project", context_id: projectId }).catch(() => []),
+      api.agentBench.listTasks({ project_id: projectId }).catch(() => []),
+    ]);
+    const seen = new Set();
+    for (const t of [...ctx, ...legacy]) { if (!seen.has(t.id)) { tasks.push(t); seen.add(t.id); } }
+  } catch (_) {
+    listEl.innerHTML = '<div class="empty-state" style="font-size:12px">Agent Bench is disabled.</div>';
+    return;
+  }
+
+  if (!tasks.length) {
+    listEl.innerHTML = '<div class="empty-state" style="font-size:12px">No agent tasks yet — click <strong>+ Agent Task</strong> to create one scoped to this project.</div>';
+    return;
+  }
+
+  // Separate root tasks from follow-ups, group children by parent
+  const rootTasks = tasks.filter(t => !t.parent_task_id);
+  const childMap  = {};
+  for (const t of tasks) {
+    if (t.parent_task_id) (childMap[t.parent_task_id] ||= []).push(t);
+  }
+
+  listEl.innerHTML = "";
+  for (const t of rootTasks) {
+    const children = childMap[t.id] || [];
+    const row = el("div", "proj-task-row");
+    const tpl = _AB_TEMPLATE_LABELS[t.template] || t.template;
+    row.innerHTML = `
+      <span class="${_abStatusClass(t.status)}" data-tip="Status: ${t.status}">${_abStatusLabel(t.status)}</span>
+      <span class="proj-task-title" data-tip="Click to open in Agent Bench">${t.title}</span>
+      <span class="proj-task-meta">${tpl} · ${timeAgo(t.updated)}</span>
+      ${children.length ? `<span class="proj-task-count" data-tip="${children.length} follow-up(s) in thread">+${children.length}</span>` : ""}
+    `;
+    const followBtn = el("button", "btn btn-secondary btn-sm proj-task-followup", "+ Follow-up");
+    followBtn.dataset.tip = "Create a follow-up task in this thread";
+    followBtn.onclick = (e) => {
+      e.stopPropagation();
+      _openAgentTaskModal({ context_type: "project", context_id: projectId, context_label: _currentProject?.name, parent_task_id: t.id });
+    };
+    row.appendChild(followBtn);
+    row.onclick = (e) => {
+      if (e.target === followBtn || followBtn.contains(e.target)) return;
+      showView("agent-bench");
+      // Slight delay so Agent Bench view finishes loading before we open the task
+      setTimeout(() => _abOpenTask(t.id), 200);
+    };
+    listEl.appendChild(row);
+  }
+}
+
 // ── Fleet view ─────────────────────────────────────────────────────────────
 
 async function loadFleet() {
@@ -571,6 +748,9 @@ async function openProject(p) {
   await refreshProjectFiles(p.id);
   _startFilesPoller(p.id);
 
+  // Load project-scoped agent tasks
+  _loadProjectTasks(p.id);
+
   // Apply project-level theme overrides
   api.projects.theme(p.id).then(t => {
     if (t.project_overrides && Object.keys(t.project_overrides).length)
@@ -646,6 +826,15 @@ async function renderProjectDevices(project, linkedIds) {
   };
   devList.appendChild(linkBtn);
 }
+
+document.getElementById("btnProjNewTask").onclick = () => {
+  if (!_currentProject) return;
+  _openAgentTaskModal({
+    context_type:  "project",
+    context_id:    _currentProject.id,
+    context_label: _currentProject.name,
+  });
+};
 
 document.getElementById("btnProjBack").onclick = () => {
   _currentProject = null;
@@ -855,9 +1044,21 @@ async function loadWorkers() {
       </div>
     `;
     const testBtn = el("button", "btn btn-secondary btn-sm", "▶ Test");
+    testBtn.dataset.tip = "Run this worker with test inputs and see the output immediately";
     testBtn.style.marginTop = "10px";
     testBtn.onclick = () => openWorkerTestModal(item);
     card.appendChild(testBtn);
+
+    const taskBtn = el("button", "btn btn-secondary btn-sm", "⚡ Agent Task");
+    taskBtn.dataset.tip = "Create an agent task scoped to this worker — modify, extend, or debug it";
+    taskBtn.style.marginTop = "10px";
+    taskBtn.style.marginLeft = "6px";
+    taskBtn.onclick = () => _openAgentTaskModal({
+      context_type: "worker",
+      context_id:   wname,
+      context_label: item.display_name || wname,
+    });
+    card.appendChild(taskBtn);
     el_.appendChild(card);
   }
 }
@@ -1461,6 +1662,15 @@ const _AB_TEMPLATE_LABELS = {
   "custom":           "Custom",
 };
 
+const _templatePlaceholders = {
+  "firmware-feature": "e.g. Add a PIR motion sensor on GPIO pin 14. When triggered, blink the onboard LED 3 times and publish a device.motion event to the hub with device name, sensor pin, and UTC timestamp.",
+  "hub-feature":      "e.g. Add a GET /api/sensors/latest endpoint that returns the most recent sensor reading for a given device ID from the events table.",
+  "port-to-hub":      "e.g. This project has a web server with /api/temperature and /api/motion endpoints. Port these to hub workers that store readings in the events table. Add hub check-in to the firmware and fall back to the device web server when the hub is unreachable (>10s timeout).",
+  "recipe-feature":   "e.g. Create a recipe that reads temperature from device.sensor events and forwards readings above 30°C to a webhook at http://homeassistant.local/api/webhook/hot-alert.",
+  "bug-fix":          "e.g. The firmware reboots after ~2 hours. The serial log shows heap exhaustion near the JSON serialisation block around line 142 of main.cpp — investigate and fix the memory leak.",
+  "custom":           "e.g. Describe what you want to build or change — include file names, variable names, or API details if you know them.",
+};
+
 async function loadAgentBench() {
   _stopAbPoller();
 
@@ -1502,10 +1712,15 @@ async function _abLoadTaskList() {
   listEl.innerHTML = "";
   for (const t of tasks) {
     const card = el("div", "ab-task-card");
+    const ctxBadge = t.context_type
+      ? `<span class="ab-context-badge" data-tip="Scoped to ${t.context_type}: ${t.context_id || ''}">${t.context_type === "project" ? "🗂" : "⚙"} ${(t.context_id || "").slice(0,10)}</span>`
+      : (t.project_id ? `<span class="ab-context-badge" data-tip="Linked to project ${t.project_id.slice(0,8)}">🗂</span>` : "");
+    const threadBadge = t.parent_task_id
+      ? `<span class="ab-thread-badge" data-tip="Follow-up in a task thread">↩ thread</span>` : "";
     card.innerHTML = `
       <div class="ab-task-info">
         <div class="ab-task-title">${t.title}</div>
-        <div class="ab-task-meta">${t.template} · ${t.lane} lane · ${timeAgo(t.updated)}</div>
+        <div class="ab-task-meta">${_AB_TEMPLATE_LABELS[t.template] || t.template} · ${t.lane} lane · ${timeAgo(t.updated)}${ctxBadge}${threadBadge}</div>
       </div>
       <span class="${_abStatusClass(t.status)}" data-tip="Task status: ${t.status}">${_abStatusLabel(t.status)}</span>
     `;
@@ -1639,89 +1854,7 @@ function _abWireEvents() {
     } catch (err) { alert("Error: " + err.message); }
   };
 
-  document.getElementById("btnAbNewTask").onclick = async () => {
-    let projects = [];
-    try { projects = await api.projects.list(); } catch (_) {}
-    const projOpts = [
-      '<option value="">— no project —</option>',
-      ...projects.map(p => `<option value="${p.id}">${p.name}</option>`),
-    ].join("");
-    openModal("New Agent Task", `
-      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
-        Describe what you want to build in plain language. The agent reads the relevant
-        codebase sections, writes the code, and submits a diff for your review.
-        Choose a template that matches your task type so the agent focuses on the right files.
-      </p>
-      <div class="form-field">
-        <label data-tip="A short name to identify this task in the list — shown alongside the status badge">Title</label>
-        <input type="text" id="abNewTitle" placeholder="e.g. Add PIR motion sensor on GPIO 14">
-      </div>
-      <div class="form-field">
-        <label data-tip="The agent reads this carefully — be specific. Include pin numbers, API names, event types, or file names if you know them. The more detail, the less back-and-forth.">Description</label>
-        <textarea id="abNewDesc" rows="5" placeholder="e.g. Add a PIR motion sensor on GPIO pin 14. When triggered, blink the onboard LED 3 times and publish a device.motion event to the hub with the device name, sensor pin, and a UTC timestamp in the payload."></textarea>
-      </div>
-      <div class="form-field">
-        <label data-tip="Tells the agent which part of the codebase to focus on. firmware-feature targets ESP32 C++ source; hub-feature targets the Python backend; recipe-feature targets YAML pipelines; bug-fix works across any area.">Template</label>
-        <select id="abNewTemplate">
-          <option value="firmware-feature">firmware-feature — add or change ESP32 firmware code</option>
-          <option value="hub-feature">hub-feature — add or change the hub backend or API</option>
-          <option value="port-to-hub">port-to-hub — mirror device features as hub workers + add ESP32 fallback</option>
-          <option value="recipe-feature">recipe-feature — create or edit a YAML data pipeline</option>
-          <option value="bug-fix">bug-fix — diagnose and fix a specific problem</option>
-          <option value="custom">custom — no template constraints, use allowed paths as-is</option>
-        </select>
-      </div>
-      <div class="form-field">
-        <label data-tip="Link a project so the agent knows which codebase to work in. Required for firmware-feature and hub-feature tasks — the agent uses the project description as additional context.">Project</label>
-        <select id="abNewProject">${projOpts}</select>
-      </div>
-      <div class="form-field">
-        <label data-tip="Conditions the agent checks its own work against before submitting. One per line. Clear, testable criteria help the agent self-correct — e.g. Firmware builds without errors, Event payload includes sensor_id field.">Acceptance Criteria (one per line)</label>
-        <textarea id="abNewCriteria" rows="3" placeholder="- Firmware compiles without errors&#10;- LED blinks exactly 3 times on motion trigger&#10;- Hub receives device.motion event within 2 seconds of trigger"></textarea>
-      </div>
-      <div class="form-field">
-        <label data-tip="Directories the agent is allowed to read and modify. Leave blank to use the template defaults. Paths outside this list (and always-blocked paths like secrets/ and data/) cannot be touched.">Allowed Paths (one per line, leave blank for template defaults)</label>
-        <textarea id="abNewPaths" rows="2" placeholder="firmware/seed/src&#10;hub/backend/routers"></textarea>
-      </div>
-    `, [
-      { label: "Create Task", cls: "btn btn-primary", action: async () => {
-        const title = document.getElementById("abNewTitle").value.trim();
-        const desc  = document.getElementById("abNewDesc").value.trim();
-        if (!title || !desc) return;
-        const template   = document.getElementById("abNewTemplate").value;
-        const project_id = document.getElementById("abNewProject").value || null;
-        const criteriaRaw = document.getElementById("abNewCriteria").value.trim();
-        const pathsRaw    = document.getElementById("abNewPaths").value.trim();
-        const acceptance_criteria = criteriaRaw ? criteriaRaw.split("\n").map(s => s.trim().replace(/^[-*]\s*/, "")).filter(Boolean) : [];
-        const allowed_paths       = pathsRaw ? pathsRaw.split("\n").map(s => s.trim()).filter(Boolean) : [];
-        try {
-          await api.agentBench.createTask({ title, description: desc, template, project_id, acceptance_criteria, allowed_paths });
-          closeModal();
-          _abLoadTaskList();
-        } catch (err) { alert("Error: " + err.message); }
-      }},
-      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
-    ]);
-
-    // Update description placeholder when template changes
-    const _templatePlaceholders = {
-      "firmware-feature": "e.g. Add a PIR motion sensor on GPIO pin 14. When triggered, blink the onboard LED 3 times and publish a device.motion event to the hub with device name, sensor pin, and UTC timestamp.",
-      "hub-feature":      "e.g. Add a GET /api/sensors/latest endpoint that returns the most recent sensor reading for a given device ID from the events table.",
-      "port-to-hub":      "e.g. This project has a web server with /api/temperature and /api/motion endpoints. Port these to hub workers that store readings in the events table. Add hub check-in to the firmware and fall back to the device web server when the hub is unreachable (>10s timeout).",
-      "recipe-feature":   "e.g. Create a recipe that reads temperature from device.sensor events and forwards readings above 30°C to a webhook at http://homeassistant.local/api/webhook/hot-alert.",
-      "bug-fix":          "e.g. The firmware reboots after ~2 hours. The serial log shows a heap exhaustion error in the JSON serialisation block around line 142 of main.cpp — investigate and fix the memory leak.",
-      "custom":           "e.g. Describe what you want to build or change — include file names, variable names, or API details if you know them.",
-    };
-    const abTemplSel = document.getElementById("abNewTemplate");
-    const abDescTA   = document.getElementById("abNewDesc");
-    if (abTemplSel && abDescTA) {
-      const _updatePlaceholder = () => {
-        abDescTA.placeholder = _templatePlaceholders[abTemplSel.value] || _templatePlaceholders["custom"];
-      };
-      abTemplSel.addEventListener("change", _updatePlaceholder);
-      _updatePlaceholder();
-    }
-  };
+  document.getElementById("btnAbNewTask").onclick = () => _openAgentTaskModal();
 
   const _PORTAL_INSTALLABLE = new Set(["pio", "codex", "claude"]);
 

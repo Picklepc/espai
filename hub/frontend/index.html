@@ -179,7 +179,7 @@
             <span class="hint-sep">|</span>
             <strong>Standalone:</strong> All projects build and run independently — the hub is always optional and the ESP32 uses its own web server when the hub is unreachable.
           </div>
-          <div class="proj-detail-grid">
+          <div class="proj-detail-grid" id="projDetailGrid">
             <div>
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
                 <p class="section-heading" style="margin:0">Files</p>
@@ -192,6 +192,16 @@
               <p class="section-heading">Linked Devices</p>
               <div id="projDeviceList"><div class="empty-state">No devices linked.</div></div>
             </div>
+          </div>
+
+          <!-- Project-scoped agent tasks -->
+          <div id="projAgentSection" style="margin-top:28px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+              <p class="section-heading" style="margin:0">Agent Tasks</p>
+              <button class="btn btn-primary btn-sm" id="btnProjNewTask"
+                data-tip="Create an agent task scoped to this project — paths and criteria are inferred automatically">+ Agent Task</button>
+            </div>
+            <div id="projTaskList"></div>
           </div>
         </div>
       </section>

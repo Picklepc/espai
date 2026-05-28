@@ -18,6 +18,9 @@ runtime/
 backups/
 captures/private/
 
+# User project data — created at runtime, not tracked in repo
+projects/
+
 # Firmware catalog binaries (metadata JSONs are tracked, binaries are not)
 firmware-catalog/**/*.bin
 
