@@ -26,6 +26,7 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <Update.h>
+#include <Preferences.h>
 #include <ArduinoJson.h>
 #include <mbedtls/md.h>
 
@@ -184,7 +185,10 @@ void handleOtaComplete() {
   JsonDocument doc;
   doc["status"] = "ok";
   sendJson(200, doc);
-  delay(500);
+  // Flush TCP buffer and give hub time to read the response before we reset.
+  // Without this, ESP.restart() tears down the stack before the hub reads "ok".
+  server.client().flush();
+  delay(1500);
   ESP.restart();
 }
 
@@ -240,17 +244,27 @@ void startFallbackAP() {
 }
 
 bool connectWifi() {
-  if (strlen(WIFI_SSID) == 0) {
-    Serial.println("[wifi] No SSID configured — starting fallback AP");
+  // Prefer NVS credentials saved by provision firmware (same namespace/keys).
+  // Falls back to build-flag values, then AP mode if neither is available.
+  Preferences prefs;
+  prefs.begin("espai", true);
+  String ssid = prefs.getString("sta_ssid", WIFI_SSID);
+  String pass = prefs.getString("sta_pass", WIFI_PASS);
+  prefs.end();
+
+  if (ssid.isEmpty()) {
+    Serial.println("[wifi] No SSID — starting fallback AP");
     startFallbackAP();
     return false;
   }
+  Serial.printf("[wifi] Using SSID from %s\n", ssid == String(WIFI_SSID) ? "build flags" : "NVS");
+
   WiFi.mode(WIFI_STA);
   // Modem sleep keeps the radio alive between beacons — cuts heat significantly
   WiFi.setSleep(true);
   // 13 dBm is more than adequate; max (19.5 dBm) is only needed at extreme range
   WiFi.setTxPower(WIFI_POWER_13dBm);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(ssid.c_str(), pass.c_str());
   Serial.printf("[wifi] Connecting to %s", WIFI_SSID);
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < WIFI_TIMEOUT_MS) {

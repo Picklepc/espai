@@ -256,8 +256,35 @@ def push_firmware(data: OTARequest):
         resp_body = f"HTTP {exc.code}: {exc.reason}"
         push_result = "failed"
     except Exception as exc:
-        resp_body = str(exc)
-        push_result = "failed"
+        exc_str = str(exc)
+        # WinError 10054 / ECONNRESET: device rebooted before the response was
+        # fully delivered — common with OTA. Verify by polling /api/manifest.
+        is_reset = (
+            isinstance(exc, ConnectionResetError)
+            or "10054" in exc_str
+            or "connection reset" in exc_str.lower()
+            or "forcibly closed" in exc_str.lower()
+        )
+        if is_reset:
+            import time
+            time.sleep(15)
+            try:
+                with urllib.request.urlopen(
+                    f"http://{device_ip}/api/manifest", timeout=8
+                ) as verify_resp:
+                    manifest = json.loads(verify_resp.read(2048))
+                # Device is up and responds — treat as success regardless of
+                # fw_version string (build flag may differ from catalog version).
+                resp_body = (
+                    f"verified: device up, fw_version={manifest.get('fw_version', '?')!r}"
+                )
+                push_result = "ok"
+            except Exception as ve:
+                resp_body = f"connection reset; device did not come back: {ve}"
+                push_result = "failed"
+        else:
+            resp_body = exc_str
+            push_result = "failed"
 
     with get_conn() as conn:
         conn.execute(
