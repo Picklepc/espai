@@ -110,4 +110,68 @@ def init_db() -> None:
             created         TEXT NOT NULL,
             last_triggered  TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS agent_tasks (
+            id                  TEXT PRIMARY KEY,
+            project_id          TEXT,
+            title               TEXT NOT NULL,
+            description         TEXT NOT NULL,
+            template            TEXT NOT NULL DEFAULT 'custom',
+            status              TEXT NOT NULL DEFAULT 'draft',
+            allowed_paths       TEXT,
+            acceptance_criteria TEXT,
+            context             TEXT,
+            lane                TEXT NOT NULL DEFAULT 'dev',
+            adapter_id          TEXT,
+            created             TEXT NOT NULL,
+            updated             TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_task_messages (
+            id          TEXT PRIMARY KEY,
+            task_id     TEXT NOT NULL,
+            role        TEXT NOT NULL DEFAULT 'user',
+            content     TEXT NOT NULL,
+            timestamp   TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            id              TEXT PRIMARY KEY,
+            task_id         TEXT NOT NULL,
+            adapter_id      TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'running',
+            started         TEXT NOT NULL,
+            finished        TEXT,
+            exit_code       INTEGER,
+            log             TEXT,
+            snapshot_before TEXT,
+            snapshot_after  TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_artifacts (
+            id            TEXT PRIMARY KEY,
+            task_id       TEXT NOT NULL,
+            run_id        TEXT,
+            path          TEXT NOT NULL,
+            artifact_type TEXT NOT NULL DEFAULT 'file',
+            content       TEXT,
+            created       TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_reviews (
+            id          TEXT PRIMARY KEY,
+            task_id     TEXT NOT NULL,
+            run_id      TEXT,
+            decision    TEXT NOT NULL,
+            notes       TEXT,
+            created     TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_permissions (
+            id          TEXT PRIMARY KEY,
+            task_id     TEXT NOT NULL,
+            permission  TEXT NOT NULL,
+            granted_by  TEXT,
+            granted_at  TEXT NOT NULL
+        );
         """)

@@ -1,0 +1,20 @@
+schema: ESPAI.task-template.v1
+id: firmware-feature
+name: "Firmware Feature"
+description: "Add a new capability to the seed or project firmware"
+default_allowed_paths:
+  - "firmware/seed/src/"
+  - "firmware/seed/platformio.ini"
+  - "firmware/provision/src/"
+acceptance_criteria_template:
+  - "Firmware builds without errors (pio run)"
+  - "New feature does not increase flash usage beyond 70%"
+  - "No hardcoded credentials or network addresses"
+  - "Serial output is informative and uses [TAG] prefix"
+checks:
+  - platformio_build
+  - espai_validate
+suggested_context_questions:
+  - "Which board environment is the target?"
+  - "Should the feature degrade gracefully if peripheral is absent?"
+  - "Does this touch WiFi, OTA, or pairing logic?"

@@ -22,7 +22,7 @@ from .config import DEBUG, PORT
 from .db import get_conn, init_db
 from .discovery.mdns import mdns_manager
 from . import mqtt_publisher, theme_scheduler, ws_broker
-from .routers import admin, cards, design, devices, events, jobs, ota, projects, recipes, rules, workers
+from .routers import admin, agent_bench, cards, design, devices, events, jobs, ota, projects, recipes, rules, workers
 from .workers.runner import start_runner
 
 log = logging.getLogger(__name__)
@@ -116,7 +116,8 @@ app.include_router(ota.router,      prefix="/api/ota",      tags=["ota"])
 app.include_router(jobs.router,     prefix="/api/jobs",     tags=["jobs"])
 app.include_router(events.router,   prefix="/api/events",   tags=["events"])
 app.include_router(rules.router,    prefix="/api/rules",    tags=["rules"])
-app.include_router(admin.router,    prefix="/api/admin",    tags=["admin"])
+app.include_router(admin.router,       prefix="/api/admin",        tags=["admin"])
+app.include_router(agent_bench.router, prefix="/api/agent-bench",  tags=["agent-bench"])
 
 
 @app.websocket("/api/ws")

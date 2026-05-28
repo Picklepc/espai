@@ -1,0 +1,16 @@
+schema: ESPAI.adapter.v1
+name: codex-cli
+display_name: "OpenAI Codex CLI"
+description: "Runs tasks via the local Codex CLI tool (openai/codex)."
+cli_command: codex
+cli_detect_args: ["--version"]
+cli_run_args: ["exec", "--json"]
+input_format: prompt_file   # writes prompt to a temp file, passes path
+output_format: json_stream  # parses JSON lines from stdout
+requires_auth: false        # uses ambient OPENAI_API_KEY env var if set
+install_hint: "npm install -g @openai/codex  (requires Node 18+)"
+allowed_in_mvp: true
+lane_constraints:
+  dev: true
+  stable: false
+  production: false

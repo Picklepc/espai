@@ -12,6 +12,8 @@ DESIGN_DIR = ROOT / "design"
 FIRMWARE_CATALOG_DIR = ROOT / "firmware-catalog"
 POLICIES_DIR = ROOT / "policies"
 SCHEMAS_DIR = ROOT / "schemas"
+AGENTS_DIR = ROOT / "agents"
+AGENT_BENCH_DIR = ROOT / "agent-bench"
 
 DB_PATH = DATA_DIR / "ESPAI.db"
 

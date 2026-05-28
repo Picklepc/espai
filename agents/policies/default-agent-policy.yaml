@@ -1,0 +1,46 @@
+schema: ESPAI.policy.v1
+name: default-agent-policy
+description: >
+  Default security policy applied to all Agent Bench tasks.
+  Override per-task via agent_permissions table.
+
+# Paths agents may NEVER access regardless of task config
+blocked_paths:
+  - ".env"
+  - "secrets/"
+  - "*.private.yaml"
+  - "*.private.json"
+  - "local.yaml"
+  - "data/"
+  - "backups/"
+  - "captures/private/"
+  - "firmware/seed/secrets.ini"
+  - "agent-bench/generated/"   # agents work in their own task workspace
+
+# OTA deployment constraints
+ota:
+  allow_dev_devices: false      # set to true per-task if explicitly granted
+  allow_stable_devices: false   # never overridable in MVP
+  allow_production_devices: false  # never overridable
+
+# Release promotion
+promotion:
+  agents_may_promote: false     # humans only
+
+# Worker trust
+workers:
+  imported_start_quarantined: true
+  agent_generated_start_quarantined: true
+
+# Audit
+audit:
+  log_all_file_reads: false     # too verbose; log writes only
+  log_all_file_writes: true
+  log_ota_attempts: true
+  log_tool_invocations: true
+
+# Checks required before a task can be reviewed
+pre_review_checks:
+  - espai_validate
+  - recipe_schema
+  - worker_schema

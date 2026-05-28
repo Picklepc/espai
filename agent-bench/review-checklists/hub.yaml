@@ -1,0 +1,24 @@
+schema: ESPAI.checklist.v1
+id: hub
+name: Hub Review Checklist
+applies_to: ["hub-feature"]
+extends: general
+items:
+  - id: api_shape_unchanged
+    label: "Existing API endpoint response shapes unchanged (no breaking changes)"
+    required: true
+  - id: sql_injection_safe
+    label: "All SQL uses parameterized queries — no string interpolation"
+    required: true
+  - id: no_shell_injection
+    label: "No subprocess calls with user-controlled strings"
+    required: true
+  - id: pydantic_validated
+    label: "New POST/PATCH bodies use Pydantic models with field validators"
+    required: true
+  - id: db_migration_safe
+    label: "Any new DB tables use CREATE TABLE IF NOT EXISTS"
+    required: true
+  - id: frontend_vanilla
+    label: "Frontend changes use vanilla JS — no new npm dependencies"
+    required: true

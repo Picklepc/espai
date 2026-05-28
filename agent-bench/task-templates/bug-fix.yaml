@@ -1,0 +1,21 @@
+schema: ESPAI.task-template.v1
+id: bug-fix
+name: "Bug Fix"
+description: "Reproduce and fix a specific bug"
+default_allowed_paths:
+  - "hub/backend/"
+  - "hub/frontend/static/js/"
+  - "hub/frontend/static/css/"
+  - "firmware/seed/src/"
+  - "recipes/"
+  - "workers/"
+acceptance_criteria_template:
+  - "Bug is reproducible before fix (describe reproduction steps)"
+  - "Fix is minimal — no unrelated changes"
+  - "Existing functionality is not regressed"
+checks:
+  - espai_validate
+suggested_context_questions:
+  - "Steps to reproduce the bug?"
+  - "Expected vs actual behavior?"
+  - "Which component is affected (hub, firmware, recipe, worker)?"

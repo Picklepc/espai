@@ -1,0 +1,20 @@
+schema: ESPAI.task-template.v1
+id: recipe-feature
+name: "Recipe / Worker"
+description: "Create or modify a recipe definition or Python worker"
+default_allowed_paths:
+  - "recipes/"
+  - "workers/"
+acceptance_criteria_template:
+  - "Recipe validates against ESPAI.recipe.v1 schema"
+  - "Worker passes compat check (espai worker compat)"
+  - "Worker is marked quarantined = true on creation"
+  - "No network calls to external services without explicit permission"
+checks:
+  - recipe_schema
+  - worker_schema
+  - espai_validate
+suggested_context_questions:
+  - "What inputs does the worker consume?"
+  - "What external tools does it require (ffmpeg, python packages)?"
+  - "Should the recipe support overlays for private configuration?"

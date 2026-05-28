@@ -47,6 +47,9 @@ function showView(name) {
     document.getElementById("proj-detail-view")?.classList.add("hidden");
     document.getElementById("proj-list-view")?.classList.remove("hidden");
   }
+  if (name !== "agent-bench") {
+    _stopAbPoller();
+  }
   loadView(name);
 }
 
@@ -1265,19 +1268,435 @@ document.getElementById("btnNewRule").onclick = () => {
   updateLabel();
 };
 
+// ── Agent Bench view ───────────────────────────────────────────────────────
+
+let _abCurrentTask = null;
+let _abStatusFilter = "";
+let _abPollTimer = null;
+
+function _abStatusClass(status) {
+  return "ab-status-badge ab-status-" + (status || "draft");
+}
+
+function _abStatusLabel(status) {
+  const labels = {
+    draft: "Draft", running: "Running", awaiting_review: "Review",
+    approved: "Approved", rejected: "Rejected", needs_changes: "Changes", merged: "Merged",
+  };
+  return labels[status] || status;
+}
+
+async function loadAgentBench() {
+  _stopAbPoller();
+
+  // Silently check if enabled (no alert on 503 — expected when disabled)
+  let config;
+  try {
+    config = await api.agentBench.getConfig();
+  } catch (_) {
+    config = { enabled: false };
+  }
+
+  const disabledEl  = document.getElementById("ab-disabled-notice");
+  const listEl      = document.getElementById("ab-list-view");
+  const detailEl    = document.getElementById("ab-detail-view");
+
+  if (!config.enabled) {
+    disabledEl.classList.remove("hidden");
+    listEl.classList.add("hidden");
+    detailEl.classList.add("hidden");
+    return;
+  }
+
+  disabledEl.classList.add("hidden");
+  detailEl.classList.add("hidden");
+  listEl.classList.remove("hidden");
+
+  await _abLoadTaskList();
+}
+
+async function _abLoadTaskList() {
+  const listEl = document.getElementById("abTaskList");
+  listEl.innerHTML = '<div class="empty-state">Loading…</div>';
+  const params = _abStatusFilter ? { status: _abStatusFilter } : {};
+  const tasks = await api.agentBench.listTasks(params).catch(() => []);
+  if (!tasks.length) {
+    listEl.innerHTML = '<div class="empty-state">No agent tasks yet. Click "+ New Task" to get started.</div>';
+    return;
+  }
+  listEl.innerHTML = "";
+  for (const t of tasks) {
+    const card = el("div", "ab-task-card");
+    card.innerHTML = `
+      <div class="ab-task-info">
+        <div class="ab-task-title">${t.title}</div>
+        <div class="ab-task-meta">${t.template} · ${t.lane} lane · ${timeAgo(t.updated)}</div>
+      </div>
+      <span class="${_abStatusClass(t.status)}">${_abStatusLabel(t.status)}</span>
+    `;
+    card.onclick = () => _abOpenTask(t.id);
+    listEl.appendChild(card);
+  }
+}
+
+async function _abOpenTask(taskId) {
+  const task = await api.agentBench.getTask(taskId).catch(() => null);
+  if (!task) return;
+  _abCurrentTask = task;
+
+  document.getElementById("ab-list-view").classList.add("hidden");
+  document.getElementById("ab-detail-view").classList.remove("hidden");
+  document.getElementById("abDetailTitle").textContent = task.title;
+
+  const statusEl = document.getElementById("abDetailStatus");
+  statusEl.className = _abStatusClass(task.status);
+  statusEl.textContent = _abStatusLabel(task.status);
+
+  const metaEl = document.getElementById("abThreadMeta");
+  const allowed = JSON.parse(task.allowed_paths || "[]");
+  metaEl.innerHTML = `
+    <span>Template: <strong>${task.template}</strong></span>
+    <span>Lane: <strong>${task.lane}</strong></span>
+    ${task.adapter_id ? `<span>Adapter: <strong>${task.adapter_id}</strong></span>` : ""}
+    ${allowed.length ? `<span>Paths: <strong>${allowed.length}</strong></span>` : ""}
+  `;
+
+  await _abLoadThread(taskId);
+  await _abSetupAdapterSelect();
+  _abUpdateRunControls(task);
+
+  _startAbPoller(taskId);
+}
+
+async function _abLoadThread(taskId) {
+  const msgs = await api.agentBench.getMessages(taskId).catch(() => []);
+  const threadEl = document.getElementById("abThread");
+  threadEl.innerHTML = "";
+  if (!msgs.length) {
+    threadEl.innerHTML = '<div class="empty-state" style="font-size:12px">No messages yet.</div>';
+    return;
+  }
+  for (const m of msgs) {
+    const div = el("div", `ab-msg ab-msg-${m.role}`);
+    const ts = el("div", "ab-msg-ts", timeAgo(m.timestamp));
+    div.textContent = m.role === "system" ? "[PROMPT — scroll to view]" : m.content.slice(0, 2000) + (m.content.length > 2000 ? "\n…(truncated)" : "");
+    if (m.role === "system") {
+      div.title = m.content;
+      div.style.cursor = "pointer";
+      div.onclick = () => openModal("Agent Prompt", `<pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow:auto">${m.content}</pre>`,
+        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+    }
+    div.appendChild(ts);
+    threadEl.appendChild(div);
+  }
+  threadEl.scrollTop = threadEl.scrollHeight;
+}
+
+async function _abSetupAdapterSelect() {
+  const sel = document.getElementById("abAdapterSelect");
+  sel.innerHTML = "";
+  let adapters = [];
+  try {
+    adapters = await api.agentBench.listAdapters();
+  } catch (_) {
+    adapters = [{ name: "manual", display_name: "Manual (Copy/Paste)", installed: true }];
+  }
+  for (const a of adapters) {
+    const opt = document.createElement("option");
+    opt.value = a.name;
+    opt.textContent = a.display_name + (a.installed === false ? " (not installed)" : "");
+    if (a.installed === false) opt.disabled = true;
+    sel.appendChild(opt);
+  }
+  if (_abCurrentTask?.adapter_id) sel.value = _abCurrentTask.adapter_id;
+}
+
+function _abUpdateRunControls(task) {
+  const runPanel   = document.getElementById("abRunPanel");
+  const pastePanel = document.getElementById("abPastePanel");
+  const reviewPanel = document.getElementById("abReviewPanel");
+
+  const canRun    = ["draft", "needs_changes"].includes(task.status);
+  const needsPaste = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
+  const needsReview = ["awaiting_review"].includes(task.status);
+
+  runPanel.style.display = canRun ? "" : "none";
+  pastePanel.classList.toggle("hidden", !needsPaste);
+  reviewPanel.classList.toggle("hidden", !needsReview);
+}
+
+function _startAbPoller(taskId) {
+  _stopAbPoller();
+  _abPollTimer = setInterval(async () => {
+    const task = await api.agentBench.getTask(taskId).catch(() => null);
+    if (!task) return;
+    _abCurrentTask = task;
+    const statusEl = document.getElementById("abDetailStatus");
+    if (statusEl) {
+      statusEl.className = _abStatusClass(task.status);
+      statusEl.textContent = _abStatusLabel(task.status);
+    }
+    _abUpdateRunControls(task);
+    if (["running"].includes(task.status)) {
+      await _abLoadThread(taskId);
+    }
+  }, 3000);
+}
+
+function _stopAbPoller() {
+  if (_abPollTimer) { clearInterval(_abPollTimer); _abPollTimer = null; }
+}
+
+// Agent Bench event wiring (runs once DOM is ready)
+function _abWireEvents() {
+  document.getElementById("btnAbBack").onclick = () => {
+    _stopAbPoller();
+    _abCurrentTask = null;
+    document.getElementById("ab-detail-view").classList.add("hidden");
+    document.getElementById("ab-list-view").classList.remove("hidden");
+    _abLoadTaskList();
+  };
+
+  document.getElementById("btnAbEnable").onclick = async () => {
+    try {
+      await api.agentBench.updateConfig({ enabled: true, require_human_review: true, allowed_adapters: ["manual"] });
+      await loadAgentBench();
+    } catch (err) { alert("Error: " + err.message); }
+  };
+
+  document.getElementById("btnAbNewTask").onclick = async () => {
+    let projects = [];
+    try { projects = await api.projects.list(); } catch (_) {}
+    const projOpts = [
+      '<option value="">— no project —</option>',
+      ...projects.map(p => `<option value="${p.id}">${p.name}</option>`),
+    ].join("");
+    openModal("New Agent Task", `
+      <div class="form-field">
+        <label>Title</label>
+        <input type="text" id="abNewTitle" placeholder="Add motion detection to firmware">
+      </div>
+      <div class="form-field">
+        <label>Description</label>
+        <textarea id="abNewDesc" rows="4" placeholder="Describe what the agent should build or fix…"></textarea>
+      </div>
+      <div class="form-field">
+        <label>Template</label>
+        <select id="abNewTemplate">
+          <option value="custom">custom</option>
+          <option value="firmware-feature">firmware-feature</option>
+          <option value="hub-feature">hub-feature</option>
+          <option value="recipe-feature">recipe-feature</option>
+          <option value="bug-fix">bug-fix</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Project (optional)</label>
+        <select id="abNewProject">${projOpts}</select>
+      </div>
+      <div class="form-field">
+        <label>Acceptance criteria (one per line)</label>
+        <textarea id="abNewCriteria" rows="3" placeholder="- Builds without error&#10;- LED blinks correctly"></textarea>
+      </div>
+      <div class="form-field">
+        <label>Allowed paths (one per line)</label>
+        <textarea id="abNewPaths" rows="2" placeholder="firmware/seed/src&#10;hub/backend/routers"></textarea>
+      </div>
+    `, [
+      { label: "Create Task", cls: "btn btn-primary", action: async () => {
+        const title = document.getElementById("abNewTitle").value.trim();
+        const desc  = document.getElementById("abNewDesc").value.trim();
+        if (!title || !desc) return;
+        const template   = document.getElementById("abNewTemplate").value;
+        const project_id = document.getElementById("abNewProject").value || null;
+        const criteriaRaw = document.getElementById("abNewCriteria").value.trim();
+        const pathsRaw    = document.getElementById("abNewPaths").value.trim();
+        const acceptance_criteria = criteriaRaw ? criteriaRaw.split("\n").map(s => s.trim().replace(/^[-*]\s*/, "")).filter(Boolean) : [];
+        const allowed_paths       = pathsRaw ? pathsRaw.split("\n").map(s => s.trim()).filter(Boolean) : [];
+        try {
+          await api.agentBench.createTask({ title, description: desc, template, project_id, acceptance_criteria, allowed_paths });
+          closeModal();
+          _abLoadTaskList();
+        } catch (err) { alert("Error: " + err.message); }
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  };
+
+  document.getElementById("btnAbDoctor").onclick = async () => {
+    const d = await api.agentBench.doctor().catch(err => ({ error: err.message }));
+    if (d.error) { openModal("Doctor", `<p class="empty-state">${d.error}</p>`, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]); return; }
+    const rows = Object.entries(d.tools || {}).map(([name, info]) => {
+      const color = info.found ? "var(--color-success)" : "var(--color-text-muted)";
+      return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:13px">
+        <span style="color:${color};font-weight:700;min-width:14px">${info.found ? "✓" : "—"}</span>
+        <span style="min-width:80px;color:var(--color-text-muted)">${name}</span>
+        <span style="font-size:12px">${info.version || (info.found ? "found" : "not found")}</span>
+      </div>`;
+    }).join("");
+    const adapterRows = Object.entries(d.adapters_ready || {}).map(([k, v]) => {
+      const color = v ? "var(--color-success)" : "var(--color-text-muted)";
+      return `<span style="color:${color};font-size:12px;font-weight:700">${k}</span>`;
+    }).join(" · ");
+    openModal("Agent Bench Doctor", `
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:14px">Tool availability:</p>
+      ${rows}
+      <hr style="border:none;border-top:1px solid var(--color-card-border);margin:12px 0">
+      <p style="font-size:12px;margin-bottom:8px">Adapters ready: ${adapterRows}</p>
+    `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+  };
+
+  document.getElementById("btnAbSettings").onclick = async () => {
+    let cfg = { enabled: true, allow_dev_device_deploy: false, require_human_review: true, allowed_adapters: ["manual"] };
+    try { cfg = await api.agentBench.getConfig(); } catch (_) {}
+    openModal("Agent Bench Settings", `
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
+        <input type="checkbox" id="abSetEnabled" ${cfg.enabled ? "checked" : ""}> Enabled
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
+        <input type="checkbox" id="abSetReview" ${cfg.require_human_review ? "checked" : ""}> Require human review before merge
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
+        <input type="checkbox" id="abSetDevDeploy" ${cfg.allow_dev_device_deploy ? "checked" : ""}> Allow dev device deployment
+      </label>
+      <div class="form-field">
+        <label>Allowed adapters (comma-separated)</label>
+        <input type="text" id="abSetAdapters" value="${(cfg.allowed_adapters || ["manual"]).join(",")}">
+      </div>
+      <p style="font-size:11px;color:var(--color-text-muted);margin-top:6px">Restart hub after saving for changes to take full effect.</p>
+    `, [
+      { label: "Save", cls: "btn btn-primary", action: async () => {
+        const enabled = document.getElementById("abSetEnabled").checked;
+        const require_human_review = document.getElementById("abSetReview").checked;
+        const allow_dev_device_deploy = document.getElementById("abSetDevDeploy").checked;
+        const adaptersRaw = document.getElementById("abSetAdapters").value.trim();
+        const allowed_adapters = adaptersRaw ? adaptersRaw.split(",").map(s => s.trim()).filter(Boolean) : ["manual"];
+        try {
+          await api.agentBench.updateConfig({ enabled, require_human_review, allow_dev_device_deploy, allowed_adapters });
+          closeModal();
+          await loadAgentBench();
+        } catch (err) { alert("Error: " + err.message); }
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  };
+
+  document.getElementById("btnAbRun").onclick = async () => {
+    if (!_abCurrentTask) return;
+    const adapter_id = document.getElementById("abAdapterSelect").value;
+    try {
+      const result = await api.agentBench.runTask(_abCurrentTask.id, { adapter_id });
+      if (result.adapter === "manual") {
+        document.getElementById("abPastePanel").classList.remove("hidden");
+        document.getElementById("abRunPanel").style.display = "none";
+        await _abLoadThread(_abCurrentTask.id);
+        const task = await api.agentBench.getTask(_abCurrentTask.id).catch(() => _abCurrentTask);
+        _abCurrentTask = task;
+        _abUpdateRunControls(task);
+      } else {
+        const statusEl = document.getElementById("abDetailStatus");
+        if (statusEl) { statusEl.className = _abStatusClass("running"); statusEl.textContent = "Running"; }
+      }
+    } catch (err) { alert("Run failed: " + err.message); }
+  };
+
+  document.getElementById("btnAbPasteSubmit").onclick = async () => {
+    if (!_abCurrentTask) return;
+    const content = document.getElementById("abPasteInput").value.trim();
+    if (!content) return;
+    try {
+      await api.agentBench.addMessage(_abCurrentTask.id, { role: "agent", content });
+      document.getElementById("abPasteInput").value = "";
+      await _abLoadThread(_abCurrentTask.id);
+      const task = await api.agentBench.getTask(_abCurrentTask.id).catch(() => _abCurrentTask);
+      _abCurrentTask = task;
+      _abUpdateRunControls(task);
+    } catch (err) { alert("Error: " + err.message); }
+  };
+
+  document.getElementById("btnAbViewPrompt").onclick = async () => {
+    if (!_abCurrentTask) return;
+    try {
+      const { prompt } = await api.agentBench.getPrompt(_abCurrentTask.id);
+      openModal("Agent Prompt", `
+        <pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:450px;overflow:auto;line-height:1.5">${prompt}</pre>
+      `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+    } catch (err) { alert("Error: " + err.message); }
+  };
+
+  document.getElementById("btnAbViewDiff").onclick = async () => {
+    if (!_abCurrentTask) return;
+    try {
+      const { diffs } = await api.agentBench.getDiff(_abCurrentTask.id);
+      if (!diffs.length) {
+        openModal("No Changes", '<div class="empty-state">No file changes recorded for the latest run.</div>',
+          [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+        return;
+      }
+      const html = diffs.map(d => {
+        const lines = d.diff.split("\n").map(line => {
+          const cls = line.startsWith("+") && !line.startsWith("+++") ? "add"
+                    : line.startsWith("-") && !line.startsWith("---") ? "del"
+                    : line.startsWith("@@") ? "hdr" : "ctx";
+          return `<div class="ab-diff-line ${cls}">${line.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
+        }).join("");
+        return `<div class="ab-diff-file">
+          <div class="ab-diff-file-header">
+            <span class="ab-diff-status-${d.status}">${d.status.toUpperCase()}</span>
+            <span>${d.path}</span>
+          </div>
+          <div class="ab-diff-content">${lines}</div>
+        </div>`;
+      }).join("");
+      openModal(`Diff — ${diffs.length} file(s) changed`,
+        `<div style="max-height:500px;overflow-y:auto">${html}</div>`,
+        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }],
+      );
+    } catch (err) { alert("Error: " + err.message); }
+  };
+
+  const _abDoReview = async (decision) => {
+    if (!_abCurrentTask) return;
+    const notes = document.getElementById("abReviewNotes").value.trim();
+    try {
+      await api.agentBench.review(_abCurrentTask.id, { decision, notes: notes || null });
+      document.getElementById("abReviewNotes").value = "";
+      const task = await api.agentBench.getTask(_abCurrentTask.id).catch(() => _abCurrentTask);
+      _abCurrentTask = task;
+      const statusEl = document.getElementById("abDetailStatus");
+      if (statusEl) { statusEl.className = _abStatusClass(task.status); statusEl.textContent = _abStatusLabel(task.status); }
+      _abUpdateRunControls(task);
+    } catch (err) { alert("Error: " + err.message); }
+  };
+
+  document.getElementById("btnAbApprove").onclick  = () => _abDoReview("approved");
+  document.getElementById("btnAbChanges").onclick  = () => _abDoReview("needs_changes");
+  document.getElementById("btnAbReject").onclick   = () => _abDoReview("rejected");
+
+  // Filter buttons
+  document.getElementById("abFilterRow").addEventListener("click", async (e) => {
+    const btn = e.target.closest(".ab-filter");
+    if (!btn) return;
+    _abStatusFilter = btn.dataset.status;
+    document.querySelectorAll(".ab-filter").forEach(b => b.classList.toggle("active", b === btn));
+    await _abLoadTaskList();
+  });
+}
+
 // ── View router ────────────────────────────────────────────────────────────
 
 const viewLoaders = {
-  fleet:    loadFleet,
-  projects: loadProjects,
-  recipes:  loadRecipes,
-  workers:  loadWorkers,
-  cards:    loadCards,
-  jobs:     loadJobs,
-  ota:      loadOTA,
-  design:   loadDesign,
-  events:   loadEvents,
-  rules:    loadRules,
+  fleet:         loadFleet,
+  projects:      loadProjects,
+  recipes:       loadRecipes,
+  workers:       loadWorkers,
+  cards:         loadCards,
+  jobs:          loadJobs,
+  ota:           loadOTA,
+  design:        loadDesign,
+  events:        loadEvents,
+  rules:         loadRules,
+  "agent-bench": loadAgentBench,
 };
 
 function loadView(name) {
@@ -1396,6 +1815,7 @@ async function _toggleNotifications() {
   await loadTokens();
   checkHubStatus();
   setInterval(checkHubStatus, 30_000);
+  _abWireEvents();
   showView("fleet");
   setInterval(() => {
     const active = document.querySelector(".view.active");

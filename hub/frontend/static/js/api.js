@@ -126,4 +126,27 @@ const api = {
 
   // OTA rollout
   otaRollout: (body) => apiFetch("/api/ota/rollout", { method: "POST", body: JSON.stringify(body) }),
+
+  // Agent Bench
+  agentBench: {
+    getConfig:     ()           => apiFetch("/api/agent-bench/config"),
+    updateConfig:  (body)       => apiFetch("/api/agent-bench/config",    { method: "POST", body: JSON.stringify(body) }),
+    doctor:        ()           => apiFetch("/api/agent-bench/doctor"),
+    listAdapters:  ()           => apiFetch("/api/agent-bench/adapters"),
+    testAdapter:   (name)       => apiFetch(`/api/agent-bench/adapters/${encodeURIComponent(name)}/test`, { method: "POST" }),
+    listTasks:     (params)     => {
+      const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();
+      return apiFetch(`/api/agent-bench/tasks${q ? "?" + q : ""}`);
+    },
+    createTask:    (body)       => apiFetch("/api/agent-bench/tasks",     { method: "POST", body: JSON.stringify(body) }),
+    getTask:       (id)         => apiFetch(`/api/agent-bench/tasks/${id}`),
+    getPrompt:     (id)         => apiFetch(`/api/agent-bench/tasks/${id}/prompt`),
+    getMessages:   (id)         => apiFetch(`/api/agent-bench/tasks/${id}/messages`),
+    addMessage:    (id, body)   => apiFetch(`/api/agent-bench/tasks/${id}/message`, { method: "POST", body: JSON.stringify(body) }),
+    getDiff:       (id)         => apiFetch(`/api/agent-bench/tasks/${id}/diff`),
+    getArtifacts:  (id)         => apiFetch(`/api/agent-bench/tasks/${id}/artifacts`),
+    runTask:       (id, body)   => apiFetch(`/api/agent-bench/tasks/${id}/run`,     { method: "POST", body: JSON.stringify(body) }),
+    review:        (id, body)   => apiFetch(`/api/agent-bench/tasks/${id}/review`,  { method: "POST", body: JSON.stringify(body) }),
+    listRuns:      (taskId)     => apiFetch(`/api/agent-bench/runs${taskId ? "?task_id=" + taskId : ""}`),
+  },
 };

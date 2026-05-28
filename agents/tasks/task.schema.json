@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ESPAI Agent Task",
+  "description": "Schema for an Agent Bench task definition",
+  "type": "object",
+  "required": ["title", "description", "template"],
+  "properties": {
+    "id": { "type": "string", "description": "UUID, assigned by hub" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "description": { "type": "string", "minLength": 1 },
+    "template": {
+      "type": "string",
+      "enum": ["firmware-feature", "hub-feature", "recipe-feature", "bug-fix", "custom"]
+    },
+    "project_id": { "type": ["string", "null"] },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths agent may read/write. Hub enforces this list."
+    },
+    "context": { "type": "string", "description": "Additional freeform context" },
+    "lane": {
+      "type": "string",
+      "enum": ["dev", "stable", "production"],
+      "default": "dev"
+    },
+    "adapter_id": { "type": ["string", "null"] },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "running", "awaiting_review", "approved", "rejected", "merged"],
+      "default": "draft"
+    }
+  },
+  "additionalProperties": false
+}

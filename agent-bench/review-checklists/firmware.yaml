@@ -1,0 +1,24 @@
+schema: ESPAI.checklist.v1
+id: firmware
+name: Firmware Review Checklist
+applies_to: ["firmware-feature"]
+extends: general
+items:
+  - id: build_clean
+    label: "PlatformIO build succeeds with 0 errors, 0 warnings"
+    required: true
+  - id: flash_size
+    label: "Flash usage under 70% (leave headroom for OTA)"
+    required: true
+  - id: no_hardcoded_wifi
+    label: "No hardcoded WiFi SSID/password"
+    required: true
+  - id: ota_intact
+    label: "/ota/update endpoint still works correctly"
+    required: true
+  - id: manifest_intact
+    label: "/api/manifest returns valid ESPAI.device.v1 schema"
+    required: true
+  - id: sleep_compatible
+    label: "Changes are compatible with modem sleep (WiFi.setSleep(true))"
+    required: false

@@ -1,0 +1,22 @@
+schema: ESPAI.task-template.v1
+id: hub-feature
+name: "Hub Feature"
+description: "Add or modify a hub backend endpoint or frontend view"
+default_allowed_paths:
+  - "hub/backend/routers/"
+  - "hub/backend/"
+  - "hub/frontend/static/js/"
+  - "hub/frontend/index.html"
+  - "hub/frontend/static/css/"
+acceptance_criteria_template:
+  - "All existing API endpoints still return expected shapes"
+  - "New endpoint follows existing router patterns (Pydantic, get_conn)"
+  - "Frontend changes work in vanilla JS without a bundler"
+  - "No credentials or IPs hardcoded in frontend"
+checks:
+  - espai_validate
+  - backend_import
+suggested_context_questions:
+  - "Does this touch authentication or pairing?"
+  - "Does this add a new database table?"
+  - "Is this a read-only view or does it mutate state?"

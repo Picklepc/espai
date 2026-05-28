@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python -m pip show platformio 2>$null)"
+    ]
+  }
+}

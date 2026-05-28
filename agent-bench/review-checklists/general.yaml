@@ -1,0 +1,23 @@
+schema: ESPAI.checklist.v1
+id: general
+name: General Review Checklist
+applies_to: ["*"]
+items:
+  - id: no_secrets
+    label: "No hardcoded secrets, credentials, or IPs"
+    required: true
+  - id: no_private_access
+    label: "Agent did not access blocked paths (.env, secrets/, private overlays)"
+    required: true
+  - id: minimal_changes
+    label: "Changes are minimal and targeted to the task"
+    required: false
+  - id: schema_valid
+    label: "All ESPAI schemas still validate"
+    required: true
+  - id: tests_pass
+    label: "All applicable checks passed"
+    required: true
+  - id: reviewed_diff
+    label: "Diff reviewed line by line"
+    required: true

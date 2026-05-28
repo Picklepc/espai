@@ -137,6 +137,17 @@ def cmd_doctor(args):
     check_cmd("docker",     "--version", label="Docker")
     check_cmd("ffmpeg",     "-version",  label="FFmpeg")
     check_cmd("code",       "--version", label="VSCode")
+    check_cmd("node",       "--version", label="Node.js")
+
+    print()
+    print("  Agent Bench adapters:")
+    agent_bench_enabled = os.environ.get("ESPAI_AGENT_BENCH", "").lower() in ("1", "true", "yes")
+    if agent_bench_enabled:
+        ok("Agent Bench: enabled")
+    else:
+        warn("Agent Bench: disabled  (set ESPAI_AGENT_BENCH=true in .env to enable)")
+    check_cmd("claude",     "--version", label="Claude Code CLI")
+    check_cmd("codex",      "--version", label="Codex CLI")
 
     print()
     print("  Workspace:")

@@ -102,6 +102,7 @@
         <li><a href="#" class="nav-item" data-view="design">Design</a></li>
         <li><a href="#" class="nav-item" data-view="events">Events</a></li>
         <li><a href="#" class="nav-item" data-view="rules">Rules</a></li>
+        <li><a href="#" class="nav-item" data-view="agent-bench">Agent Bench</a></li>
       </ul>
       <div class="sidebar-footer">
         <span class="hub-status" id="hubStatus">Connecting…</span>
@@ -254,6 +255,97 @@
         <div class="rule-list" id="ruleList">
           <div class="empty-state">No rules yet. Rules fire automatically when matching events are published.</div>
         </div>
+      </section>
+
+      <!-- Agent Bench view -->
+      <section class="view" id="view-agent-bench">
+
+        <!-- Disabled notice -->
+        <div id="ab-disabled-notice" class="hidden">
+          <header class="view-header"><h1>Agent Bench</h1></header>
+          <div class="ab-disabled-panel">
+            <div class="ab-disabled-icon">&#x1F916;</div>
+            <p>Agent Bench is disabled.</p>
+            <p style="font-size:13px;color:var(--color-text-muted);margin:6px 0 18px">
+              Set <code>ESPAI_AGENT_BENCH=true</code> in your <code>.env</code> and restart the hub to enable AI-assisted development.
+            </p>
+            <button class="btn btn-primary" id="btnAbEnable">Enable Agent Bench</button>
+          </div>
+        </div>
+
+        <!-- Task list subview -->
+        <div id="ab-list-view" class="hidden">
+          <header class="view-header">
+            <h1>Agent Bench</h1>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary" id="btnAbDoctor">&#x1F50E; Doctor</button>
+              <button class="btn btn-secondary" id="btnAbSettings">&#x2699; Settings</button>
+              <button class="btn btn-primary"   id="btnAbNewTask">+ New Task</button>
+            </div>
+          </header>
+          <div class="ab-filter-row" id="abFilterRow">
+            <button class="ab-filter active" data-status="">All</button>
+            <button class="ab-filter" data-status="draft">Draft</button>
+            <button class="ab-filter" data-status="running">Running</button>
+            <button class="ab-filter" data-status="awaiting_review">Review</button>
+            <button class="ab-filter" data-status="approved">Approved</button>
+            <button class="ab-filter" data-status="rejected">Rejected</button>
+          </div>
+          <div id="abTaskList" class="ab-task-list">
+            <div class="empty-state">No agent tasks yet.</div>
+          </div>
+        </div>
+
+        <!-- Task detail subview -->
+        <div id="ab-detail-view" class="hidden">
+          <header class="view-header">
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="btn btn-secondary btn-sm" id="btnAbBack">← Back</button>
+              <h1 id="abDetailTitle">Task</h1>
+              <span class="ab-status-badge" id="abDetailStatus"></span>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary btn-sm" id="btnAbViewPrompt">View Prompt</button>
+              <button class="btn btn-secondary btn-sm" id="btnAbViewDiff">View Diff</button>
+            </div>
+          </header>
+
+          <div class="ab-detail-grid">
+            <!-- Left: thread + run controls -->
+            <div class="ab-thread-panel">
+              <div id="abThreadMeta" class="ab-thread-meta"></div>
+              <div id="abThread" class="ab-thread"></div>
+              <!-- Manual adapter: paste response -->
+              <div id="abPastePanel" class="hidden">
+                <div class="form-field" style="margin-top:12px">
+                  <label>Paste agent response</label>
+                  <textarea id="abPasteInput" rows="5" placeholder="Paste the agent's response here…"></textarea>
+                </div>
+                <button class="btn btn-primary btn-sm" id="btnAbPasteSubmit">Submit Response</button>
+              </div>
+              <!-- Run control -->
+              <div id="abRunPanel" class="ab-run-panel">
+                <select id="abAdapterSelect" class="ab-adapter-select"></select>
+                <button class="btn btn-primary btn-sm" id="btnAbRun">&#x25B6; Run Task</button>
+              </div>
+            </div>
+
+            <!-- Right: review panel -->
+            <div id="abReviewPanel" class="ab-review-panel hidden">
+              <h3 class="section-heading">Review</h3>
+              <div class="form-field">
+                <label>Notes (optional)</label>
+                <textarea id="abReviewNotes" rows="4" placeholder="Explain your decision…"></textarea>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn ab-btn-approve" id="btnAbApprove">&#x2713; Approve</button>
+                <button class="btn ab-btn-changes" id="btnAbChanges">&#x21BA; Needs Changes</button>
+                <button class="btn ab-btn-reject"  id="btnAbReject">&#x2715; Reject</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </section>
 
     </main>

@@ -1,0 +1,16 @@
+schema: ESPAI.adapter.v1
+name: claude-code-cli
+display_name: "Claude Code CLI"
+description: "Runs tasks via the Anthropic Claude Code CLI tool."
+cli_command: claude
+cli_detect_args: ["--version"]
+cli_run_args: ["--print", "--dangerously-skip-permissions"]
+input_format: stdin_prompt   # pipes prompt to stdin
+output_format: text_stream   # captures stdout as streamed text
+requires_auth: false         # uses ambient ANTHROPIC_API_KEY or stored auth
+install_hint: "npm install -g @anthropic-ai/claude-code  (requires Node 18+)"
+allowed_in_mvp: true
+lane_constraints:
+  dev: true
+  stable: false
+  production: false
