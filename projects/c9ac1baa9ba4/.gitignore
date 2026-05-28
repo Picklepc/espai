@@ -1,0 +1,4 @@
+captures/
+.pio/
+*.private.*
+secrets.*

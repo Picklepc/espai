@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🔔 Jingle Bells — ESPAI</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #060d1f;
+      --bg2:      #0d1b3e;
+      --gold:     #d4af37;
+      --gold2:    #f0d060;
+      --red:      #e63946;
+      --green:    #2d6a4f;
+      --green2:   #52b788;
+      --text:     #ccd6f6;
+      --active:   #ff6b6b;
+      --ball-a:   #e63946;
+      --ball-b:   #c1121f;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Georgia', serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow-x: hidden;
+      user-select: none;
+    }
+
+    /* ── Snow ── */
+    #snow-canvas {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Layout ── */
+    #app {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 780px;
+      padding: 32px 24px 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 28px;
+    }
+
+    /* ── Title ── */
+    h1 {
+      font-size: clamp(2rem, 6vw, 3.4rem);
+      color: var(--gold2);
+      text-shadow: 0 0 24px rgba(212,175,55,0.5), 0 0 2px #fff;
+      letter-spacing: 0.05em;
+      text-align: center;
+      animation: glow 3s ease-in-out infinite alternate;
+    }
+    @keyframes glow {
+      from { text-shadow: 0 0 12px rgba(212,175,55,0.4); }
+      to   { text-shadow: 0 0 32px rgba(212,175,55,0.9), 0 0 60px rgba(212,175,55,0.3); }
+    }
+
+    /* ── Device status ── */
+    #status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.85rem;
+      color: var(--text);
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 6px 16px;
+    }
+    .dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
+    }
+    .dot.connected    { background: var(--green2); box-shadow: 0 0 6px var(--green2); }
+    .dot.disconnected { background: var(--red); }
+    .dot.searching    { background: var(--gold); animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    /* ── Lyrics stage ── */
+    #stage {
+      position: relative;
+      width: 100%;
+      background: linear-gradient(180deg, rgba(13,27,62,0.8) 0%, rgba(6,13,31,0.95) 100%);
+      border: 1px solid rgba(212,175,55,0.2);
+      border-radius: 16px;
+      padding: 56px 32px 32px;
+      min-height: 220px;
+    }
+
+    /* ── Ball ── */
+    #ball {
+      position: absolute;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #ff9999, var(--ball-a) 50%, var(--ball-b));
+      box-shadow: 0 2px 8px rgba(230,57,70,0.7), inset 0 1px 2px rgba(255,255,255,0.4);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      transition: transform 0.08s ease-out;
+      z-index: 10;
+    }
+    #ball.squish {
+      animation: squish 0.18s ease-out forwards;
+    }
+    @keyframes squish {
+      0%   { transform: translate(-50%, -50%) scaleX(1.6) scaleY(0.5); }
+      60%  { transform: translate(-50%, -50%) scaleX(0.9) scaleY(1.1); }
+      100% { transform: translate(-50%, -50%) scale(1); }
+    }
+
+    /* ── Lyrics ── */
+    #lyrics {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .lyric-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      line-height: 1.4;
+    }
+    .word {
+      font-size: clamp(1.1rem, 3.5vw, 1.55rem);
+      color: var(--gold);
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: color 0.05s, text-shadow 0.1s, transform 0.05s;
+      cursor: default;
+    }
+    .word.active {
+      color: var(--active);
+      text-shadow: 0 0 16px rgba(255,107,107,0.8);
+      transform: scale(1.12);
+    }
+    .word.dim {
+      color: rgba(212,175,55,0.35);
+    }
+
+    /* ── Section dividers ── */
+    .chorus-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--green2);
+      opacity: 0.7;
+      margin-top: 8px;
+    }
+
+    /* ── Controls ── */
+    #controls {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 28px;
+      font-size: 1rem;
+      font-family: inherit;
+      font-weight: bold;
+      letter-spacing: 0.05em;
+      transition: transform 0.1s, box-shadow 0.1s, opacity 0.2s;
+    }
+    button:active { transform: scale(0.96); }
+    #btnPlay {
+      background: linear-gradient(135deg, var(--green), var(--green2));
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(45,106,79,0.5);
+    }
+    #btnPlay:hover  { box-shadow: 0 6px 20px rgba(82,183,136,0.5); }
+    #btnPlay:disabled { opacity: 0.4; cursor: default; }
+    #btnStop {
+      background: linear-gradient(135deg, #7a1921, var(--red));
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(230,57,70,0.4);
+    }
+    #btnStop:hover { box-shadow: 0 6px 20px rgba(230,57,70,0.6); }
+    #btnStop:disabled { opacity: 0.4; cursor: default; }
+
+    /* ── Device IP input ── */
+    #ip-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: rgba(204,214,246,0.6);
+    }
+    #ip-row input {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 5px 10px;
+      font-size: 0.82rem;
+      width: 160px;
+      outline: none;
+    }
+    #ip-row input:focus { border-color: var(--gold); }
+    #ip-row button {
+      padding: 5px 12px;
+      font-size: 0.78rem;
+      background: rgba(212,175,55,0.15);
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      border-radius: 6px;
+    }
+    #ip-row button:hover { background: rgba(212,175,55,0.25); }
+
+    /* ── Footer ── */
+    footer {
+      position: relative;
+      z-index: 1;
+      font-size: 0.72rem;
+      color: rgba(204,214,246,0.3);
+      padding-bottom: 16px;
+    }
+
+    /* ── Lights garland ── */
+    #garland {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .bulb {
+      width: 12px; height: 18px;
+      border-radius: 50% 50% 40% 40% / 60% 60% 40% 40%;
+      animation: blinkBulb var(--d) var(--delay) ease-in-out infinite alternate;
+    }
+    @keyframes blinkBulb {
+      from { opacity: 0.25; filter: brightness(0.6); }
+      to   { opacity: 1;    filter: brightness(1.4) drop-shadow(0 0 5px currentColor); }
+    }
+
+    /* ── Tooltip ── */
+    #appTip {
+      position: fixed;
+      z-index: 9999;
+      background: rgba(10,15,35,0.95);
+      color: #ccd6f6;
+      border: 1px solid rgba(212,175,55,0.35);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.75rem;
+      font-family: 'Georgia', serif;
+      max-width: 240px;
+      pointer-events: none;
+      white-space: normal;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="snow-canvas"></canvas>
+
+  <div id="app">
+    <h1>🔔 Jingle Bells 🔔</h1>
+
+    <div id="garland"></div>
+
+    <div id="status-bar">
+      <span class="dot searching" id="statusDot" data-tip="Connection status — green: connected, gold: searching, red: disconnected"></span>
+      <span id="statusText">Searching for ESP32…</span>
+    </div>
+
+    <div id="stage">
+      <div id="ball"></div>
+      <div id="lyrics"></div>
+    </div>
+
+    <div id="controls">
+      <button id="btnPlay" data-tip="Start the Jingle Bells LED sequence on the ESP32 and begin the karaoke animation">▶&nbsp; Play</button>
+      <button id="btnStop" disabled data-tip="Stop the LED blink sequence and halt the karaoke animation">■&nbsp; Stop</button>
+    </div>
+
+    <div id="ip-row">
+      <span>ESP32 IP:</span>
+      <input type="text" id="ipInput" placeholder="192.168.x.x" spellcheck="false" data-tip="Local IP address of your Jingle Bells ESP32 node — check your router or serial monitor">
+      <button id="btnConnect" data-tip="Verify the ESP32 is reachable at the entered IP address">Connect</button>
+    </div>
+  </div>
+
+  <footer>ESPAI · Jingle Bells · v0.1.0</footer>
+  <div id="appTip"></div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    // ── Beat / lyric data ─────────────────────────────────────────────────
+    // MUST match BEATS[] in firmware/src/main.cpp exactly.
+    const SONG_DURATION_MS = 17500;
+    const BEATS = [
+      // Chorus 1 ————————————————————————————————————————
+      // "Jingle bells, jingle bells,"
+      { t:    0, w: 'Jingle',    line: 0 },
+      { t:  500, w: 'bells,',    line: 0 },
+      { t: 1000, w: 'jingle',    line: 0 },
+      { t: 1500, w: 'bells,',    line: 0 },
+      // "Jingle all the way,"
+      { t: 2000, w: 'Jingle',    line: 1 },
+      { t: 2500, w: 'all',       line: 1 },
+      { t: 2750, w: 'the',       line: 1 },
+      { t: 3000, w: 'way,',      line: 1 },
+      // "Oh, what fun it is to ride"
+      { t: 4000, w: 'Oh,',       line: 2 },
+      { t: 4250, w: 'what',      line: 2 },
+      { t: 4500, w: 'fun',       line: 2 },
+      { t: 4750, w: 'it',        line: 2 },
+      { t: 5000, w: 'is',        line: 2 },
+      { t: 5250, w: 'to',        line: 2 },
+      { t: 5500, w: 'ride',      line: 2 },
+      // "In a one-horse open sleigh!"
+      { t: 6000, w: 'In',        line: 3 },
+      { t: 6250, w: 'a',         line: 3 },
+      { t: 6500, w: 'one-horse', line: 3 },
+      { t: 7000, w: 'open',      line: 3 },
+      { t: 7500, w: 'sleigh!',   line: 3 },
+      // Chorus 2 ————————————————————————————————————————
+      // "Jingle bells, jingle bells,"
+      { t:  8500, w: 'Jingle',    line: 4 },
+      { t:  9000, w: 'bells,',    line: 4 },
+      { t:  9500, w: 'jingle',    line: 4 },
+      { t: 10000, w: 'bells,',    line: 4 },
+      // "Jingle all the way,"
+      { t: 10500, w: 'Jingle',    line: 5 },
+      { t: 11000, w: 'all',       line: 5 },
+      { t: 11250, w: 'the',       line: 5 },
+      { t: 11500, w: 'way,',      line: 5 },
+      // "Oh, what fun it is to ride"
+      { t: 12500, w: 'Oh,',       line: 6 },
+      { t: 12750, w: 'what',      line: 6 },
+      { t: 13000, w: 'fun',       line: 6 },
+      { t: 13250, w: 'it',        line: 6 },
+      { t: 13500, w: 'is',        line: 6 },
+      { t: 13750, w: 'to',        line: 6 },
+      { t: 14000, w: 'ride',      line: 6 },
+      // "In a one-horse open sleigh!"
+      { t: 14500, w: 'In',        line: 7 },
+      { t: 14750, w: 'a',         line: 7 },
+      { t: 15000, w: 'one-horse', line: 7 },
+      { t: 15500, w: 'open',      line: 7 },
+      { t: 16000, w: 'sleigh!',   line: 7 },
+    ];
+
+    // ── Build lyric DOM ───────────────────────────────────────────────────
+    const lyricsEl   = document.getElementById('lyrics');
+    const ballEl     = document.getElementById('ball');
+    const stageEl    = document.getElementById('stage');
+    const wordEls    = [];   // indexed same as BEATS
+
+    // Group beats by line index
+    const lines = [];
+    BEATS.forEach((b) => {
+      if (!lines[b.line]) lines[b.line] = [];
+      lines[b.line].push(b);
+    });
+
+    const labels = ['Chorus', '', '', '', 'Chorus (repeat)', '', '', ''];
+    lines.forEach((lineBeats, li) => {
+      if (labels[li]) {
+        const lbl = document.createElement('div');
+        lbl.className = 'chorus-label';
+        lbl.textContent = labels[li];
+        lyricsEl.appendChild(lbl);
+      }
+      const row = document.createElement('div');
+      row.className = 'lyric-line';
+      lineBeats.forEach((b) => {
+        const span = document.createElement('span');
+        span.className = 'word';
+        span.textContent = b.w;
+        row.appendChild(span);
+        wordEls.push(span);   // index matches BEATS[]
+      });
+      lyricsEl.appendChild(row);
+    });
+
+    // ── Christmas lights garland ──────────────────────────────────────────
+    const BULB_COLORS = ['#e63946','#2d6a4f','#d4af37','#457b9d','#ff9f1c','#52b788'];
+    const garland = document.getElementById('garland');
+    for (let i = 0; i < 20; i++) {
+      const b = document.createElement('div');
+      b.className = 'bulb';
+      b.style.cssText = `
+        color:${BULB_COLORS[i % BULB_COLORS.length]};
+        background:${BULB_COLORS[i % BULB_COLORS.length]};
+        --d:${(0.6 + Math.random() * 1.2).toFixed(2)}s;
+        --delay:${(Math.random() * 1.5).toFixed(2)}s;
+      `;
+      garland.appendChild(b);
+    }
+
+    // ── Snow canvas ───────────────────────────────────────────────────────
+    const canvas = document.getElementById('snow-canvas');
+    const ctx    = canvas.getContext('2d');
+    let flakes   = [];
+
+    function resizeCanvas() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    function initFlakes(n = 120) {
+      flakes = Array.from({ length: n }, () => ({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        r: 1 + Math.random() * 2.5,
+        speed: 0.4 + Math.random() * 1.2,
+        drift: (Math.random() - 0.5) * 0.4,
+        alpha: 0.4 + Math.random() * 0.5,
+      }));
+    }
+    initFlakes();
+
+    function drawSnow() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff';
+      flakes.forEach((f) => {
+        ctx.globalAlpha = f.alpha;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+        ctx.fill();
+        f.y += f.speed;
+        f.x += f.drift;
+        if (f.y > canvas.height + 4) { f.y = -4; f.x = Math.random() * canvas.width; }
+        if (f.x < -4) f.x = canvas.width + 4;
+        if (f.x > canvas.width + 4) f.x = -4;
+      });
+      ctx.globalAlpha = 1;
+      requestAnimationFrame(drawSnow);
+    }
+    drawSnow();
+
+    // ── Playback engine ───────────────────────────────────────────────────
+    let playing    = false;
+    let startTime  = 0;     // performance.now() reference
+    let nextBeat   = 0;
+    let rafHandle  = null;
+    let arcHandle  = null;
+    let prevWordEl = null;
+
+    function posOf(el) {
+      const er = el.getBoundingClientRect();
+      const sr = stageEl.getBoundingClientRect();
+      return {
+        x: er.left + er.width  / 2 - sr.left,
+        y: er.top  + er.height / 2 - sr.top,
+      };
+    }
+
+    function placeBall(x, y) {
+      ballEl.style.left = x + 'px';
+      ballEl.style.top  = y + 'px';
+    }
+
+    function landBall(el) {
+      if (arcHandle) { cancelAnimationFrame(arcHandle); arcHandle = null; }
+      const p = posOf(el);
+      placeBall(p.x, p.y);
+      ballEl.classList.remove('squish');
+      void ballEl.offsetWidth;
+      ballEl.classList.add('squish');
+    }
+
+    function arcTo(fromEl, toEl, durationMs) {
+      if (arcHandle) { cancelAnimationFrame(arcHandle); arcHandle = null; }
+      const from   = posOf(fromEl);
+      const to     = posOf(toEl);
+      const dist   = Math.hypot(to.x - from.x, to.y - from.y);
+      const arcH   = Math.max(35, dist * 0.35);
+      const tStart = performance.now();
+
+      function frame(now) {
+        const t = Math.min((now - tStart) / durationMs, 1);
+        const x = from.x + (to.x - from.x) * t;
+        // Parabolic arc: -4h·t·(t-1) peaks at t=0.5
+        const arc = -4 * arcH * t * (t - 1);
+        const y = from.y + (to.y - from.y) * t - arc;
+        placeBall(x, y);
+        if (t < 1) arcHandle = requestAnimationFrame(frame);
+        else arcHandle = null;
+      }
+      arcHandle = requestAnimationFrame(frame);
+    }
+
+    function deactivateAll() {
+      wordEls.forEach((el) => el.classList.remove('active'));
+    }
+
+    function onBeat(idx) {
+      deactivateAll();
+      wordEls[idx].classList.add('active');
+      landBall(wordEls[idx]);
+
+      // Scroll active word into view on mobile
+      wordEls[idx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+      // Launch arc toward next beat's word
+      const next = idx + 1;
+      if (next < BEATS.length) {
+        const dt = BEATS[next].t - BEATS[idx].t;
+        arcTo(wordEls[idx], wordEls[next], dt);
+      }
+
+      prevWordEl = wordEls[idx];
+    }
+
+    function tick(now) {
+      if (!playing) return;
+
+      const total   = now - startTime;
+      const elapsed = total % SONG_DURATION_MS;
+
+      // Reset beat pointer on each loop
+      const cycle = Math.floor(total / SONG_DURATION_MS);
+      if (cycle > 0 && nextBeat >= BEATS.length) {
+        nextBeat = 0;
+        deactivateAll();
+      }
+
+      while (nextBeat < BEATS.length && elapsed >= BEATS[nextBeat].t) {
+        onBeat(nextBeat);
+        nextBeat++;
+      }
+
+      rafHandle = requestAnimationFrame(tick);
+    }
+
+    function startPlayback() {
+      playing   = true;
+      startTime = performance.now();
+      nextBeat  = 0;
+      deactivateAll();
+
+      // Position ball at first word before first beat fires
+      const p = posOf(wordEls[0]);
+      placeBall(p.x, p.y - 40);
+
+      rafHandle = requestAnimationFrame(tick);
+    }
+
+    function stopPlayback() {
+      playing = false;
+      if (rafHandle) { cancelAnimationFrame(rafHandle); rafHandle = null; }
+      if (arcHandle) { cancelAnimationFrame(arcHandle); arcHandle = null; }
+      deactivateAll();
+      ballEl.style.left = '-100px';
+    }
+
+    // ── ESP32 communication ───────────────────────────────────────────────
+    let deviceIp   = '';
+    let connected  = false;
+
+    const dotEl        = document.getElementById('statusDot');
+    const statusTextEl = document.getElementById('statusText');
+    const ipInput      = document.getElementById('ipInput');
+
+    function setStatus(state, msg) {
+      dotEl.className = 'dot ' + state;
+      statusTextEl.textContent = msg;
+      connected = state === 'connected';
+    }
+
+    async function tryConnect(ip) {
+      if (!ip) return;
+      setStatus('searching', `Connecting to ${ip}…`);
+      try {
+        const r = await fetch(`http://${ip}/api/jingle/state`, { signal: AbortSignal.timeout(3000) });
+        if (r.ok) {
+          deviceIp = ip;
+          setStatus('connected', `ESP32 at ${ip} — ready`);
+          document.getElementById('btnPlay').disabled = false;
+        } else {
+          setStatus('disconnected', `${ip} responded but not a Jingle Bells node`);
+        }
+      } catch {
+        setStatus('disconnected', `Cannot reach ${ip}`);
+      }
+    }
+
+    async function autoDiscover() {
+      setStatus('searching', 'Searching for Jingle Bells ESP32…');
+      try {
+        const r = await fetch('/api/devices/', { signal: AbortSignal.timeout(4000) });
+        if (!r.ok) return;
+        const devices = await r.json();
+        const node = devices.find(
+          (d) => (d.name || '').toLowerCase().includes('jingle') ||
+                 (d.id  || '').toLowerCase().includes('jingle')
+        );
+        if (node?.ip) {
+          ipInput.value = node.ip;
+          await tryConnect(node.ip);
+        } else {
+          setStatus('disconnected', 'No Jingle Bells node found — enter IP manually');
+        }
+      } catch {
+        setStatus('disconnected', 'Hub unreachable — enter ESP32 IP manually');
+      }
+    }
+
+    async function esp32Post(path) {
+      if (!deviceIp) return;
+      try {
+        await fetch(`http://${deviceIp}${path}`, { method: 'POST', signal: AbortSignal.timeout(2000) });
+      } catch { /* non-critical — animation runs independently */ }
+    }
+
+    // ── Button handlers ───────────────────────────────────────────────────
+    const btnPlay = document.getElementById('btnPlay');
+    const btnStop = document.getElementById('btnStop');
+
+    btnPlay.disabled = true;
+
+    btnPlay.addEventListener('click', async () => {
+      btnPlay.disabled = true;
+      btnStop.disabled = false;
+
+      // Fire POST to ESP32 (non-blocking) then start browser animation
+      esp32Post('/api/jingle/start');
+      startPlayback();
+    });
+
+    btnStop.addEventListener('click', () => {
+      btnStop.disabled = true;
+      btnPlay.disabled = !connected;
+      esp32Post('/api/jingle/stop');
+      stopPlayback();
+    });
+
+    document.getElementById('btnConnect').addEventListener('click', () => {
+      const ip = ipInput.value.trim();
+      if (ip) tryConnect(ip);
+    });
+    ipInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const ip = ipInput.value.trim();
+        if (ip) tryConnect(ip);
+      }
+    });
+
+    // ── Init ──────────────────────────────────────────────────────────────
+    autoDiscover();
+
+    // Hide ball initially
+    ballEl.style.left = '-100px';
+    ballEl.style.top  = '-100px';
+  })();
+
+  // ── Inline #appTip system (mirrors hub app.js behaviour for standalone pages) ──
+  (() => {
+    const tip = document.getElementById('appTip');
+    let timer = null;
+
+    document.addEventListener('mouseover', (e) => {
+      const el = e.target.closest('[data-tip]');
+      if (!el) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        tip.textContent = el.dataset.tip;
+        tip.style.display = 'block';
+        const r = el.getBoundingClientRect();
+        let left = r.left + r.width / 2 - tip.offsetWidth / 2;
+        let top  = r.bottom + 8;
+        if (top + tip.offsetHeight > window.innerHeight - 8) top = r.top - tip.offsetHeight - 8;
+        left = Math.max(8, Math.min(left, window.innerWidth - tip.offsetWidth - 8));
+        tip.style.left = left + 'px';
+        tip.style.top  = top  + 'px';
+      }, 400);
+    });
+
+    const hide = () => { clearTimeout(timer); tip.style.display = 'none'; };
+    document.addEventListener('mouseout',  (e) => { if (e.target.closest('[data-tip]')) hide(); });
+    document.addEventListener('scroll',    hide, { passive: true });
+    document.addEventListener('click',     hide);
+  })();
+  </script>
+</body>
+</html>
