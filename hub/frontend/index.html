@@ -447,9 +447,70 @@
         <div id="termPanel" class="term-panel hidden">
           <div class="term-tab-bar">
             <div id="termTabs" class="term-tabs"></div>
-            <button id="btnTermClose" class="btn btn-danger btn-sm" style="margin-left:auto;display:none"
+            <button id="btnTermHelp"  class="btn btn-secondary btn-sm" style="margin-left:auto"
+              data-tip="Show terminal keyboard shortcuts">?</button>
+            <button id="btnTermClose" class="btn btn-danger btn-sm" style="display:none"
               data-tip="Close the active terminal session">&#x2715; Close</button>
           </div>
+
+          <!-- Welcome screen — shown when no sessions are open -->
+          <div id="termWelcome" class="term-welcome">
+            <div class="term-welcome-grid">
+
+              <div class="term-welcome-section">
+                <h3 class="term-welcome-heading">&#x1F4BB; What can I do here?</h3>
+                <ul class="term-welcome-list">
+                  <li><strong>Build firmware</strong> — compile your ESP32 project with PlatformIO</li>
+                  <li><strong>Serial monitor</strong> — watch live output from a paired device</li>
+                  <li><strong>Git</strong> — version control your projects and review diffs</li>
+                  <li><strong>Run AI agents</strong> — Claude or Codex opens here automatically when you run an Agent Bench task</li>
+                  <li><strong>General shell</strong> — any command you'd run in PowerShell or bash</li>
+                </ul>
+              </div>
+
+              <div class="term-welcome-section">
+                <h3 class="term-welcome-heading">&#x26A1; Quick start</h3>
+                <div class="term-qstart-grid">
+                  <button class="term-qstart-btn" data-cmd="pio doctor"              data-tip="Check PlatformIO installation and USB drivers">pio doctor</button>
+                  <button class="term-qstart-btn" data-cmd="pio run"                 data-tip="Build firmware using the default platformio.ini environment">pio run</button>
+                  <button class="term-qstart-btn" data-cmd="pio device monitor"      data-tip="Stream serial output from a connected device (115200 baud)">pio monitor</button>
+                  <button class="term-qstart-btn" data-cmd="git status"              data-tip="Show uncommitted changes in the current directory">git status</button>
+                  <button class="term-qstart-btn" data-cmd="git log --oneline -10"   data-tip="Show the last 10 commits in a compact list">git log</button>
+                  <button class="term-qstart-btn" data-cmd="claude --version"        data-tip="Verify Claude Code CLI is installed and show its version">claude --version</button>
+                  <button class="term-qstart-btn" data-cmd="python ESPAI.py doctor"  data-tip="Run the ESPAI hub health check — shows all installed tools">espai doctor</button>
+                  <button class="term-qstart-btn" data-cmd="python ESPAI.py install-deps" data-tip="Install hub Python dependencies into the .venv">install deps</button>
+                </div>
+                <p style="font-size:11px;color:var(--color-text-muted);margin-top:10px">Click any command to open a shell and run it immediately.</p>
+              </div>
+
+              <div class="term-welcome-section">
+                <h3 class="term-welcome-heading">&#x2328; Keyboard shortcuts</h3>
+                <table class="term-kb-table">
+                  <tr><td><kbd>Ctrl+C</kbd></td><td>Interrupt / stop current command</td></tr>
+                  <tr><td><kbd>Ctrl+L</kbd></td><td>Clear the screen</td></tr>
+                  <tr><td><kbd>Ctrl+D</kbd></td><td>Close the shell (end of input)</td></tr>
+                  <tr><td><kbd>↑ / ↓</kbd></td><td>Navigate command history</td></tr>
+                  <tr><td><kbd>Tab</kbd></td><td>Autocomplete file/command names</td></tr>
+                  <tr><td><kbd>Ctrl+A</kbd></td><td>Jump to beginning of line</td></tr>
+                  <tr><td><kbd>Ctrl+E</kbd></td><td>Jump to end of line</td></tr>
+                </table>
+              </div>
+
+              <div class="term-welcome-section">
+                <h3 class="term-welcome-heading">&#x1F916; Agent Bench integration</h3>
+                <p style="font-size:13px;color:var(--color-text-muted);line-height:1.7;margin-bottom:10px">
+                  When you run an Agent Bench task with the <strong>Claude Code CLI</strong>
+                  or <strong>Codex CLI</strong> adapter, a terminal session opens here
+                  automatically. You can watch the agent read files, write code, and report
+                  back — and press <kbd>Ctrl+C</kbd> to stop it at any time.
+                </p>
+                <button class="btn btn-secondary btn-sm" id="btnTermGoAgentBench"
+                  data-tip="Go to Agent Bench to create or run an AI development task">Open Agent Bench →</button>
+              </div>
+
+            </div>
+          </div>
+
           <div id="termSurface" class="term-surface"></div>
         </div>
       </section>

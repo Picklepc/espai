@@ -2357,10 +2357,8 @@ async function loadTerminal() {
     }
   } catch (_) {}
 
-  // If no sessions, open a shell automatically
-  if (!Object.keys(_termSessions).length) {
-    await _termNewSession({ title: "Shell" });
-  }
+  // Show welcome panel or terminal surface based on session state
+  _termRenderTabs();
 }
 
 async function _termNewSession(opts = {}) {
@@ -2496,16 +2494,25 @@ function _termFit(sid) {
 }
 
 function _termRenderTabs() {
-  const tabs = document.getElementById("termTabs");
+  const tabs    = document.getElementById("termTabs");
+  const welcome = document.getElementById("termWelcome");
+  const surface = document.getElementById("termSurface");
   if (!tabs) return;
+
   tabs.innerHTML = "";
+  const hasSessions = Object.keys(_termSessions).length > 0;
+
+  // Show welcome when no sessions; show terminal surface when sessions exist
+  if (welcome) welcome.style.display = hasSessions ? "none" : "";
+  if (surface) surface.style.display = hasSessions ? "" : "none";
+
   for (const [sid, s] of Object.entries(_termSessions)) {
     const tab = el("div", `term-tab${sid === _termActiveId ? " active" : ""}`, `
       <span class="term-tab-dot"></span>
       <span>${s.title}</span>
     `);
     tab.dataset.sid = sid;
-    tab.dataset.tip = `Session: ${s.title}`;
+    tab.dataset.tip = `Session: ${s.title} — click to switch`;
     tab.onclick = () => _termActivate(sid);
     tabs.appendChild(tab);
   }
@@ -2634,6 +2641,48 @@ function _termWireEvents() {
   });
 
   document.getElementById("btnTermClose")?.addEventListener("click", () => _termCloseActive());
+
+  // Quick-start command buttons in the welcome panel
+  document.getElementById("termPanel")?.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".term-qstart-btn");
+    if (!btn) return;
+    const cmd = btn.dataset.cmd;
+    if (!cmd) return;
+    const sid = await _termNewSession({ title: cmd.split(" ")[0] });
+    if (sid) {
+      // Send the command after the shell is ready
+      await new Promise(r => setTimeout(r, 500));
+      const s = _termSessions[sid];
+      if (s?.ws?.readyState === WebSocket.OPEN) {
+        s.ws.send(JSON.stringify({ type: "input", data: cmd + "\r" }));
+      }
+    }
+  });
+
+  // Agent Bench link from welcome panel
+  document.getElementById("btnTermGoAgentBench")?.addEventListener("click", () => showView("agent-bench"));
+
+  // ? Help button — show shortcuts overlay
+  document.getElementById("btnTermHelp")?.addEventListener("click", () => {
+    openModal("Terminal — Keyboard Shortcuts", `
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <tr style="border-bottom:1px solid var(--color-card-border)"><td style="padding:7px 8px;width:130px"><kbd>Ctrl+C</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Interrupt / stop current command</td></tr>
+        <tr style="border-bottom:1px solid var(--color-card-border)"><td style="padding:7px 8px"><kbd>Ctrl+L</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Clear the screen</td></tr>
+        <tr style="border-bottom:1px solid var(--color-card-border)"><td style="padding:7px 8px"><kbd>Ctrl+D</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Send EOF / close the shell</td></tr>
+        <tr style="border-bottom:1px solid var(--color-card-border)"><td style="padding:7px 8px"><kbd>↑</kbd> / <kbd>↓</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Navigate command history</td></tr>
+        <tr style="border-bottom:1px solid var(--color-card-border)"><td style="padding:7px 8px"><kbd>Tab</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Autocomplete file and command names</td></tr>
+        <tr style="border-bottom:1px solid var(--color-card-border)"><td style="padding:7px 8px"><kbd>Ctrl+A</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Jump to beginning of line</td></tr>
+        <tr style="border-bottom:1px solid var(--color-card-border)"><td style="padding:7px 8px"><kbd>Ctrl+E</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Jump to end of line</td></tr>
+        <tr style="border-bottom:1px solid var(--color-card-border)"><td style="padding:7px 8px"><kbd>Ctrl+K</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Delete from cursor to end of line</td></tr>
+        <tr><td style="padding:7px 8px"><kbd>Ctrl+R</kbd></td><td style="padding:7px 8px;color:var(--color-text-muted)">Search command history</td></tr>
+      </table>
+      <p style="font-size:12px;color:var(--color-text-muted);margin-top:14px;line-height:1.7">
+        <strong>Multiple sessions:</strong> Use <strong>+ Shell</strong> to open another tab.
+        Sessions persist while you navigate other views — the shell keeps running in the background.
+        <br><strong>Agent Bench:</strong> CLI adapter runs open here automatically.
+      </p>
+    `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+  });
 
   // Refit when window resizes
   window.addEventListener("resize", () => {
