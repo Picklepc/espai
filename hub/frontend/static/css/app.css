@@ -691,6 +691,56 @@ code {
   cursor: text;
 }
 
+.doctor-row { cursor: default; }
+.doctor-row:hover { background: rgba(255,255,255,0.03); border-radius: 6px; }
+
+/* ── Doctor hover tooltip ─────────────────────────────────────────────────── */
+
+.doctor-tooltip {
+  position: fixed;
+  z-index: 300;
+  width: 260px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-card-border);
+  border-radius: 10px;
+  padding: 13px 15px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.1s;
+}
+
+.doctor-tooltip.hidden { opacity: 0; }
+
+.doctor-tt-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 9px;
+  border-radius: 20px;
+  margin-bottom: 8px;
+}
+
+.doctor-tt-badge.required  { background: rgba(224,50,72,0.15);  color: var(--color-danger);  border: 1px solid rgba(224,50,72,0.3); }
+.doctor-tt-badge.pick-one  { background: rgba(240,168,32,0.15); color: var(--color-warning); border: 1px solid rgba(240,168,32,0.3); }
+.doctor-tt-badge.optional  { background: rgba(122,154,170,0.12);color: var(--color-text-muted); border: 1px solid var(--color-card-border); }
+
+.doctor-tt-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+.doctor-tt-desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
 /* ── Agent Bench ──────────────────────────────────────────────────────────── */
 
 .ab-disabled-panel {

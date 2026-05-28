@@ -1525,6 +1525,98 @@ function _abWireEvents() {
 
   const _PORTAL_INSTALLABLE = new Set(["pio", "codex", "claude"]);
 
+  // ── Doctor metadata ────────────────────────────────────────────────────────
+  // tier: "required" | "pick-one" | "optional"
+  const _DOCTOR_META = {
+    // Tools
+    python: {
+      label: "Python",
+      tier: "required",
+      desc: "Runs the hub server itself. It's already present — you're using it right now.",
+    },
+    git: {
+      label: "Git",
+      tier: "optional",
+      desc: "Used to snapshot and diff files before/after an agent run. Without it the Diff view won't show changes for CLI adapter runs. GitHub Desktop's bundled git is detected automatically.",
+    },
+    pio: {
+      label: "PlatformIO",
+      tier: "optional",
+      desc: "Required only for firmware-feature and bug-fix tasks that build or flash ESP32 firmware. Not needed for hub-feature, recipe, or worker tasks.",
+    },
+    docker: {
+      label: "Docker",
+      tier: "optional",
+      desc: "Not currently used. Reserved for future sandboxed agent execution environments. Safe to skip.",
+    },
+    codex: {
+      label: "OpenAI Codex CLI",
+      tier: "pick-one",
+      desc: "One of two CLI adapters for automated agent runs. Requires an OpenAI API key. Install either this or Claude CLI — or use the Manual adapter which needs neither.",
+    },
+    claude: {
+      label: "Claude Code CLI",
+      tier: "pick-one",
+      desc: "One of two CLI adapters for automated agent runs. Uses your Anthropic account. Install either this or Codex CLI — or use the Manual adapter which needs neither.",
+    },
+    node: {
+      label: "Node.js",
+      tier: "optional",
+      desc: "Needed to install Codex CLI or Claude Code CLI via npm. Not required if you only use the Manual adapter.",
+    },
+    // Adapters
+    manual: {
+      label: "Manual (Copy/Paste)",
+      tier: "optional",
+      desc: "Always available, no install required. Copy the generated prompt into any AI chat, paste the response back. Great for one-off tasks or when CLI adapters aren't set up.",
+    },
+    "codex-cli": {
+      label: "Codex CLI Adapter",
+      tier: "pick-one",
+      desc: "Runs tasks fully automatically via the local codex CLI. Needs Codex installed and an OPENAI_API_KEY environment variable set.",
+    },
+    "claude-code-cli": {
+      label: "Claude Code CLI Adapter",
+      tier: "pick-one",
+      desc: "Runs tasks fully automatically via the local claude CLI. Needs Claude Code installed and an Anthropic account. The most capable automated option.",
+    },
+  };
+
+  const _TIER_LABELS = { required: "Required", "pick-one": "Pick One", optional: "Optional" };
+
+  // Tooltip positioning — appears to the right of the hovered row, flips left if near edge
+  function _showDoctorTooltip(rowEl, key) {
+    const meta = _DOCTOR_META[key];
+    if (!meta) return;
+    const tt     = document.getElementById("doctorTooltip");
+    const badge  = document.getElementById("doctorTtBadge");
+    const name   = document.getElementById("doctorTtName");
+    const desc   = document.getElementById("doctorTtDesc");
+    badge.textContent = _TIER_LABELS[meta.tier] || meta.tier;
+    badge.className   = `doctor-tt-badge ${meta.tier}`;
+    name.textContent  = meta.label;
+    desc.textContent  = meta.desc;
+    tt.classList.remove("hidden");
+
+    const rect    = rowEl.getBoundingClientRect();
+    const margin  = 10;
+    const ttW     = 260;
+    let left = rect.right + margin;
+    let top  = rect.top;
+    if (left + ttW > window.innerWidth - margin) left = rect.left - ttW - margin;
+    // After un-hiding, clamp vertical so it doesn't go off bottom
+    requestAnimationFrame(() => {
+      const ttH = tt.offsetHeight;
+      if (top + ttH > window.innerHeight - margin) top = window.innerHeight - ttH - margin;
+      tt.style.left = Math.max(margin, left) + "px";
+      tt.style.top  = Math.max(margin, top)  + "px";
+    });
+  }
+
+  function _hideDoctorTooltip() {
+    document.getElementById("doctorTooltip")?.classList.add("hidden");
+  }
+
   async function _runDoctor() {
     const d = await api.agentBench.doctor().catch(err => ({ error: err.message }));
     if (d.error) {
@@ -1540,7 +1632,7 @@ function _abWireEvents() {
         ? `<button class="btn btn-secondary btn-sm doctor-install-btn" data-tool="${name}" style="margin-left:auto">Install</button>` : "";
       const hint = !ok && !canInstall && info.install_hint
         ? `<div class="doctor-hint"><code>${info.install_hint}</code></div>` : "";
-      return `<div class="doctor-row">
+      return `<div class="doctor-row" data-tool="${name}">
         <span class="doctor-icon ${ok ? "ok" : "miss"}">${ok ? "✓" : "✗"}</span>
         <span class="doctor-name">${name}</span>
         <span class="doctor-val">${ok ? (info.version || "found") : '<span style="color:var(--color-danger)">not found</span>'}</span>
@@ -1552,7 +1644,7 @@ function _abWireEvents() {
       const ready = (typeof v === "object") ? v.ready : v;
       const hint  = !ready && v?.install_hint
         ? `<div class="doctor-hint"><code>${v.install_hint}</code></div>` : "";
-      return `<div class="doctor-row">
+      return `<div class="doctor-row" data-tool="${k}">
         <span class="doctor-icon ${ready ? "ok" : "miss"}">${ready ? "✓" : "✗"}</span>
         <span class="doctor-name">${k}</span>
         <span class="doctor-val" style="color:${ready ? "var(--color-success)" : "var(--color-danger)"}">${ready ? "ready" : "not installed"}</span>
@@ -1564,7 +1656,13 @@ function _abWireEvents() {
       ${toolRows}
       <p class="doctor-section-label" style="margin-top:16px">Adapters</p>
       ${adapterRows}
-    `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+    `, [{ label: "Close", cls: "btn btn-secondary", action: () => { _hideDoctorTooltip(); closeModal(); } }]);
+
+    // Wire tooltip hover on all doctor rows
+    document.querySelectorAll(".doctor-row[data-tool]").forEach(row => {
+      row.addEventListener("mouseenter", () => _showDoctorTooltip(row, row.dataset.tool));
+      row.addEventListener("mouseleave", _hideDoctorTooltip);
+    });
 
     // Wire Install buttons (after innerHTML is set by openModal)
     document.querySelectorAll(".doctor-install-btn").forEach(btn => {
@@ -1572,6 +1670,7 @@ function _abWireEvents() {
         const tool = btn.dataset.tool;
         btn.disabled = true;
         btn.textContent = "Installing…";
+        _hideDoctorTooltip();
 
         let result;
         try {
