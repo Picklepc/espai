@@ -1,0 +1,19 @@
+schema: ESPAI.task-template.v1
+id: port-to-hub
+name: "Port to Hub"
+description: "Analyse an imported ESP32 project, mirror its endpoints as hub workers, and add hub connectivity to the firmware with ESP32 fallback when the hub is unreachable."
+# Paths are inferred from project context: projects/{id}/firmware/ + projects/{id}/workers/ + workers/
+default_allowed_paths: []
+acceptance_criteria_template:
+  - "Firmware compiles without errors"
+  - "Hub receives device events within 5 seconds of trigger"
+  - "ESP32 falls back to its local web server when hub is unreachable (10 s timeout)"
+  - "No existing hub functionality regressed"
+  - "No hardcoded credentials, IPs, or MAC addresses"
+checks:
+  - platformio_build
+  - espai_validate
+suggested_context_questions:
+  - "Which device endpoints should be mirrored as hub workers?"
+  - "What timeout should trigger the ESP32 fallback mode?"
+  - "Should the hub worker store readings in the events table or a separate store?"

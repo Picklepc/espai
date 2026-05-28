@@ -2,11 +2,12 @@ schema: ESPAI.task-template.v1
 id: bug-fix
 name: "Bug Fix"
 description: "Reproduce and fix a specific bug"
+# Default paths for hub/recipe/worker bugs. For firmware bugs, link a project — paths are inferred.
+# firmware/seed/ and firmware/provision/ must never appear here.
 default_allowed_paths:
   - "hub/backend/"
   - "hub/frontend/static/js/"
   - "hub/frontend/static/css/"
-  - "firmware/seed/src/"
   - "recipes/"
   - "workers/"
 acceptance_criteria_template:

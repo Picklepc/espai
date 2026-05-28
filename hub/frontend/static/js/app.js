@@ -216,8 +216,8 @@ async function _openAgentTaskModal(ctx = {}) {
         </div>
         ${!hasContext ? `
         <div class="form-field">
-          <label data-tip="Leave blank to infer from project and template. Seed/provision firmware is always protected.">Allowed Paths (one per line)</label>
-          <textarea id="abNewPaths" rows="2" placeholder="Leave blank to infer — e.g. projects/abc123/firmware/"></textarea>
+          <label data-tip="Leave blank — paths are inferred from the project context and template. Seed and provision firmware are always protected and cannot be listed here.">Allowed Paths (one per line)</label>
+          <textarea id="abNewPaths" rows="2" placeholder="Leave blank — inferred from project context. e.g. projects/abc123/firmware/"></textarea>
         </div>` : ""}
       </div>
     </details>
@@ -2111,10 +2111,12 @@ function _abWireEvents() {
   document.getElementById("btnAbViewDiff").onclick = async () => {
     if (!_abCurrentTask) return;
     try {
-      const { diffs } = await api.agentBench.getDiff(_abCurrentTask.id);
+      const { diffs, note } = await api.agentBench.getDiff(_abCurrentTask.id);
       if (!diffs.length) {
-        openModal("No Changes", '<div class="empty-state">No file changes recorded for the latest run.</div>',
-          [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+        const msg = note
+          ? `<div class="empty-state" style="font-size:13px;line-height:1.6">${note}</div>`
+          : '<div class="empty-state">No file changes recorded for the latest run.</div>';
+        openModal("Diff", msg, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
         return;
       }
       const html = diffs.map(d => {

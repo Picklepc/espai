@@ -360,14 +360,14 @@ def _infer_allowed_paths(
     if context_type == "worker" and context_id:
         return [f"workers/{context_id}/"]
 
-    # 2. Template YAML defaults
+    # 2. Template YAML defaults — always filter out blocked paths regardless of what YAML says
     templates_dir = AGENT_BENCH_DIR / "task-templates"
     tmpl_path = templates_dir / f"{template}.yaml"
     if tmpl_path.exists():
         try:
             import yaml
             tmpl = yaml.safe_load(tmpl_path.read_text(encoding="utf-8"))
-            tmpl_paths = tmpl.get("default_allowed_paths", [])
+            tmpl_paths = [p for p in tmpl.get("default_allowed_paths", []) if not _is_blocked(p)]
             if tmpl_paths:
                 return tmpl_paths
         except Exception:
@@ -698,10 +698,18 @@ def create_task(data: TaskCreate):
     if not effective_project_id and data.context_type == "project" and data.context_id:
         effective_project_id = data.context_id
 
-    # Infer allowed_paths when not explicitly provided
-    allowed = data.allowed_paths or _infer_allowed_paths(
+    # Infer allowed_paths when not explicitly provided, then enforce block list
+    raw_allowed = data.allowed_paths or _infer_allowed_paths(
         data.context_type, data.context_id, effective_project_id, data.template
     )
+    blocked_found = [p for p in raw_allowed if _is_blocked(p)]
+    if blocked_found:
+        raise HTTPException(
+            400,
+            f"Allowed paths contain protected locations: {', '.join(blocked_found)}. "
+            "Use a project context to scope to your project directory instead.",
+        )
+    allowed = raw_allowed
 
     # Infer acceptance_criteria when not explicitly provided
     criteria = data.acceptance_criteria or _TEMPLATE_DEFAULT_CRITERIA.get(data.template, [])
@@ -782,17 +790,39 @@ def get_task_prompt(task_id: str):
 @router.post("/tasks/{task_id}/message")
 def add_message(task_id: str, data: MessageCreate):
     _require_enabled()
+    now = _now()
     with get_conn() as conn:
-        exists = conn.execute(
-            "SELECT id FROM agent_tasks WHERE id=?", (task_id,)
+        task_row = conn.execute(
+            "SELECT * FROM agent_tasks WHERE id=?", (task_id,)
         ).fetchone()
-        if not exists:
+        if not task_row:
             raise HTTPException(404, f"Task {task_id!r} not found")
         msg_id = str(uuid.uuid4())
         conn.execute(
             "INSERT INTO agent_task_messages (id, task_id, role, content, timestamp) VALUES (?,?,?,?,?)",
-            (msg_id, task_id, data.role, data.content, _now()),
+            (msg_id, task_id, data.role, data.content, now),
         )
+
+        # When an agent message is added for a manual-adapter run, snapshot the
+        # filesystem so the diff viewer shows what actually changed (not null vs before).
+        if data.role == "agent":
+            task = dict(task_row)
+            allowed = json.loads(task.get("allowed_paths") or "[]")
+            snapshot_after = _snapshot_paths(allowed)
+            run = conn.execute(
+                "SELECT id FROM agent_runs WHERE task_id=? ORDER BY started DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if run:
+                conn.execute(
+                    "UPDATE agent_runs SET snapshot_after=?, finished=?, status='completed' WHERE id=?",
+                    (json.dumps(snapshot_after), now, run["id"]),
+                )
+            conn.execute(
+                "UPDATE agent_tasks SET status='awaiting_review', updated=? WHERE id=?",
+                (now, task_id),
+            )
+
     return {"id": msg_id, "task_id": task_id}
 
 
@@ -821,11 +851,21 @@ def get_diff(task_id: str, run_id: Optional[str] = None):
                 (task_id,),
             ).fetchone()
     if not run:
-        return {"diffs": [], "run_id": None}
+        return {"diffs": [], "run_id": None, "note": None}
     run = dict(run)
     before = json.loads(run.get("snapshot_before") or "{}")
-    after = json.loads(run.get("snapshot_after") or "{}")
-    return {"diffs": _compute_diffs(before, after), "run_id": run["id"]}
+    raw_after = run.get("snapshot_after")
+    if raw_after is None:
+        # Snapshot after not yet captured — manual adapter run still in progress
+        # or completed before this fix. Don't show a misleading total-deletion diff.
+        return {
+            "diffs": [],
+            "run_id": run["id"],
+            "note": "Diff not available — snapshot was not captured for this run. "
+                    "Apply changes manually and re-run to see a diff.",
+        }
+    after = json.loads(raw_after)
+    return {"diffs": _compute_diffs(before, after), "run_id": run["id"], "note": None}
 
 
 @router.get("/tasks/{task_id}/artifacts")
