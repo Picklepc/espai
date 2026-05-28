@@ -41,10 +41,21 @@ const api = {
     files:      (id)     => apiFetch(`/api/projects/${id}/files`),
     create:     (body)   => apiFetch("/api/projects/",        { method: "POST",   body: JSON.stringify(body) }),
     import:     (body)   => apiFetch("/api/projects/import",  { method: "POST",   body: JSON.stringify(body) }),
-    update:     (id, b)  => apiFetch(`/api/projects/${id}`,   { method: "PATCH",  body: JSON.stringify(b) }),
-    delete:     (id)     => apiFetch(`/api/projects/${id}`,   { method: "DELETE" }),
-    theme:      (id)     => apiFetch(`/api/projects/${id}/theme`),
-    setTheme:   (id, b)  => apiFetch(`/api/projects/${id}/theme`, { method: "PUT", body: JSON.stringify(b) }),
+    update:      (id, b)  => apiFetch(`/api/projects/${id}`,              { method: "PATCH",  body: JSON.stringify(b) }),
+    rename:      (id, b)  => apiFetch(`/api/projects/${id}/rename`,       { method: "PATCH",  body: JSON.stringify(b) }),
+    delete:      (id)     => apiFetch(`/api/projects/${id}`,              { method: "DELETE" }),
+    theme:       (id)     => apiFetch(`/api/projects/${id}/theme`),
+    setTheme:    (id, b)  => apiFetch(`/api/projects/${id}/theme`,        { method: "PUT", body: JSON.stringify(b) }),
+    importBuild: (id, ch) => apiFetch(`/api/projects/${id}/import-build${ch ? "?channel=" + ch : ""}`, { method: "POST" }),
+    appUrl:      (id)     => apiFetch(`/api/projects/${id}/app-url`),
+    // Project data store
+    dataLatest:  (id)             => apiFetch(`/api/projects/${id}/data/latest`),
+    dataHistory: (id, params)     => {
+      const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();
+      return apiFetch(`/api/projects/${id}/data${q ? "?" + q : ""}`);
+    },
+    dataPush:    (id, body)       => apiFetch(`/api/projects/${id}/data`, { method: "POST", body: JSON.stringify(body) }),
+    dataClear:   (id)             => apiFetch(`/api/projects/${id}/data`, { method: "DELETE" }),
   },
 
   // Registry
@@ -157,6 +168,8 @@ const api = {
     getArtifacts:  (id)         => apiFetch(`/api/agent-bench/tasks/${id}/artifacts`),
     runTask:       (id, body)   => apiFetch(`/api/agent-bench/tasks/${id}/run`,     { method: "POST", body: JSON.stringify(body) }),
     review:        (id, body)   => apiFetch(`/api/agent-bench/tasks/${id}/review`,  { method: "POST", body: JSON.stringify(body) }),
+    deleteTask:    (id)         => apiFetch(`/api/agent-bench/tasks/${id}`,         { method: "DELETE" }),
+    resetTask:     (id)         => apiFetch(`/api/agent-bench/tasks/${id}/reset`,   { method: "POST" }),
     listRuns:      (taskId)     => apiFetch(`/api/agent-bench/runs${taskId ? "?task_id=" + taskId : ""}`),
     install:       (tool)       => apiFetch(`/api/agent-bench/install/${encodeURIComponent(tool)}`, { method: "POST" }),
   },

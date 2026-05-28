@@ -989,7 +989,8 @@ def run_task(task_id: str, data: RunCreate):
 
     # Build subprocess env: inherit current env + augmented PATH so the CLI can
     # find its own dependencies (node, npm-linked tools, etc.)
-    cli_env = {**os.environ, "PATH": augmented_path}
+    cli_env = {**os.environ, "PATH": augmented_path,
+               "CI": "true", "NO_COLOR": "1", "TERM": "dumb"}
 
     # Post a "starting" message so the thread shows activity immediately
     with get_conn() as conn:
@@ -1145,6 +1146,41 @@ def submit_review(task_id: str, data: ReviewCreate):
             (new_status, now, task_id),
         )
     return {"review_id": review_id, "task_id": task_id, "decision": data.decision, "status": new_status}
+
+
+@router.delete("/tasks/{task_id}")
+def delete_task(task_id: str):
+    """Permanently delete a task and all its runs, messages, reviews, and artifacts."""
+    _require_enabled()
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM agent_tasks WHERE id=?", (task_id,)).fetchone():
+            raise HTTPException(404, f"Task {task_id!r} not found")
+        conn.execute("DELETE FROM agent_task_messages WHERE task_id=?", (task_id,))
+        conn.execute("DELETE FROM agent_reviews     WHERE task_id=?", (task_id,))
+        conn.execute("DELETE FROM agent_artifacts   WHERE task_id=?", (task_id,))
+        conn.execute("DELETE FROM agent_runs        WHERE task_id=?", (task_id,))
+        conn.execute("DELETE FROM agent_tasks       WHERE id=?",      (task_id,))
+    return {"status": "deleted", "task_id": task_id}
+
+
+@router.post("/tasks/{task_id}/reset")
+def reset_task(task_id: str):
+    """Reset a stuck running task back to draft so it can be re-run."""
+    _require_enabled()
+    now = _now()
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Task {task_id!r} not found")
+        conn.execute(
+            "UPDATE agent_tasks SET status='draft', updated=? WHERE id=?",
+            (now, task_id),
+        )
+        conn.execute(
+            "UPDATE agent_runs SET status='failed', finished=? WHERE task_id=? AND status='running'",
+            (now, task_id),
+        )
+    return {"status": "reset", "task_id": task_id}
 
 
 # ── Run endpoints ─────────────────────────────────────────────────────────────

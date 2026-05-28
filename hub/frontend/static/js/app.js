@@ -744,6 +744,8 @@ async function openProject(p) {
   document.getElementById("proj-detail-view").classList.remove("hidden");
   document.getElementById("projDetailName").textContent = p.name;
   document.getElementById("projDetailDesc").textContent = p.description || "";
+  const slugEl = document.getElementById("projDetailSlug");
+  if (slugEl) slugEl.textContent = p.slug ? `hostname: ${p.slug}.local` : "";
 
   await refreshProjectFiles(p.id);
   _startFilesPoller(p.id);
@@ -882,6 +884,118 @@ document.getElementById("btnProjTheme").onclick = async () => {
     }},
     { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
   ]);
+};
+
+async function _projFirmwareRoot(projId) {
+  const info = await api.projects.files(projId).catch(() => null);
+  return info?.root ? info.root.replace(/\//g, "\\") + "\\firmware" : null;
+}
+
+document.getElementById("btnProjRename").onclick = async () => {
+  if (!_currentProject) return;
+  const current = _currentProject.name;
+  openModal("Rename Project", `
+    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;line-height:1.6">
+      Project names are automatically converted to hostname format
+      (lowercase letters, digits, hyphens only). The new name becomes the mDNS
+      hostname and web app slug immediately.
+    </p>
+    <div class="form-field">
+      <label>New name</label>
+      <input id="renameInput" type="text" value="${current}" style="width:100%">
+    </div>
+    <p id="renamePreview" style="font-size:11px;color:var(--color-text-muted);margin-top:6px"></p>
+  `, [
+    { label: "Rename", cls: "btn btn-primary", action: async () => {
+      const val = document.getElementById("renameInput").value.trim();
+      if (!val) return;
+      try {
+        const result = await api.projects.rename(_currentProject.id, { name: val });
+        _currentProject.name = result.name;
+        _currentProject.slug = result.slug;
+        document.getElementById("projDetailName").textContent = result.name;
+        const slugEl = document.getElementById("projDetailSlug");
+        if (slugEl) slugEl.textContent = `hostname: ${result.slug}.local`;
+        closeModal();
+      } catch (err) { alert("Rename failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+  // Live preview of hostname conversion
+  const input = document.getElementById("renameInput");
+  const preview = document.getElementById("renamePreview");
+  const toSlug = s => s.toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
+  input.oninput = () => { preview.textContent = input.value ? `→ hostname: ${toSlug(input.value)}.local` : ""; };
+  input.oninput();
+};
+
+document.getElementById("btnProjOpenApp").onclick = async () => {
+  if (!_currentProject) return;
+  try {
+    const { url, host } = await api.projects.appUrl(_currentProject.id);
+    if (url) {
+      window.open(url, "_blank");
+    } else {
+      alert("No web interface found for this project.\n\nAdd a web/index.html to the project folder to host it on the hub, or link a device so the hub can find its IP.");
+    }
+  } catch (err) { alert("Could not resolve app URL: " + err.message); }
+};
+
+document.getElementById("btnProjBuild").onclick = async () => {
+  if (!_currentProject) return;
+  const root = await _projFirmwareRoot(_currentProject.id);
+  showView("terminal");
+  await new Promise(r => setTimeout(r, 150));
+  _termNewSession({
+    title: `Build — ${_currentProject.name}`,
+    cwd: root || undefined,
+    init_cmds: root
+      ? ["pio run"]
+      : ['Write-Host "Could not find firmware/ directory" -ForegroundColor Red'],
+  });
+};
+
+document.getElementById("btnProjImport").onclick = async () => {
+  if (!_currentProject) return;
+  const btn = document.getElementById("btnProjImport");
+  const orig = btn.textContent;
+  btn.textContent = "Importing…";
+  btn.disabled = true;
+  try {
+    const meta = await api.projects.importBuild(_currentProject.id, "dev");
+    openModal("Imported to OTA Catalog", `
+      <p style="font-size:13px;line-height:1.7;margin-bottom:12px">
+        <strong>${meta.board}</strong> v${meta.version} (${(meta.size_bytes / 1024).toFixed(0)} KB)
+        has been added to the firmware catalog on the <em>dev</em> channel.
+      </p>
+      <p style="font-size:13px;color:var(--color-text-muted)">
+        Go to <strong>OTA / Firmware</strong> and click <strong>Push to Device</strong>
+        to send it to a paired ESP32 over WiFi.
+      </p>
+    `, [
+      { label: "Go to OTA", cls: "btn btn-primary", action: () => { closeModal(); showView("ota"); } },
+      { label: "Done",      cls: "btn btn-secondary", action: closeModal },
+    ]);
+  } catch (err) {
+    alert("Import failed: " + err.message);
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+};
+
+document.getElementById("btnProjFlashUSB").onclick = async () => {
+  if (!_currentProject) return;
+  const root = await _projFirmwareRoot(_currentProject.id);
+  showView("terminal");
+  await new Promise(r => setTimeout(r, 150));
+  _termNewSession({
+    title: `Flash USB — ${_currentProject.name}`,
+    cwd: root || undefined,
+    init_cmds: root
+      ? ['Write-Host "Flashing via USB — make sure the device is connected" -ForegroundColor Yellow', "pio run -t upload"]
+      : ['Write-Host "Could not find firmware/ directory" -ForegroundColor Red'],
+  });
 };
 
 document.getElementById("btnProjDelete").onclick = async () => {
@@ -1660,9 +1774,14 @@ function _abStatusClass(status) {
 
 function _abStatusLabel(status) {
   const labels = {
-    draft: "Draft", running: "Running", awaiting_review: "Review",
-    approved: "Approved", rejected: "Rejected", needs_changes: "Changes", merged: "Merged",
-    awaiting_input: "Waiting",
+    draft:           "Draft",
+    running:         "Live in Terminal",
+    awaiting_review: "Ready to Review",
+    approved:        "Done",
+    rejected:        "Discarded",
+    needs_changes:   "Needs Changes",
+    merged:          "Merged",
+    awaiting_input:  "Waiting for Paste",
   };
   return labels[status] || status;
 }
@@ -1731,6 +1850,15 @@ async function _abLoadTaskList() {
       : (t.project_id ? `<span class="ab-context-badge" data-tip="Linked to project ${t.project_id.slice(0,8)}">🗂</span>` : "");
     const threadBadge = t.parent_task_id
       ? `<span class="ab-thread-badge" data-tip="Follow-up in a task thread">↩ thread</span>` : "";
+    const delBtn = el("button", "btn btn-danger btn-sm", "✕");
+    delBtn.dataset.tip = "Delete this task permanently";
+    delBtn.style.cssText = "flex-shrink:0;margin-left:8px;padding:2px 8px";
+    delBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete task "${t.title}"? This cannot be undone.`)) return;
+      await api.agentBench.deleteTask(t.id).catch(err => alert(err.message));
+      _abLoadTaskList();
+    };
     card.innerHTML = `
       <div class="ab-task-info">
         <div class="ab-task-title">${t.title}</div>
@@ -1738,7 +1866,9 @@ async function _abLoadTaskList() {
       </div>
       <span class="${_abStatusClass(t.status)}" data-tip="Task status: ${t.status}">${_abStatusLabel(t.status)}</span>
     `;
+    card.style.cursor = "pointer";
     card.onclick = () => _abOpenTask(t.id);
+    card.appendChild(delBtn);
     listEl.appendChild(card);
   }
 }
@@ -1866,17 +1996,20 @@ function _abUpdateRunControls(task) {
   const pastePanel  = document.getElementById("abPastePanel");
   const reviewPanel = document.getElementById("abReviewPanel");
   const adapterDesc = document.getElementById("abAdapterDesc");
+  const resetBtn    = document.getElementById("btnAbReset");
 
-  const canRun     = ["draft", "needs_changes"].includes(task.status);
-  const needsPaste = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
-  // Only show review AFTER the response is submitted (run no longer awaiting_input)
+  const canRun      = ["draft", "needs_changes"].includes(task.status);
+  const isStuck     = task.status === "running";
+  // Manual adapter flow: latest run awaiting_input means waiting for paste
+  const needsPaste  = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
+  // Show review panel for awaiting_review regardless of how it got there
   const needsReview = task.status === "awaiting_review" && !needsPaste;
 
   runPanel.style.display = canRun ? "" : "none";
   pastePanel.classList.toggle("hidden", !needsPaste);
   reviewPanel.classList.toggle("hidden", !needsReview);
+  if (resetBtn) resetBtn.style.display = isStuck ? "" : "none";
 
-  // Update adapter description
   if (adapterDesc) {
     const sel = document.getElementById("abAdapterSelect");
     adapterDesc.textContent = sel ? (_ADAPTER_DESCRIPTIONS[sel.value] || "") : "";
@@ -1895,7 +2028,8 @@ function _startAbPoller(taskId) {
       statusEl.textContent = _abStatusLabel(task.status);
     }
     _abUpdateRunControls(task);
-    if (["running"].includes(task.status)) {
+    // Reload thread when session is live or just finished
+    if (["running", "awaiting_review"].includes(task.status)) {
       await _abLoadThread(taskId);
     }
   }, 3000);
@@ -1913,6 +2047,27 @@ function _abWireEvents() {
     document.getElementById("ab-detail-view").classList.add("hidden");
     document.getElementById("ab-list-view").classList.remove("hidden");
     _abLoadTaskList();
+  };
+
+  document.getElementById("btnAbDelete").onclick = async () => {
+    if (!_abCurrentTask) return;
+    if (!confirm(`Delete task "${_abCurrentTask.title}"? This cannot be undone.`)) return;
+    try {
+      await api.agentBench.deleteTask(_abCurrentTask.id);
+      document.getElementById("btnAbBack").click();
+    } catch (err) { alert("Delete failed: " + err.message); }
+  };
+
+  document.getElementById("btnAbReset").onclick = async () => {
+    if (!_abCurrentTask) return;
+    try {
+      await api.agentBench.resetTask(_abCurrentTask.id);
+      const task = await api.agentBench.getTask(_abCurrentTask.id);
+      _abCurrentTask = task;
+      const statusEl = document.getElementById("abDetailStatus");
+      if (statusEl) { statusEl.className = _abStatusClass(task.status); statusEl.textContent = _abStatusLabel(task.status); }
+      _abUpdateRunControls(task);
+    } catch (err) { alert("Reset failed: " + err.message); }
   };
 
   document.getElementById("btnAbEnable").onclick = async () => {
@@ -2137,6 +2292,16 @@ function _abWireEvents() {
     if (!_abCurrentTask) return;
     const adapter_id = document.getElementById("abAdapterSelect").value;
     const isCLI = adapter_id !== "manual";
+
+    // Check terminal availability now if we haven't visited the Terminal view yet.
+    if (isCLI && _termAvailable === null) {
+      try {
+        const info = await api.terminal.available();
+        _termAvailable = info.available;
+      } catch (_) {
+        _termAvailable = false;
+      }
+    }
 
     // CLI adapters: open a real interactive terminal session.
     // The backend writes the prompt to a temp file and pipes it to the CLI
@@ -2503,8 +2668,8 @@ function _termRenderTabs() {
   const hasSessions = Object.keys(_termSessions).length > 0;
 
   // Show welcome when no sessions; show terminal surface when sessions exist
-  if (welcome) welcome.style.display = hasSessions ? "none" : "";
-  if (surface) surface.style.display = hasSessions ? "" : "none";
+  if (welcome) welcome.style.display = hasSessions ? "none" : "block";
+  if (surface) surface.style.display = hasSessions ? "block" : "none";
 
   for (const [sid, s] of Object.entries(_termSessions)) {
     const tab = el("div", `term-tab${sid === _termActiveId ? " active" : ""}`, `

@@ -284,7 +284,10 @@ bool connectWifi() {
 // ── mDNS ──────────────────────────────────────────────────────────────────
 
 void startMDNS() {
-  String hostname = nodeId;
+  // Use NODE_NAME as the mDNS hostname so the device is reachable at
+  // http://NODE_NAME.local/ — human-readable and stable across reboots.
+  // The unique nodeId is still exposed as a TXT record for fleet management.
+  String hostname = String(NODE_NAME);
   if (!MDNS.begin(hostname.c_str())) {
     Serial.println("[mdns] Failed to start");
     return;
@@ -293,7 +296,7 @@ void startMDNS() {
   MDNS.addServiceTxt("_ESPAI-node", "_tcp", "id",      nodeId.c_str());
   MDNS.addServiceTxt("_ESPAI-node", "_tcp", "name",    NODE_NAME);
   MDNS.addServiceTxt("_ESPAI-node", "_tcp", "version", FW_VERSION);
-  Serial.printf("[mdns] Advertised as %s._ESPAI-node._tcp.local\n", hostname.c_str());
+  Serial.printf("[mdns] Advertised as http://%s.local/\n", hostname.c_str());
 }
 
 // ── Setup ──────────────────────────────────────────────────────────────────

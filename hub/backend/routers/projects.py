@@ -1,15 +1,19 @@
-﻿import json
+﻿import hashlib
+import json
 import re
 import secrets
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+import mimetypes
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, field_validator
 
 from ..config import ACTIVE_THEME, DESIGN_DIR, FIRMWARE_CATALOG_DIR, PROJECTS_DIR
-from ..db import get_conn
+from ..db import get_conn, _to_hostname
 
 router = APIRouter()
 
@@ -24,6 +28,19 @@ class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
     devices: list[str] = []
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid_hostname(cls, v: str) -> str:
+        """
+        Project names double as mDNS hostnames — coerce to hostname-safe form
+        on the way in so every downstream user (firmware, proxy URL, Caddy)
+        gets a consistent slug without extra conversion.
+        """
+        slug = _to_hostname(v.strip())
+        if not slug:
+            raise ValueError("Name must contain at least one letter or digit")
+        return slug
 
 
 class ProjectUpdate(BaseModel):
@@ -189,12 +206,12 @@ void loop() {{
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _safe_slug(name: str) -> str:
-    slug = _SAFE_NAME.sub("", name).strip().lower()
-    return slug.replace(" ", "-")[:40] or "project"
+    """Kept for backward compatibility — delegates to the canonical _to_hostname."""
+    return _to_hostname(name)
 
 
 def _create_project_folder(project_id: str, name: str, description: str | None) -> None:
-    node_name = _safe_slug(name)
+    node_name = _to_hostname(name)
     proj_dir  = PROJECTS_DIR / project_id
     fw_dir    = proj_dir / "firmware" / "src"
     fw_dir.mkdir(parents=True, exist_ok=True)
@@ -266,6 +283,45 @@ def get_project(project_id: str):
     if not row:
         raise HTTPException(404, f"Project {project_id!r} not found")
     return _row_to_dict(row)
+
+
+@router.get("/{project_id}/app-url")
+def project_app_url(project_id: str, request: Request):
+    """
+    Return the best URL to open the project's web interface.
+    Priority: hub-hosted web app > linked device IP > mDNS slug.
+    """
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.exists():
+        raise HTTPException(404, f"Project {project_id!r} not found")
+
+    # Hub-hosted web app? Use slug URL for Caddy-friendliness.
+    if (proj_dir / "web" / "index.html").exists():
+        base = str(request.base_url).rstrip("/")
+        with get_conn() as conn:
+            name = conn.execute("SELECT name FROM projects WHERE id=?", (project_id,)).fetchone()
+        slug = _safe_slug(name["name"]) if name else project_id
+        return {"url": f"{base}/app/{slug}/", "host": "hub", "slug": slug, "project_id": project_id}
+
+    # Linked device IP?
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if row:
+        dev_ids = json.loads(row["devices"] or "[]")
+        for did in dev_ids:
+            with get_conn() as conn:
+                dev = conn.execute("SELECT ip FROM devices WHERE id=?", (did,)).fetchone()
+            if dev and dev["ip"]:
+                return {"url": f"http://{dev['ip']}/", "host": "device"}
+
+    # mDNS slug from project name
+    with get_conn() as conn:
+        row = conn.execute("SELECT name FROM projects WHERE id=?", (project_id,)).fetchone()
+    if row:
+        slug = _safe_slug(row["name"])
+        return {"url": f"http://{slug}.local/", "host": "mdns"}
+
+    return {"url": None, "host": None}
 
 
 @router.get("/{project_id}/files")
@@ -365,17 +421,105 @@ def import_project(data: ProjectImport):
     }
 
 
+def _ini_version(ini_path: Path) -> str:
+    """Extract FW_VERSION from platformio.ini build_flags, or return '0.0.0'."""
+    try:
+        text = ini_path.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            m = re.search(r'FW_VERSION\\?"([^"\\]+)\\?"', line)
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    return "0.0.0"
+
+
+@router.post("/{project_id}/import-build")
+def import_build(project_id: str, channel: str = "dev"):
+    """
+    Find the most recently compiled firmware.bin in the project's .pio/build/
+    directory and register it in the OTA catalog — no file upload required.
+    Run 'pio run' first to produce the binary.
+    """
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.exists():
+        raise HTTPException(404, f"Project {project_id!r} not found")
+
+    build_root = proj_dir / "firmware" / ".pio" / "build"
+    if not build_root.exists():
+        raise HTTPException(
+            404,
+            "No .pio/build directory found — run 'pio run' in the firmware folder first.",
+        )
+
+    bins = [f for f in build_root.glob("**/firmware.bin") if f.is_file()]
+    if not bins:
+        raise HTTPException(
+            404,
+            "No firmware.bin found in .pio/build — run 'pio run' first.",
+        )
+
+    # Pick the freshest binary (most recent build wins)
+    latest = max(bins, key=lambda f: f.stat().st_mtime)
+    board   = latest.parent.name   # env directory name = board/env identifier
+    version = _ini_version(proj_dir / "firmware" / "platformio.ini")
+
+    content = latest.read_bytes()
+    if not content:
+        raise HTTPException(400, "firmware.bin is empty — the build may have failed.")
+
+    sha256 = hashlib.sha256(content).hexdigest()
+
+    FIRMWARE_CATALOG_DIR.mkdir(parents=True, exist_ok=True)
+    entry_dir = FIRMWARE_CATALOG_DIR / f"{board}-{version}"
+    entry_dir.mkdir(parents=True, exist_ok=True)
+    (entry_dir / "firmware.bin").write_bytes(content)
+
+    meta = {
+        "schema":     "ESPAI.firmware.v1",
+        "board":      board,
+        "version":    version,
+        "channel":    channel,
+        "filename":   "firmware.bin",
+        "size_bytes": len(content),
+        "sha256":     sha256,
+        "uploaded":   _now(),
+        "known_good": False,
+        "project_id": project_id,
+        "source_bin": str(latest),
+    }
+    (entry_dir / "firmware.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return meta
+
+
 @router.post("/")
 def create_project(data: ProjectCreate):
+    # name is already coerced to hostname-safe form by the validator
     project_id = secrets.token_hex(6)
+    slug = data.name   # validator already ran _to_hostname
     now = _now()
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO projects (id, name, description, devices, created) VALUES (?,?,?,?,?)",
-            (project_id, data.name, data.description, json.dumps(data.devices), now),
+            "INSERT INTO projects (id, name, description, devices, slug, created) VALUES (?,?,?,?,?,?)",
+            (project_id, data.name, data.description, json.dumps(data.devices), slug, now),
         )
     _create_project_folder(project_id, data.name, data.description)
-    return {"id": project_id, "name": data.name, "created": now}
+    return {"id": project_id, "name": data.name, "slug": slug, "created": now}
+
+
+@router.patch("/{project_id}/rename")
+def rename_project(project_id: str, data: ProjectCreate):
+    """Rename a project, automatically updating the slug/hostname."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Project {project_id!r} not found")
+        new_slug = _to_hostname(data.name)
+        conn.execute(
+            "UPDATE projects SET name=?, slug=?, updated=? WHERE id=?",
+            (data.name, new_slug, _now(), project_id),
+        )
+    return {"id": project_id, "name": data.name, "slug": new_slug}
 
 
 @router.patch("/{project_id}")
@@ -472,3 +616,29 @@ def set_project_theme(project_id: str, data: ProjectThemePatch):
     meta["theme_overrides"] = data.theme_overrides
     _write_project_meta(project_id, meta)
     return {"status": "saved", "project_id": project_id, "theme_overrides": data.theme_overrides}
+
+
+# ── Project public page serving ───────────────────────────────────────────────
+# Serves static files from projects/{project_id}/workers/public/
+# e.g. GET /api/projects/c9ac1baa9ba4/page  → workers/public/index.html
+
+@router.get("/{project_id}/page")
+@router.get("/{project_id}/page/{file_path:path}")
+def serve_project_page(project_id: str, file_path: str = "index.html"):
+    """Serve static files from a project's workers/public/ directory."""
+    pub_dir = (PROJECTS_DIR / project_id / "workers" / "public").resolve()
+    if not pub_dir.exists():
+        raise HTTPException(404, "No public page found for this project")
+
+    target = (pub_dir / file_path).resolve()
+    # Guard against path traversal
+    if not str(target).startswith(str(pub_dir)):
+        raise HTTPException(403, "Path traversal not allowed")
+    if not target.exists() or not target.is_file():
+        # SPA fallback
+        target = pub_dir / "index.html"
+    if not target.exists():
+        raise HTTPException(404, f"File not found: {file_path}")
+
+    media_type, _ = mimetypes.guess_type(str(target))
+    return FileResponse(str(target), media_type=media_type or "application/octet-stream")

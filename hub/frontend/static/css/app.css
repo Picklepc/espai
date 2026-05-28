@@ -898,7 +898,6 @@ code {
   flex: 1;
   overflow: hidden;
   position: relative;
-  display: none;  /* shown by _termRenderTabs() when sessions exist */
 }
 
 /* ── Terminal welcome screen ─────────────────────────────────────────────── */

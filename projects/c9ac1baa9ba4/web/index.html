@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jingle Bells</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0d0d0d;
+      color: #e8e8e8;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 32px;
+      padding: 24px;
+    }
+    h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }
+    .subtitle { color: #888; font-size: 0.9rem; }
+
+    /* Beat visualiser */
+    .bells {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      height: 60px;
+    }
+    .bell {
+      width: 14px;
+      background: #f0a820;
+      border-radius: 3px 3px 0 0;
+      transition: height 0.05s ease, opacity 0.1s;
+      opacity: 0.2;
+    }
+
+    /* Status ring */
+    .status-ring {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      border: 4px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2.5rem;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .status-ring.playing {
+      border-color: #f0a820;
+      box-shadow: 0 0 24px rgba(240, 168, 32, 0.4);
+    }
+
+    /* Controls */
+    .controls { display: flex; gap: 12px; }
+    button {
+      padding: 12px 28px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    button:active { transform: scale(0.96); }
+    button:disabled { opacity: 0.4; cursor: default; }
+    #btnStart { background: #f0a820; color: #000; }
+    #btnStop  { background: #333; color: #e8e8e8; }
+
+    /* Info */
+    .info { font-size: 0.8rem; color: #555; text-align: center; line-height: 1.6; }
+    .info a { color: #f0a820; text-decoration: none; }
+
+    /* Error banner */
+    #error {
+      display: none;
+      background: #3a1a1a;
+      border: 1px solid #7a2a2a;
+      color: #f08080;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      text-align: center;
+      max-width: 380px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🔔 Jingle Bells</h1>
+  <p class="subtitle">ESP32 Xiao — LED Rhythm Controller</p>
+
+  <div class="status-ring" id="ring">🔔</div>
+
+  <div class="bells" id="bells">
+    <!-- filled by JS -->
+  </div>
+
+  <div class="controls">
+    <button id="btnStart">▶ Play</button>
+    <button id="btnStop">■ Stop</button>
+  </div>
+
+  <div id="error"></div>
+
+  <div class="info">
+    Hub-hosted app &mdash; ESP32 handles the LED.<br>
+    Device: <a id="deviceLink" href="#" target="_blank">jingle-bells.local</a>
+  </div>
+
+<script>
+  // Resolve API base: when served by the hub at /app/{project_id}/, use the
+  // hub proxy so the page works from any URL (Caddy, localhost, etc.).
+  // Falls back to the device directly if accessed from outside the hub.
+  const PATH_PARTS = location.pathname.split("/").filter(Boolean);
+  const HUB_HOSTED = PATH_PARTS[0] === "app";
+  // The hub proxy resolves by project ID, not by the slug used in the /app/ URL.
+  const PROXY_ID = 'c9ac1baa9ba4';
+  const API = HUB_HOSTED
+    ? `/proxy/${PROXY_ID}/api`
+    : "http://jingle-bells.local/api";
+
+  const ring     = document.getElementById("ring");
+  const bellsEl  = document.getElementById("bells");
+  const errEl    = document.getElementById("error");
+  const linkEl   = document.getElementById("deviceLink");
+
+  if (HUB_HOSTED) {
+    linkEl.href = `/proxy/${PROXY_ID}/`;
+    linkEl.textContent = "Hub proxy → jingle-bells.local";
+  } else {
+    linkEl.href = "http://jingle-bells.local/";
+  }
+
+  // Build beat bars (matches the BEATS array pattern in main.cpp)
+  const NUM_BARS = 16;
+  const bars = [];
+  for (let i = 0; i < NUM_BARS; i++) {
+    const b = document.createElement("div");
+    b.className = "bell";
+    b.style.height = (20 + Math.random() * 40) + "px";
+    bellsEl.appendChild(b);
+    bars.push(b);
+  }
+
+  let playing = false;
+  let lastBeat = -1;
+  let animFrame = null;
+
+  function flash(beatIndex) {
+    const bar = bars[beatIndex % NUM_BARS];
+    bar.style.opacity = "1";
+    bar.style.height  = "60px";
+    setTimeout(() => {
+      bar.style.opacity = "0.2";
+      bar.style.height  = (20 + Math.random() * 40) + "px";
+    }, 140);
+  }
+
+  function showError(msg) {
+    errEl.style.display = "block";
+    errEl.textContent = msg;
+  }
+  function clearError() { errEl.style.display = "none"; }
+
+  async function fetchState() {
+    try {
+      const res = await fetch(`${API}/jingle/state`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const s = await res.json();
+      clearError();
+
+      if (s.playing !== playing) {
+        playing = s.playing;
+        ring.classList.toggle("playing", playing);
+      }
+      if (playing && s.beat_index !== lastBeat) {
+        flash(s.beat_index);
+        lastBeat = s.beat_index;
+      }
+    } catch (e) {
+      showError(`Cannot reach device: ${e.message}. Make sure the ESP32 is on and jingle-bells.local resolves.`);
+    }
+  }
+
+  document.getElementById("btnStart").onclick = async () => {
+    try {
+      await fetch(`${API}/jingle/start`, { method: "POST" });
+      clearError();
+    } catch (e) { showError(`Start failed: ${e.message}`); }
+  };
+
+  document.getElementById("btnStop").onclick = async () => {
+    try {
+      await fetch(`${API}/jingle/stop`, { method: "POST" });
+      clearError();
+    } catch (e) { showError(`Stop failed: ${e.message}`); }
+  };
+
+  // Poll state every 400 ms
+  fetchState();
+  setInterval(fetchState, 400);
+</script>
+</body>
+</html>

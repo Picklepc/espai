@@ -36,6 +36,21 @@ def get_conn():
         conn.close()
 
 
+def _to_hostname(name: str) -> str:
+    """
+    Convert any string to a valid RFC-1123 DNS hostname label.
+    Rules: lowercase letters, digits, hyphens only; no leading/trailing hyphens;
+    no consecutive hyphens; max 63 chars.
+    """
+    import re as _re
+    s = name.lower()
+    s = _re.sub(r"[\s_]+", "-", s)       # spaces / underscores → hyphen
+    s = _re.sub(r"[^a-z0-9\-]", "", s)   # strip everything else
+    s = _re.sub(r"-{2,}", "-", s)         # collapse runs of hyphens
+    s = s.strip("-")                       # no leading/trailing hyphen
+    return s[:63] or "project"
+
+
 def _migrate(conn) -> None:
     """Additive column migrations — safe to run on any existing DB."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(agent_tasks)").fetchall()}
@@ -46,6 +61,18 @@ def _migrate(conn) -> None:
     ]:
         if col not in existing:
             conn.execute(ddl)
+
+    # Add slug column to projects (hostname-safe project identifier)
+    proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    if "slug" not in proj_cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN slug TEXT")
+        # Backfill existing projects
+        rows = conn.execute("SELECT id, name FROM projects").fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE projects SET slug=? WHERE id=?",
+                (_to_hostname(row[1]), row[0]),
+            )
 
 
 def init_db() -> None:
@@ -187,6 +214,30 @@ def init_db() -> None:
             permission  TEXT NOT NULL,
             granted_by  TEXT,
             granted_at  TEXT NOT NULL
+        );
+
+        -- ── Project data store ────────────────────────────────────────────────
+        -- Time-series readings pushed by ESP32 devices.
+        -- Each row is one payload (JSON object) from one device at one time.
+        -- Keeps a configurable rolling window per project (pruned on insert).
+        CREATE TABLE IF NOT EXISTS project_data (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  TEXT    NOT NULL,
+            device_id   TEXT,
+            payload     TEXT    NOT NULL,   -- JSON: {"temp":23.5,"unit":"C", ...}
+            timestamp   TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_data_pid_ts
+            ON project_data (project_id, timestamp DESC);
+
+        -- Latest reading per (project, device) — upserted on every push.
+        -- Web apps query this first for an instant load without scanning history.
+        CREATE TABLE IF NOT EXISTS project_data_cache (
+            project_id  TEXT NOT NULL,
+            device_id   TEXT NOT NULL DEFAULT '',
+            payload     TEXT NOT NULL,
+            timestamp   TEXT NOT NULL,
+            PRIMARY KEY (project_id, device_id)
         );
         """)
         _migrate(conn)

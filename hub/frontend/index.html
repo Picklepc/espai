@@ -164,12 +164,20 @@
           <header class="view-header">
             <div style="display:flex;align-items:center;gap:12px">
               <button class="btn btn-secondary btn-sm" id="btnProjBack" data-tip="Return to project list">← Back</button>
-              <h1 id="projDetailName">Project</h1>
+              <div>
+                <h1 id="projDetailName" style="margin:0"></h1>
+                <div id="projDetailSlug" style="font-size:11px;color:var(--color-text-muted);margin-top:2px" data-tip="mDNS hostname — used for the web app URL and device discovery"></div>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="btnProjRename" data-tip="Rename this project — name is automatically converted to a valid hostname">✎ Rename</button>
             </div>
             <div style="display:flex;gap:8px">
-              <button class="btn btn-secondary btn-sm" id="btnOpenVSCode" data-tip="Open this project's firmware folder in VS Code" style="display:none">&#128196; VS Code</button>
-              <button class="btn btn-secondary btn-sm" id="btnProjTheme"  data-tip="Override CSS design tokens while this project is active">🎨 Theme</button>
-              <button class="btn btn-danger btn-sm"    id="btnProjDelete" data-tip="Permanently delete this project (devices and files are not removed)">Delete Project</button>
+              <button class="btn btn-secondary btn-sm" id="btnOpenVSCode"     data-tip="Open this project's firmware folder in VS Code" style="display:none">&#128196; VS Code</button>
+              <button class="btn btn-primary    btn-sm" id="btnProjOpenApp"  data-tip="Open the project's web interface — hub-hosted if a web/ folder exists, otherwise opens the device directly">&#127760; Open App</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjBuild"    data-tip="Open a terminal in firmware/ and run pio run to compile">&#9654; Build</button>
+              <button class="btn btn-primary    btn-sm" id="btnProjImport"  data-tip="Import the last compiled firmware.bin into the OTA catalog so you can push it to a device over WiFi">&#8679; Import to OTA</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjFlashUSB" data-tip="Flash firmware directly via USB cable (pio run -t upload) — use when device is not yet on WiFi">&#128299; Flash USB</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjTheme"    data-tip="Override CSS design tokens while this project is active">🎨 Theme</button>
+              <button class="btn btn-danger btn-sm"    id="btnProjDelete"   data-tip="Permanently delete this project (devices and files are not removed)">Delete Project</button>
             </div>
           </header>
           <p id="projDetailDesc" style="color:var(--color-text-muted);margin-bottom:12px;font-size:14px"></p>
@@ -353,6 +361,8 @@
             <div style="display:flex;gap:8px">
               <button class="btn btn-secondary btn-sm" id="btnAbViewPrompt" data-tip="View the full system prompt sent to the agent for this task">View Prompt</button>
               <button class="btn btn-secondary btn-sm" id="btnAbViewDiff"   data-tip="View file changes made during the last agent run">View Diff</button>
+              <button class="btn btn-secondary btn-sm" id="btnAbReset"      data-tip="Reset a stuck running task back to draft so it can be re-run" style="display:none">↺ Reset</button>
+              <button class="btn btn-danger    btn-sm" id="btnAbDelete"     data-tip="Permanently delete this task and all its runs and messages">Delete</button>
             </div>
           </header>
 
@@ -401,14 +411,19 @@
 
             <!-- Right: review panel -->
             <div id="abReviewPanel" class="ab-review-panel hidden">
-              <h3 class="section-heading">Review</h3>
+              <h3 class="section-heading">Session Complete</h3>
+              <p style="font-size:12px;color:var(--color-text-muted);margin:0 0 12px">
+                Claude finished the terminal session. View Diff to see what changed.
+                If the changes look good and Claude committed, mark it Done.
+                If you need more work, add notes and re-run — Claude will pick up where it left off.
+              </p>
               <div class="form-field">
-                <label data-tip="Your notes are included in the next agent run if you choose Needs Changes — be specific about what to fix">Notes (optional)</label>
-                <textarea id="abReviewNotes" rows="4" placeholder="e.g. The LED blinks correctly but the event payload is missing the sensor_id field — please add it…"></textarea>
+                <label data-tip="Notes for the next session — Claude will see these and continue from here">Notes for next session (optional)</label>
+                <textarea id="abReviewNotes" rows="3" placeholder="e.g. Looks good but the upload step failed — please also add OTA push logic…"></textarea>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn ab-btn-approve" id="btnAbApprove" data-tip="Accept the agent's changes — marks the task ready to merge">&#x2713; Approve</button>
-                <button class="btn ab-btn-changes" id="btnAbChanges" data-tip="Send back for another run — agent will see your notes and retry">&#x21BA; Needs Changes</button>
+                <button class="btn ab-btn-approve" id="btnAbApprove" data-tip="Mark this task done — changes are committed in git">&#x2713; Mark Done</button>
+                <button class="btn ab-btn-changes" id="btnAbChanges" data-tip="Open another terminal session with your notes — Claude continues the conversation">&#x21BA; Continue in Terminal</button>
                 <button class="btn ab-btn-reject"  id="btnAbReject"  data-tip="Discard this run — task is closed without applying any changes">&#x2715; Reject</button>
               </div>
             </div>
