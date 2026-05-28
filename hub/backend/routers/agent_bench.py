@@ -10,6 +10,7 @@ Security model (enforced here, not delegated to the agent):
 - Workers created by agents start quarantined
 """
 
+import glob
 import json
 import os
 import re
@@ -64,6 +65,18 @@ _KNOWN_ADAPTERS = {
     },
 }
 
+# ── Tool metadata (install hints shown in Doctor) ─────────────────────────────
+
+_TOOL_HINTS: dict[str, str] = {
+    "python": "https://www.python.org/downloads/",
+    "git":    "https://git-scm.com/  — or install GitHub Desktop",
+    "pio":    "py -3.11 -m pip install platformio --user",
+    "docker": "https://docs.docker.com/desktop/install/windows/",
+    "codex":  "npm install -g @openai/codex",
+    "claude": "npm install -g @anthropic-ai/claude-code",
+    "node":   "https://nodejs.org/",
+}
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _now() -> str:
@@ -94,19 +107,72 @@ def _is_blocked(path: str) -> bool:
     return False
 
 
+def _extra_tool_dirs() -> list[str]:
+    """
+    Directories to search in addition to PATH.
+
+    The hub server process may inherit a stripped PATH (especially when launched
+    from a GUI or venv). This covers the most common Windows install locations
+    for the tools we care about.
+    """
+    home    = Path.home()
+    appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
+    local   = Path(os.environ.get("LOCALAPPDATA", str(home / "AppData" / "Local")))
+    dirs: list[str] = []
+
+    # npm global installs  (claude, codex, node-based tools)
+    dirs.append(str(appdata / "npm"))
+
+    # Python user Scripts — pip install --user puts exes here
+    for pyver in ("Python313", "Python312", "Python311", "Python310", "Python39"):
+        dirs.append(str(appdata / "Python" / pyver / "Scripts"))
+
+    # GitHub Desktop bundled git — pick the newest app-x.y.z folder
+    gh_pattern = str(local / "GitHubDesktop" / "app-*" / "resources" / "app" / "git" / "cmd")
+    for d in sorted(glob.glob(gh_pattern), reverse=True):
+        dirs.append(d)
+
+    # System Git for Windows
+    dirs.extend([
+        r"C:\Program Files\Git\cmd",
+        r"C:\Program Files (x86)\Git\cmd",
+    ])
+
+    # Docker Desktop
+    dirs.append(r"C:\Program Files\Docker\Docker\resources\bin")
+
+    # Node.js system install
+    dirs.append(r"C:\Program Files\nodejs")
+
+    return dirs
+
+
 def _detect_tool(cmd: str, version_flag: str = "--version") -> dict:
-    found = shutil.which(cmd)
-    if not found:
-        return {"found": False, "path": None, "version": None}
+    """
+    Find `cmd` on PATH first, then fall back to well-known Windows locations.
+    Returns found, path, version, and install_hint.
+    """
+    # Build an augmented PATH so shutil.which picks up extra dirs
+    extra_dirs = _extra_tool_dirs()
+    augmented_path = os.pathsep.join(
+        [os.environ.get("PATH", "")] + extra_dirs
+    )
+
+    found_path = shutil.which(cmd, path=augmented_path)
+    hint = _TOOL_HINTS.get(cmd, "")
+
+    if not found_path:
+        return {"found": False, "path": None, "version": None, "install_hint": hint}
+
     try:
         result = subprocess.run(
-            [cmd, version_flag], capture_output=True, text=True, timeout=5
+            [found_path, version_flag], capture_output=True, text=True, timeout=5
         )
         output = (result.stdout or result.stderr or "").strip().splitlines()
         version = output[0] if output else "?"
-        return {"found": True, "path": found, "version": version}
+        return {"found": True, "path": found_path, "version": version, "install_hint": hint}
     except Exception:
-        return {"found": True, "path": found, "version": "?"}
+        return {"found": True, "path": found_path, "version": "?", "install_hint": hint}
 
 
 def _snapshot_paths(allowed_paths: list[str]) -> dict[str, str | None]:
@@ -325,9 +391,18 @@ def agent_doctor():
         "node":      _detect_tool("node",      "--version"),
     }
     adapters_ready = {
-        "manual":          True,
-        "codex-cli":       tools["codex"]["found"],
-        "claude-code-cli": tools["claude"]["found"],
+        "manual": {
+            "ready": True,
+            "install_hint": None,
+        },
+        "codex-cli": {
+            "ready": tools["codex"]["found"],
+            "install_hint": _KNOWN_ADAPTERS["codex-cli"]["install_hint"],
+        },
+        "claude-code-cli": {
+            "ready": tools["claude"]["found"],
+            "install_hint": _KNOWN_ADAPTERS["claude-code-cli"]["install_hint"],
+        },
     }
     return {
         "tools": tools,

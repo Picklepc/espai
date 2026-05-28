@@ -679,6 +679,18 @@ code {
 .doctor-name { min-width: 110px; color: var(--color-text-muted); }
 .doctor-val  { color: var(--color-text); font-size: 12px; }
 
+.doctor-hint {
+  margin: -2px 0 8px 26px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.doctor-hint code {
+  font-size: 11px;
+  user-select: all;
+  cursor: text;
+}
+
 /* ── Agent Bench ──────────────────────────────────────────────────────────── */
 
 .ab-disabled-panel {

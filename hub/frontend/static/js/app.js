@@ -1528,23 +1528,29 @@ function _abWireEvents() {
     if (d.error) { openModal("Doctor", `<p class="empty-state">${d.error}</p>`, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]); return; }
     const toolRows = Object.entries(d.tools || {}).map(([name, info]) => {
       const ok = info.found;
+      const hint = !ok && info.install_hint
+        ? `<div class="doctor-hint">Install: <code>${info.install_hint}</code></div>` : "";
       return `<div class="doctor-row">
-        <span class="doctor-icon ${ok ? "ok" : "miss"}">${ok ? "✓" : "—"}</span>
+        <span class="doctor-icon ${ok ? "ok" : "miss"}">${ok ? "✓" : "✗"}</span>
         <span class="doctor-name">${name}</span>
-        <span class="doctor-val">${info.version || (ok ? "found" : "not found")}</span>
-      </div>`;
+        <span class="doctor-val">${ok ? (info.version || "found") : '<span style="color:var(--color-danger)">not found</span>'}</span>
+      </div>${hint}`;
     }).join("");
     const adapterRows = Object.entries(d.adapters_ready || {}).map(([k, v]) => {
+      // v is now an object {ready, install_hint} from updated backend, or boolean from old
+      const ready = (typeof v === "object") ? v.ready : v;
+      const hint  = !ready && v?.install_hint
+        ? `<div class="doctor-hint">Install: <code>${v.install_hint}</code></div>` : "";
       return `<div class="doctor-row">
-        <span class="doctor-icon ${v ? "ok" : "miss"}">${v ? "✓" : "✗"}</span>
+        <span class="doctor-icon ${ready ? "ok" : "miss"}">${ready ? "✓" : "✗"}</span>
         <span class="doctor-name">${k}</span>
-        <span class="doctor-val" style="color:${v ? "var(--color-success)" : "var(--color-danger)"}">${v ? "ready" : "not installed"}</span>
-      </div>`;
+        <span class="doctor-val" style="color:${ready ? "var(--color-success)" : "var(--color-danger)"}">${ready ? "ready" : "not installed"}</span>
+      </div>${hint}`;
     }).join("");
     openModal("Agent Bench Doctor", `
       <p class="doctor-section-label">Tools</p>
       ${toolRows}
-      <p class="doctor-section-label" style="margin-top:14px">Adapters</p>
+      <p class="doctor-section-label" style="margin-top:16px">Adapters</p>
       ${adapterRows}
     `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
   };
