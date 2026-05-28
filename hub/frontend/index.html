@@ -1,0 +1,277 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESPAI Hub</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <div id="app" class="app-shell">
+
+    <!-- Sidebar nav -->
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="56" height="56" class="logo-badge" aria-hidden="true">
+          <defs>
+            <clipPath id="sb-badge-clip">
+              <rect x="39" y="39" width="122" height="122" rx="19" ry="19" transform="rotate(45 100 100)"/>
+            </clipPath>
+            <radialGradient id="sb-sun-grad" cx="50%" cy="100%" r="70%">
+              <stop offset="0%"   stop-color="#f07020"/>
+              <stop offset="45%"  stop-color="#cc3820"/>
+              <stop offset="80%"  stop-color="#8a1010"/>
+              <stop offset="100%" stop-color="#4a0808"/>
+            </radialGradient>
+            <radialGradient id="sb-bg-grad" cx="50%" cy="35%" r="75%">
+              <stop offset="0%"  stop-color="#101c2a"/>
+              <stop offset="100%" stop-color="#060a10"/>
+            </radialGradient>
+            <filter id="sb-glow-teal" x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="1.5" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="sb-glow-gold" x="-100%" y="-100%" width="300%" height="300%">
+              <feGaussianBlur stdDeviation="2.5" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <rect x="33" y="33" width="134" height="134" rx="22" ry="22"
+                transform="rotate(45 100 100)"
+                fill="none" stroke="#1aafc4" stroke-width="3"
+                filter="url(#sb-glow-teal)"/>
+          <rect x="38" y="38" width="124" height="124" rx="20" ry="20"
+                transform="rotate(45 100 100)"
+                fill="url(#sb-bg-grad)" stroke="#eeddc4" stroke-width="1.2" opacity="0.85"/>
+          <g clip-path="url(#sb-badge-clip)">
+            <circle cx="52"  cy="50"  r="1.0" fill="#eeddc4" opacity="0.7"/>
+            <circle cx="148" cy="45"  r="0.9" fill="#eeddc4" opacity="0.6"/>
+            <circle cx="162" cy="74"  r="0.8" fill="#eeddc4" opacity="0.5"/>
+            <circle cx="38"  cy="84"  r="0.8" fill="#eeddc4" opacity="0.5"/>
+            <circle cx="48"  cy="138" r="0.7" fill="#eeddc4" opacity="0.35"/>
+            <circle cx="155" cy="142" r="0.7" fill="#eeddc4" opacity="0.35"/>
+            <circle cx="75"  cy="38"  r="0.7" fill="#eeddc4" opacity="0.5"/>
+            <circle cx="132" cy="160" r="0.6" fill="#eeddc4" opacity="0.3"/>
+          </g>
+          <g clip-path="url(#sb-badge-clip)">
+            <rect x="0" y="122" width="200" height="80" fill="#050810"/>
+            <line x1="0" y1="128" x2="200" y2="128" stroke="#1aafc4" stroke-width="1.1" opacity="0.8"/>
+            <line x1="0" y1="138" x2="200" y2="138" stroke="#1aafc4" stroke-width="0.85" opacity="0.65"/>
+            <line x1="0" y1="149" x2="200" y2="149" stroke="#1aafc4" stroke-width="0.65" opacity="0.5"/>
+            <line x1="0" y1="162" x2="200" y2="162" stroke="#1aafc4" stroke-width="0.5"  opacity="0.4"/>
+            <line x1="0" y1="176" x2="200" y2="176" stroke="#1aafc4" stroke-width="0.4"  opacity="0.3"/>
+            <line x1="100" y1="128" x2="0"   y2="200" stroke="#1aafc4" stroke-width="0.9" opacity="0.65"/>
+            <line x1="100" y1="128" x2="200" y2="200" stroke="#1aafc4" stroke-width="0.9" opacity="0.65"/>
+            <line x1="100" y1="128" x2="28"  y2="200" stroke="#1aafc4" stroke-width="0.7" opacity="0.5"/>
+            <line x1="100" y1="128" x2="172" y2="200" stroke="#1aafc4" stroke-width="0.7" opacity="0.5"/>
+            <line x1="100" y1="128" x2="52"  y2="200" stroke="#1aafc4" stroke-width="0.55" opacity="0.4"/>
+            <line x1="100" y1="128" x2="148" y2="200" stroke="#1aafc4" stroke-width="0.55" opacity="0.4"/>
+            <line x1="100" y1="128" x2="74"  y2="200" stroke="#1aafc4" stroke-width="0.4" opacity="0.3"/>
+            <line x1="100" y1="128" x2="126" y2="200" stroke="#1aafc4" stroke-width="0.4" opacity="0.3"/>
+            <ellipse cx="100" cy="128" rx="58" ry="32" fill="url(#sb-sun-grad)" opacity="0.98"/>
+            <ellipse cx="100" cy="128" rx="42" ry="22" fill="#cc3020"           opacity="0.5"/>
+            <ellipse cx="100" cy="128" rx="27" ry="13" fill="#9a1808"           opacity="0.42"/>
+            <rect x="42" y="122" width="116" height="2.5" fill="#060a10" opacity="0.55"/>
+            <rect x="42" y="116" width="116" height="2.0" fill="#060a10" opacity="0.44"/>
+            <rect x="42" y="110" width="116" height="1.8" fill="#060a10" opacity="0.36"/>
+            <rect x="42" y="105" width="116" height="1.5" fill="#060a10" opacity="0.28"/>
+            <rect x="42" y="100" width="116" height="1.2" fill="#060a10" opacity="0.22"/>
+          </g>
+          <g filter="url(#sb-glow-gold)">
+            <path d="M100 20 L101.2 31 L107 34 L101.2 37 L100 48 L98.8 37 L93 34 L98.8 31 Z"
+                  fill="#f0a820"/>
+          </g>
+          <text x="100" y="92"
+                text-anchor="middle"
+                font-family="system-ui,-apple-system,Arial Black,sans-serif"
+                font-weight="900"
+                font-size="38"
+                fill="#eeddc4"
+                letter-spacing="4">ESPAI</text>
+        </svg>
+        <div class="logo-tagline">YOUR LAB. YOUR RULES.</div>
+      </div>
+      <ul class="nav-list">
+        <li><a href="#" class="nav-item active" data-view="fleet">Fleet</a></li>
+        <li><a href="#" class="nav-item" data-view="projects">Projects</a></li>
+        <li><a href="#" class="nav-item" data-view="recipes">Recipes</a></li>
+        <li><a href="#" class="nav-item" data-view="workers">Workers</a></li>
+        <li><a href="#" class="nav-item" data-view="cards">Cards</a></li>
+        <li><a href="#" class="nav-item" data-view="jobs">Jobs</a></li>
+        <li><a href="#" class="nav-item" data-view="ota">OTA</a></li>
+        <li><a href="#" class="nav-item" data-view="design">Design</a></li>
+        <li><a href="#" class="nav-item" data-view="events">Events</a></li>
+        <li><a href="#" class="nav-item" data-view="rules">Rules</a></li>
+      </ul>
+      <div class="sidebar-footer">
+        <span class="hub-status" id="hubStatus">Connecting…</span>
+        <button id="btnNotif" class="btn-notif" title="Enable notifications">🔔</button>
+      </div>
+    </nav>
+
+    <!-- Main content -->
+    <main class="main-content" id="mainContent">
+
+      <!-- Fleet view -->
+      <section class="view active" id="view-fleet">
+        <header class="view-header">
+          <h1>Fleet</h1>
+          <div class="header-actions">
+            <button class="btn btn-secondary" id="btnScan">Scan LAN</button>
+            <button class="btn btn-primary" id="btnAddDevice">+ Add Device</button>
+          </div>
+        </header>
+        <div class="stats-row" id="statsRow">
+          <div class="stat-card"><span class="stat-value" id="statTotal">—</span><span class="stat-label">Total Devices</span></div>
+          <div class="stat-card"><span class="stat-value accent" id="statOnline">—</span><span class="stat-label">Online</span></div>
+          <div class="stat-card"><span class="stat-value" id="statPaired">—</span><span class="stat-label">Paired</span></div>
+          <div class="stat-card"><span class="stat-value" id="statJobs">—</span><span class="stat-label">Active Jobs</span></div>
+        </div>
+        <div class="device-list" id="deviceList">
+          <div class="empty-state">No devices found. Scan LAN or add a device manually.</div>
+        </div>
+      </section>
+
+      <!-- Projects view -->
+      <section class="view" id="view-projects">
+        <!-- List subview -->
+        <div id="proj-list-view">
+          <header class="view-header">
+            <h1>Projects</h1>
+            <button class="btn btn-primary" id="btnNewProject">+ New Project</button>
+          </header>
+          <div class="card-grid" id="projectList">
+            <div class="empty-state">No projects yet.</div>
+          </div>
+        </div>
+        <!-- Detail subview -->
+        <div id="proj-detail-view" class="hidden">
+          <header class="view-header">
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="btn btn-secondary btn-sm" id="btnProjBack">← Back</button>
+              <h1 id="projDetailName">Project</h1>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary btn-sm" id="btnProjTheme">🎨 Theme</button>
+              <button class="btn btn-danger btn-sm" id="btnProjDelete">Delete Project</button>
+            </div>
+          </header>
+          <p id="projDetailDesc" style="color:var(--color-text-muted);margin-bottom:20px;font-size:14px"></p>
+          <div class="proj-detail-grid">
+            <div>
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                <p class="section-heading" style="margin:0">Files</p>
+                <button class="btn btn-secondary btn-sm" id="btnRefreshFiles" title="Refresh file list">↻</button>
+                <span id="projFilesStatus" style="font-size:11px;color:var(--color-text-muted)"></span>
+              </div>
+              <div id="projFileList" class="file-list"><div class="empty-state">Loading…</div></div>
+            </div>
+            <div>
+              <p class="section-heading">Linked Devices</p>
+              <div id="projDeviceList"><div class="empty-state">No devices linked.</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Recipes view -->
+      <section class="view" id="view-recipes">
+        <header class="view-header"><h1>Recipes</h1></header>
+        <div class="registry-grid" id="recipeList">
+          <div class="empty-state">Loading…</div>
+        </div>
+      </section>
+
+      <!-- Workers view -->
+      <section class="view" id="view-workers">
+        <header class="view-header"><h1>Workers</h1></header>
+        <div class="registry-grid" id="workerList">
+          <div class="empty-state">Loading…</div>
+        </div>
+      </section>
+
+      <!-- Cards view -->
+      <section class="view" id="view-cards">
+        <header class="view-header"><h1>Cards</h1></header>
+        <div class="registry-grid" id="cardList">
+          <div class="empty-state">Loading…</div>
+        </div>
+      </section>
+
+      <!-- Jobs view -->
+      <section class="view" id="view-jobs">
+        <header class="view-header"><h1>Jobs</h1></header>
+        <div class="job-list" id="jobList">
+          <div class="empty-state">No jobs.</div>
+        </div>
+      </section>
+
+      <!-- OTA view -->
+      <section class="view" id="view-ota">
+        <header class="view-header">
+          <h1>OTA / Firmware</h1>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" id="btnBackupDownload" title="Download hub backup">⬇ Backup</button>
+            <button class="btn btn-secondary" id="btnRestoreBackup"  title="Restore from backup">⬆ Restore</button>
+            <button class="btn btn-primary"   id="btnUploadFirmware">+ Upload Firmware</button>
+          </div>
+        </header>
+        <div class="ota-panel">
+          <div class="panel-section">
+            <h2>Firmware Catalog</h2>
+            <div id="otaCatalog"><div class="empty-state">No firmware in catalog.</div></div>
+          </div>
+          <div class="panel-section">
+            <h2>Recent OTA Activity</h2>
+            <div id="otaLog"><div class="empty-state">No OTA events.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Design view -->
+      <section class="view" id="view-design">
+        <header class="view-header"><h1>Design System</h1></header>
+        <div class="panel-section">
+          <h2>Active Tokens</h2>
+          <div id="tokenList" class="token-grid"></div>
+        </div>
+      </section>
+
+      <!-- Events view -->
+      <section class="view" id="view-events">
+        <header class="view-header"><h1>Event Log</h1></header>
+        <div class="event-list" id="eventList">
+          <div class="empty-state">No events.</div>
+        </div>
+      </section>
+
+      <!-- Rules view -->
+      <section class="view" id="view-rules">
+        <header class="view-header">
+          <h1>Automation Rules</h1>
+          <button class="btn btn-primary" id="btnNewRule">+ New Rule</button>
+        </header>
+        <div class="rule-list" id="ruleList">
+          <div class="empty-state">No rules yet. Rules fire automatically when matching events are published.</div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Modal scaffold -->
+  <div class="modal-overlay hidden" id="modalOverlay">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">Modal</h2>
+        <button class="modal-close" id="modalClose">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer" id="modalFooter"></div>
+    </div>
+  </div>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

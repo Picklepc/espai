@@ -1,0 +1,22 @@
+﻿schema: ESPAI.worker.v1
+name: ffmpeg-compressor
+display_name: FFmpeg Compressor
+runtime: python
+category: media.video
+inputs:
+  - media.video
+outputs:
+  - media.video.compressed
+  - media.thumbnail
+  - media.metadata
+permissions:
+  filesystem: project-media-only
+  network: none
+  secrets: none
+external_tools:
+  - ffmpeg
+resource_cost:
+  cpu: high
+  memory: medium
+  disk: high
+  realtime_safe: false

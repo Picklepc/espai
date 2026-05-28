@@ -1,0 +1,50 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESPAI Firmware Catalog Entry",
+  "description": "Metadata for a firmware binary in the ESPAI catalog",
+  "type": "object",
+  "required": ["schema", "board", "version", "channel", "filename", "sha256"],
+  "properties": {
+    "schema": { "const": "ESPAI.firmware.v1" },
+    "board": {
+      "type": "string",
+      "description": "PlatformIO board ID (e.g. seeed_xiao_esp32s3, esp32dev)"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+",
+      "description": "Semantic version string"
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["dev", "beta", "stable"],
+      "default": "dev"
+    },
+    "filename": { "type": "string" },
+    "size_bytes": { "type": "integer", "minimum": 0 },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 hex digest of the binary"
+    },
+    "uploaded": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "project": {
+      "type": "string",
+      "description": "Project ID this firmware belongs to (optional)"
+    },
+    "known_good": {
+      "type": "boolean",
+      "description": "Marked true after successful deployment and verification"
+    },
+    "rollback_target": {
+      "type": "string",
+      "description": "Version to roll back to if this firmware fails"
+    },
+    "min_sdk": { "type": "string" },
+    "max_sdk": { "type": "string" },
+    "notes": { "type": "string" }
+  }
+}

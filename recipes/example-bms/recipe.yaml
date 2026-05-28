@@ -1,0 +1,64 @@
+﻿schema: ESPAI.recipe.v1
+name: Example BLE/UART BMS
+category: battery.bms
+summary: Demonstrates implemented BLE support and documented UART support.
+
+compatibility:
+  tested:
+    - manufacturer: ExamplePower
+      model: EP-48V100
+      transport: ble
+      status: working
+  likely_works:
+    - manufacturer: ExamplePower
+      model: EP-48V50
+      reason: Same app and matching BLE UUID family.
+
+references:
+  - title: Manufacturer UART Protocol
+    type: manufacturer_protocol
+    access: private
+    file_ref: docs/private/uart-protocol.pdf
+    share_policy: do_not_export
+
+transports:
+  ble:
+    status: implemented
+    confidence: high
+  uart:
+    status: documented_not_implemented
+    confidence: medium
+  rs485:
+    status: suspected
+    confidence: low
+  can:
+    status: unknown
+    confidence: low
+
+features:
+  implemented:
+    - battery.voltage
+    - battery.current
+    - battery.soc
+    - battery.temperature
+  documented_not_implemented:
+    - battery.cycles
+    - battery.protection_flags
+  unsafe_or_blocked:
+    - battery.write_config
+    - battery.reset_bms
+
+secrets:
+  pairing_pin:
+    class: DEVICE_PRIVATE
+    required: false
+    value_ref: "${DEVICE_PAIRING_PIN}"
+
+share_policy:
+  export_public: true
+  exclude:
+    - docs/private/
+    - captures/private/
+    - "*.private.yaml"
+    - local.yaml
+    - secrets.yaml

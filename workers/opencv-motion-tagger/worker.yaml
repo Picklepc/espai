@@ -1,0 +1,26 @@
+﻿schema: ESPAI.worker.v1
+name: opencv-motion-tagger
+display_name: OpenCV Motion Tagger
+runtime: python
+category: media.vision
+inputs:
+  - media.image
+  - media.video
+outputs:
+  - media.tags
+  - media.thumbnail
+  - event.motion_classified
+permissions:
+  filesystem: project-media-only
+  network: none
+  secrets: none
+resource_cost:
+  cpu: medium
+  memory: medium
+  disk: medium
+  realtime_safe: false
+sandbox:
+  preferred: docker
+  native_allowed: true
+entrypoint: main.py
+requirements: requirements.txt

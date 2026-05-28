@@ -1,0 +1,19 @@
+﻿schema: ESPAI.theme.v1
+name: default-dark
+display_name: ESPAI Default Dark
+
+tokens:
+  color.background: "#0b0f14"
+  color.surface: "#121923"
+  color.card: "#17202b"
+  color.card.border: "#263445"
+  color.text: "#eef4ff"
+  color.text.muted: "#9fb0c3"
+  color.accent: "#56b6ff"
+  color.warning: "#ffcc66"
+  color.danger: "#ff5c7a"
+  color.success: "#5ee6a8"
+  radius.card: "14px"
+  radius.button: "10px"
+  spacing.card: "16px"
+  font.body: "system-ui, sans-serif"

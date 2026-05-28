@@ -1,0 +1,129 @@
+﻿/* ESPAI Hub — API client
+   Thin fetch wrapper. All calls return parsed JSON or throw an Error. */
+
+const API_BASE = "";
+
+async function apiFetch(path, options = {}) {
+  const res = await fetch(API_BASE + path, {
+    headers: { "Content-Type": "application/json", ...options.headers },
+    ...options,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`${res.status} ${text}`);
+  }
+  const ct = res.headers.get("content-type") || "";
+  return ct.includes("application/json") ? res.json() : res.text();
+}
+
+const api = {
+  status:   ()       => apiFetch("/api/status"),
+
+  // Devices
+  devices:  {
+    list:           ()          => apiFetch("/api/devices/"),
+    get:            (id)        => apiFetch(`/api/devices/${id}`),
+    checkin:        (body)      => apiFetch("/api/devices/checkin",      { method: "POST", body: JSON.stringify(body) }),
+    addManual:      (body)      => apiFetch("/api/devices/manual",       { method: "POST", body: JSON.stringify(body) }),
+    initiatePair:   (id)        => apiFetch(`/api/devices/pair/initiate/${id}`, { method: "POST" }),
+    confirmPair:    (body)      => apiFetch("/api/devices/pair/confirm", { method: "POST", body: JSON.stringify(body) }),
+    delete:         (id)        => apiFetch(`/api/devices/${id}`,        { method: "DELETE" }),
+    scan:           (subnet)    => apiFetch(
+      "/api/devices/scan" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""),
+      { method: "POST" }
+    ),
+  },
+
+  // Projects
+  projects: {
+    list:       ()       => apiFetch("/api/projects/"),
+    get:        (id)     => apiFetch(`/api/projects/${id}`),
+    files:      (id)     => apiFetch(`/api/projects/${id}/files`),
+    create:     (body)   => apiFetch("/api/projects/",        { method: "POST",   body: JSON.stringify(body) }),
+    update:     (id, b)  => apiFetch(`/api/projects/${id}`,   { method: "PATCH",  body: JSON.stringify(b) }),
+    delete:     (id)     => apiFetch(`/api/projects/${id}`,   { method: "DELETE" }),
+    theme:      (id)     => apiFetch(`/api/projects/${id}/theme`),
+    setTheme:   (id, b)  => apiFetch(`/api/projects/${id}/theme`, { method: "PUT", body: JSON.stringify(b) }),
+  },
+
+  // Registry
+  workers:  {
+    list:   ()        => apiFetch("/api/workers/"),
+    get:    (n)       => apiFetch(`/api/workers/${n}`),
+    test:   (n, body) => apiFetch(`/api/workers/${encodeURIComponent(n)}/test`, { method: "POST", body: JSON.stringify(body) }),
+    compat: (n)       => apiFetch(`/api/workers/${encodeURIComponent(n)}/compat`),
+  },
+  recipes: {
+    list:     ()  => apiFetch("/api/recipes/"),
+    get:      (n) => apiFetch(`/api/recipes/${n}`),
+    validate: (n) => apiFetch(`/api/recipes/${encodeURIComponent(n)}/validate`),
+    export:   (n) => apiFetch(`/api/recipes/${encodeURIComponent(n)}/export`),
+    compat:   (n) => apiFetch(`/api/recipes/${encodeURIComponent(n)}/compat`),
+  },
+  cards:    { list: () => apiFetch("/api/cards/"),    get: (n) => apiFetch(`/api/cards/${n}`) },
+
+  // Design
+  design: {
+    tokens: ()       => apiFetch("/api/design/tokens"),
+    themes: ()       => apiFetch("/api/design/themes"),
+    skins:  ()       => apiFetch("/api/design/skins"),
+  },
+
+  // Jobs
+  jobs: {
+    list:   (status) => apiFetch(`/api/jobs/${status ? "?status=" + status : ""}`),
+    submit: (body)   => apiFetch("/api/jobs/submit",   { method: "POST",   body: JSON.stringify(body) }),
+    cancel: (id)     => apiFetch(`/api/jobs/${id}/cancel`, { method: "POST" }),
+  },
+
+  // OTA
+  ota: {
+    catalog:    ()         => apiFetch("/api/ota/catalog"),
+    log:        (did)      => apiFetch(`/api/ota/log${did ? "?device_id=" + did : ""}`),
+    push:       (body)     => apiFetch("/api/ota/push",      { method: "POST",   body: JSON.stringify(body) }),
+    rollback:   (body)     => apiFetch("/api/ota/rollback",  { method: "POST",   body: JSON.stringify(body) }),
+    markGood:   (id, op)   => apiFetch(`/api/ota/catalog/${encodeURIComponent(id)}/mark-good?operator=${encodeURIComponent(op || "local")}`, { method: "POST" }),
+    patchEntry: (id, body) => apiFetch(`/api/ota/catalog/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
+    upload:  (file, board, version, channel) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      const url = `/api/ota/catalog/upload?board=${encodeURIComponent(board)}&version=${encodeURIComponent(version)}&channel=${encodeURIComponent(channel)}`;
+      return fetch(url, { method: "POST", body: fd }).then(async r => {
+        if (!r.ok) { const t = await r.text().catch(() => r.statusText); throw new Error(`${r.status} ${t}`); }
+        return r.json();
+      });
+    },
+  },
+
+  // Events
+  events: {
+    list:    (opts) => {
+      const q = new URLSearchParams(opts || {}).toString();
+      return apiFetch(`/api/events/${q ? "?" + q : ""}`);
+    },
+    publish: (body) => apiFetch("/api/events/publish", { method: "POST", body: JSON.stringify(body) }),
+  },
+
+  // Rules
+  rules: {
+    list:   ()           => apiFetch("/api/rules/"),
+    get:    (id)         => apiFetch(`/api/rules/${id}`),
+    create: (body)       => apiFetch("/api/rules/",   { method: "POST",   body: JSON.stringify(body) }),
+    update: (id, body)   => apiFetch(`/api/rules/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    delete: (id)         => apiFetch(`/api/rules/${id}`, { method: "DELETE" }),
+  },
+
+  // Admin
+  admin: {
+    backup:   ()     => apiFetch("/api/admin/backup"),
+    download: ()     => window.open("/api/admin/backup/download", "_blank"),
+    restore:  (body) => apiFetch("/api/admin/restore", { method: "POST", body: JSON.stringify(body) }),
+    status:   ()     => apiFetch("/api/admin/status"),
+  },
+
+  // Meta
+  meta: () => apiFetch("/api/meta"),
+
+  // OTA rollout
+  otaRollout: (body) => apiFetch("/api/ota/rollout", { method: "POST", body: JSON.stringify(body) }),
+};

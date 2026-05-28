@@ -1,0 +1,33 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESPAI Worker",
+  "type": "object",
+  "required": [
+    "schema",
+    "name",
+    "runtime",
+    "inputs",
+    "outputs",
+    "permissions"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ESPAI.worker.v1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "array"
+    },
+    "outputs": {
+      "type": "array"
+    },
+    "permissions": {
+      "type": "object"
+    }
+  }
+}

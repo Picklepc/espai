@@ -1,0 +1,23 @@
+﻿schema: ESPAI.theme.v1
+name: retro
+display_name: ESPAI Retro
+
+# Palette extracted from the ESPAI badge logo:
+#   cream text, orange tagline, teal chrome, gold star, synthwave grid
+tokens:
+  color.background:  "#080c10"     # near-black with blue tint
+  color.surface:     "#0d1824"     # dark navy
+  color.card:        "#121f30"     # card face
+  color.card.border: "#1c3650"     # card edge
+  color.text:        "#eeddc4"     # warm cream (ESPAI lettering)
+  color.text.muted:  "#7a9aaa"     # muted teal-grey
+  color.accent:      "#1aafc4"     # teal (grid lines + border)
+  color.accent2:     "#e07828"     # orange (tagline)
+  color.warning:     "#f0a820"     # gold (star)
+  color.danger:      "#e03248"     # red
+  color.success:     "#20bf96"     # teal-green
+  color.sun:         "#f07020"     # sunset centre
+  radius.card:       "10px"
+  radius.button:     "7px"
+  spacing.card:      "16px"
+  font.body:         "system-ui, -apple-system, sans-serif"

@@ -1,0 +1,7 @@
+﻿schema: ESPAI.skin.v1
+name: holiday-winter
+display_name: Holiday Winter
+overrides:
+  color.accent: "#8fd3ff"
+decorations:
+  banner_text: "Winter Mode"

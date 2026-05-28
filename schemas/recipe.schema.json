@@ -1,0 +1,24 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESPAI Recipe",
+  "type": "object",
+  "required": [
+    "schema",
+    "name",
+    "category"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ESPAI.recipe.v1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "transports": {
+      "type": "object"
+    }
+  }
+}

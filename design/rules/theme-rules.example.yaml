@@ -1,0 +1,14 @@
+﻿schema: ESPAI.theme_rules.v1
+rules:
+  - name: night-mode
+    when:
+      time_after: sunset
+    apply_skin: night-mode
+  - name: winter-season
+    when:
+      month_in: [12, 1]
+    apply_skin: holiday-winter
+  - name: warning-overlay
+    when:
+      event: device.alert
+    apply_overlay: warning

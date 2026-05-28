@@ -1,0 +1,9 @@
+﻿schema: ESPAI.card.v1
+name: status
+display_name: Status Card
+capabilities:
+  - fleet.status
+inputs:
+  - device.status
+design:
+  uses_tokens: true

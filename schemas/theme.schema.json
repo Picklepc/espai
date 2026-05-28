@@ -1,0 +1,21 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESPAI Theme",
+  "type": "object",
+  "required": [
+    "schema",
+    "name",
+    "tokens"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ESPAI.theme.v1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "tokens": {
+      "type": "object"
+    }
+  }
+}

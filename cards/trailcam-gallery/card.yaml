@@ -1,0 +1,11 @@
+﻿schema: ESPAI.card.v1
+name: trailcam-gallery
+display_name: Trailcam Gallery
+capabilities:
+  - media.gallery
+  - media.tags
+inputs:
+  - media.event
+  - worker.result
+design:
+  uses_tokens: true

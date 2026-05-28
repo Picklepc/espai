@@ -1,0 +1,11 @@
+# Normalize line endings: LF in repo, OS-native on checkout
+* text=auto eol=lf
+
+# Firmware binaries — do not touch line endings
+*.bin binary
+*.elf binary
+*.hex binary
+
+# Archives
+*.zip binary
+*.gz  binary

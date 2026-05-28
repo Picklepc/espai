@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <clipPath id="badge-clip">
+      <rect x="39" y="39" width="122" height="122" rx="19" ry="19" transform="rotate(45 100 100)"/>
+    </clipPath>
+    <radialGradient id="sun-grad" cx="50%" cy="100%" r="70%">
+      <stop offset="0%"   stop-color="#f07020"/>
+      <stop offset="45%"  stop-color="#cc3820"/>
+      <stop offset="80%"  stop-color="#8a1010"/>
+      <stop offset="100%" stop-color="#4a0808"/>
+    </radialGradient>
+    <radialGradient id="bg-grad" cx="50%" cy="35%" r="75%">
+      <stop offset="0%"  stop-color="#101c2a"/>
+      <stop offset="100%" stop-color="#060a10"/>
+    </radialGradient>
+    <filter id="glow-teal" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glow-gold" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Outer teal border (rounded diamond) -->
+  <rect x="33" y="33" width="134" height="134" rx="22" ry="22"
+        transform="rotate(45 100 100)"
+        fill="none" stroke="#1aafc4" stroke-width="3"
+        filter="url(#glow-teal)"/>
+
+  <!-- Cream inner ring + dark background fill -->
+  <rect x="38" y="38" width="124" height="124" rx="20" ry="20"
+        transform="rotate(45 100 100)"
+        fill="url(#bg-grad)" stroke="#eeddc4" stroke-width="1.2" opacity="0.85"/>
+
+  <!-- Star field -->
+  <g clip-path="url(#badge-clip)">
+    <circle cx="52"  cy="50"  r="1.0" fill="#eeddc4" opacity="0.7"/>
+    <circle cx="148" cy="45"  r="0.9" fill="#eeddc4" opacity="0.6"/>
+    <circle cx="162" cy="74"  r="0.8" fill="#eeddc4" opacity="0.5"/>
+    <circle cx="38"  cy="84"  r="0.8" fill="#eeddc4" opacity="0.5"/>
+    <circle cx="48"  cy="138" r="0.7" fill="#eeddc4" opacity="0.35"/>
+    <circle cx="155" cy="142" r="0.7" fill="#eeddc4" opacity="0.35"/>
+    <circle cx="75"  cy="38"  r="0.7" fill="#eeddc4" opacity="0.5"/>
+    <circle cx="132" cy="160" r="0.6" fill="#eeddc4" opacity="0.3"/>
+    <circle cx="168" cy="108" r="0.6" fill="#eeddc4" opacity="0.3"/>
+    <circle cx="35"  cy="112" r="0.6" fill="#eeddc4" opacity="0.3"/>
+  </g>
+
+  <!-- Retro grid + sunset -->
+  <g clip-path="url(#badge-clip)">
+    <rect x="0" y="122" width="200" height="80" fill="#050810"/>
+    <!-- Horizontal grid lines -->
+    <line x1="0" y1="128" x2="200" y2="128" stroke="#1aafc4" stroke-width="1.1" opacity="0.8"/>
+    <line x1="0" y1="138" x2="200" y2="138" stroke="#1aafc4" stroke-width="0.85" opacity="0.65"/>
+    <line x1="0" y1="149" x2="200" y2="149" stroke="#1aafc4" stroke-width="0.65" opacity="0.5"/>
+    <line x1="0" y1="162" x2="200" y2="162" stroke="#1aafc4" stroke-width="0.5"  opacity="0.4"/>
+    <line x1="0" y1="176" x2="200" y2="176" stroke="#1aafc4" stroke-width="0.4"  opacity="0.3"/>
+    <!-- Perspective vanishing lines -->
+    <line x1="100" y1="128" x2="0"   y2="200" stroke="#1aafc4" stroke-width="0.9" opacity="0.65"/>
+    <line x1="100" y1="128" x2="200" y2="200" stroke="#1aafc4" stroke-width="0.9" opacity="0.65"/>
+    <line x1="100" y1="128" x2="28"  y2="200" stroke="#1aafc4" stroke-width="0.7" opacity="0.5"/>
+    <line x1="100" y1="128" x2="172" y2="200" stroke="#1aafc4" stroke-width="0.7" opacity="0.5"/>
+    <line x1="100" y1="128" x2="52"  y2="200" stroke="#1aafc4" stroke-width="0.55" opacity="0.4"/>
+    <line x1="100" y1="128" x2="148" y2="200" stroke="#1aafc4" stroke-width="0.55" opacity="0.4"/>
+    <line x1="100" y1="128" x2="74"  y2="200" stroke="#1aafc4" stroke-width="0.4" opacity="0.3"/>
+    <line x1="100" y1="128" x2="126" y2="200" stroke="#1aafc4" stroke-width="0.4" opacity="0.3"/>
+    <!-- Sun -->
+    <ellipse cx="100" cy="128" rx="58" ry="32" fill="url(#sun-grad)" opacity="0.98"/>
+    <ellipse cx="100" cy="128" rx="42" ry="22" fill="#cc3020"        opacity="0.5"/>
+    <ellipse cx="100" cy="128" rx="27" ry="13" fill="#9a1808"        opacity="0.42"/>
+    <!-- Sun stripes -->
+    <rect x="42" y="122" width="116" height="2.5" fill="#060a10" opacity="0.55"/>
+    <rect x="42" y="116" width="116" height="2.0" fill="#060a10" opacity="0.44"/>
+    <rect x="42" y="110" width="116" height="1.8" fill="#060a10" opacity="0.36"/>
+    <rect x="42" y="105" width="116" height="1.5" fill="#060a10" opacity="0.28"/>
+    <rect x="42" y="100" width="116" height="1.2" fill="#060a10" opacity="0.22"/>
+  </g>
+
+  <!-- Gold 4-pointed sparkle star -->
+  <g filter="url(#glow-gold)">
+    <path d="M100 20 L101.2 31 L107 34 L101.2 37 L100 48 L98.8 37 L93 34 L98.8 31 Z"
+          fill="#f0a820"/>
+  </g>
+
+  <!-- ESPAI lettering -->
+  <text x="100" y="88"
+        text-anchor="middle"
+        font-family="system-ui,-apple-system,Arial Black,sans-serif"
+        font-weight="900"
+        font-size="38"
+        fill="#eeddc4"
+        letter-spacing="4">ESPAI</text>
+
+  <!-- Tagline -->
+  <text x="100" y="108"
+        text-anchor="middle"
+        font-family="system-ui,-apple-system,Arial,sans-serif"
+        font-weight="700"
+        font-size="9.5"
+        fill="#e07828"
+        letter-spacing="1.8">YOUR LAB. YOUR RULES.</text>
+</svg>

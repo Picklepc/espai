@@ -1,0 +1,15 @@
+﻿schema: ESPAI.policy.v1
+name: default-safe
+workers:
+  imported_default_state: quarantined
+  allow_network_by_default: false
+  allow_secret_access_by_default: false
+  max_runtime_seconds: 300
+ota:
+  require_pairing: true
+  require_confirmation: true
+  require_checksum: true
+  allow_auto_update: false
+commands:
+  dangerous_require_confirmation: true
+  log_all_control_commands: true

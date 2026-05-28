@@ -1,0 +1,35 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESPAI Card",
+  "description": "A reusable UI card that consumes design tokens and capability data",
+  "type": "object",
+  "required": ["schema", "name", "capabilities", "design"],
+  "properties": {
+    "schema": { "const": "ESPAI.card.v1" },
+    "name": { "type": "string" },
+    "display_name": { "type": "string" },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Hub capability namespaces this card consumes"
+    },
+    "inputs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Data types this card accepts"
+    },
+    "design": {
+      "type": "object",
+      "required": ["uses_tokens"],
+      "properties": {
+        "uses_tokens": { "type": "boolean" },
+        "min_width": { "type": "string" },
+        "min_height": { "type": "string" }
+      }
+    },
+    "project_scoped": {
+      "type": "boolean",
+      "description": "If true, card may use project-specific overrides"
+    }
+  }
+}

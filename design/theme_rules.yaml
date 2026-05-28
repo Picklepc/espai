@@ -1,0 +1,58 @@
+# ESPAI Dynamic Theme Rules
+# Schema: ESPAI.theme_rules.v1
+#
+# Rules are evaluated by the theme scheduler (hub/backend/theme_scheduler.py)
+# every 60 seconds. Time-based rules switch the active theme automatically;
+# event-based rules apply token overrides for a fixed duration after matching.
+#
+# This file is a scaffold — uncomment and edit rules to activate them.
+# Restart the hub after editing.
+
+schema: ESPAI.theme_rules.v1
+
+rules:
+  # ── Time-based ────────────────────────────────────────────────────────────
+  # Switch to a darker theme at night (21:00 → 07:00)
+  # - name: night-mode
+  #   trigger:
+  #     type: time
+  #     hour_start: 21   # 9 PM local time
+  #     hour_end:   7    # 7 AM local time
+  #   action:
+  #     type: apply_theme
+  #     theme: default-dark
+
+  # Retro theme during work hours (09:00 → 18:00)
+  # - name: work-hours-retro
+  #   trigger:
+  #     type: time
+  #     hour_start: 9
+  #     hour_end: 18
+  #   action:
+  #     type: apply_theme
+  #     theme: retro
+
+  # ── Event-based (token flash) ─────────────────────────────────────────────
+  # Flash accent red for 5 minutes when motion is detected
+  # - name: motion-alert-flash
+  #   trigger:
+  #     type: event
+  #     event_type: motion_detected
+  #     duration_minutes: 5
+  #   action:
+  #     type: apply_tokens
+  #     tokens:
+  #       --color-accent: "#e03030"
+  #       --color-card-border: "rgba(224,48,48,0.4)"
+
+  # Flash gold on battery low event
+  # - name: battery-low-alert
+  #   trigger:
+  #     type: event
+  #     event_type: battery_low
+  #     duration_minutes: 10
+  #   action:
+  #     type: apply_tokens
+  #     tokens:
+  #       --color-warning: "#ff8800"
+  #       --color-accent2: "#ff8800"

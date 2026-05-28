@@ -1,0 +1,45 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESPAI Device Manifest",
+  "description": "Self-reported manifest from an ESP32 node at /api/manifest",
+  "type": "object",
+  "required": ["schema", "id", "board"],
+  "properties": {
+    "schema": { "const": "ESPAI.device.v1" },
+    "id": {
+      "type": "string",
+      "description": "Unique node ID derived from MAC address (no raw MAC stored)"
+    },
+    "name": { "type": "string" },
+    "board": { "type": "string", "description": "PlatformIO board ID" },
+    "fw_version": { "type": "string" },
+    "sdk_version": { "type": "string" },
+    "uptime_s": { "type": "integer", "minimum": 0 },
+    "heap_free": { "type": "integer", "minimum": 0 },
+    "capabilities": {
+      "type": "object",
+      "description": "Feature flags advertised by the node",
+      "properties": {
+        "ota": { "type": "boolean" },
+        "sleep": { "type": "boolean" },
+        "camera": { "type": "boolean" },
+        "ble": { "type": "boolean" },
+        "gpio": { "type": "array", "items": { "type": "integer" } },
+        "i2c": { "type": "boolean" },
+        "spi": { "type": "boolean" },
+        "uart": { "type": "array", "items": { "type": "integer" } },
+        "can": { "type": "boolean" },
+        "adc": { "type": "array", "items": { "type": "integer" } }
+      },
+      "additionalProperties": true
+    },
+    "ip": {
+      "type": "string",
+      "description": "Current IP address (not stored in repo — runtime only)"
+    },
+    "paired": {
+      "type": "boolean",
+      "description": "Whether this node is paired to a hub"
+    }
+  }
+}

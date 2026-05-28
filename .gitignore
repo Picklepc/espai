@@ -1,0 +1,45 @@
+# Runtime logs
+hub_start.log
+*.log
+
+# Runtime / secrets
+.env
+*.private.yaml
+*.private.json
+local.yaml
+secrets.yaml
+firmware/seed/secrets.ini
+
+# Workspace runtime dirs (tracked by .gitkeep)
+data/*.db
+data/*.log
+logs/
+runtime/
+backups/
+captures/private/
+
+# Firmware catalog binaries (metadata JSONs are tracked, binaries are not)
+firmware-catalog/**/*.bin
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# PlatformIO
+.pio/
+firmware/**/.pio/
+
+# Node / frontend build artifacts
+node_modules/
+dist/
+build/
+
+# Editor
+.vscode/settings.json
+*.swp
+*~
+

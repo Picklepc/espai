@@ -1,0 +1,17 @@
+﻿schema: ESPAI.nav.v1
+name: default
+items:
+  - label: Dashboard
+    path: /
+  - label: Devices
+    path: /devices
+  - label: Projects
+    path: /projects
+  - label: Recipes
+    path: /recipes
+  - label: Workers
+    path: /workers
+  - label: Firmware
+    path: /firmware
+  - label: Settings
+    path: /settings

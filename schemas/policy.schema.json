@@ -1,0 +1,51 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESPAI Policy",
+  "description": "Security and runtime policy for workers, OTA, and commands",
+  "type": "object",
+  "required": ["schema", "name"],
+  "properties": {
+    "schema": { "const": "ESPAI.policy.v1" },
+    "name": { "type": "string" },
+    "workers": {
+      "type": "object",
+      "properties": {
+        "imported_default_state": {
+          "type": "string",
+          "enum": ["quarantined", "trusted"],
+          "default": "quarantined"
+        },
+        "allow_network_by_default": { "type": "boolean", "default": false },
+        "allow_secret_access_by_default": { "type": "boolean", "default": false },
+        "max_runtime_seconds": { "type": "integer", "minimum": 1, "default": 300 }
+      }
+    },
+    "ota": {
+      "type": "object",
+      "properties": {
+        "require_pairing": { "type": "boolean", "default": true },
+        "require_confirmation": { "type": "boolean", "default": true },
+        "require_checksum": { "type": "boolean", "default": true },
+        "allow_auto_update": { "type": "boolean", "default": false },
+        "allowed_channels": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["dev", "beta", "stable"] }
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "properties": {
+        "dangerous_require_confirmation": { "type": "boolean", "default": true },
+        "log_all_control_commands": { "type": "boolean", "default": true }
+      }
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "allow_external_outbound": { "type": "boolean", "default": false },
+        "lan_only": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

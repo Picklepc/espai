@@ -1,0 +1,8 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pyyaml>=6.0
+python-multipart>=0.0.9
+jsonschema>=4.22.0
+
+# Optional — install for mDNS discovery
+# zeroconf>=0.131.0
