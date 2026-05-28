@@ -90,6 +90,59 @@ function formatBytes(n) {
   return `${(n / 1048576).toFixed(1)} MB`;
 }
 
+// ── Global tooltip (data-tip="…") ─────────────────────────────────────────
+// Convention: every interactive element must have data-tip="one sentence".
+// Simple one-liners use this system. Complex structured info (Doctor rows)
+// uses the separate _showDoctorTooltip / _hideDoctorTooltip system.
+
+const _appTip    = document.getElementById("appTip");
+let   _tipTimer  = null;
+let   _tipTarget = null;
+
+function _positionAppTip(el) {
+  const rect   = el.getBoundingClientRect();
+  const margin = 8;
+  _appTip.style.left = "0"; _appTip.style.top = "0"; // reset before measuring
+  _appTip.classList.remove("hidden");
+  const tw = _appTip.offsetWidth;
+  const th = _appTip.offsetHeight;
+  let left = rect.left + rect.width / 2 - tw / 2;   // centered below
+  let top  = rect.bottom + margin;
+  if (top + th > window.innerHeight - margin) top = rect.top - th - margin; // flip up
+  _appTip.style.left = Math.max(margin, Math.min(left, window.innerWidth - tw - margin)) + "px";
+  _appTip.style.top  = Math.max(margin, top) + "px";
+}
+
+function _showAppTip(el) {
+  const text = el.dataset.tip;
+  if (!text) return;
+  _appTip.textContent = text;
+  _tipTarget = el;
+  clearTimeout(_tipTimer);
+  _tipTimer = setTimeout(() => _positionAppTip(el), 400); // 400 ms delay
+}
+
+function _hideAppTip() {
+  clearTimeout(_tipTimer);
+  _appTip.classList.add("hidden");
+  _tipTarget = null;
+}
+
+// Wire once at document level — catches dynamically added [data-tip] elements too
+document.addEventListener("mouseover", e => {
+  const el = e.target.closest("[data-tip]");
+  if (el && el !== _tipTarget) _showAppTip(el);
+}, true);
+
+document.addEventListener("mouseout", e => {
+  const el = e.target.closest("[data-tip]");
+  if (el) _hideAppTip();
+}, true);
+
+// Hide on scroll or any click
+document.addEventListener("scroll", _hideAppTip, true);
+document.addEventListener("click",  _hideAppTip, true);
+
 // ── Fleet view ─────────────────────────────────────────────────────────────
 
 async function loadFleet() {
@@ -117,24 +170,26 @@ async function loadFleet() {
     const online_ = isOnline(d.last_seen);
     const card = el("div", "device-card");
     const dotClass = online_ ? "device-dot online" : (d.paired ? "device-dot paired" : "device-dot");
+    const dotTip   = online_ ? "Online — seen within 2 minutes" : (d.paired ? "Offline — paired but not recently seen" : "Unregistered — not yet paired");
     card.innerHTML = `
-      <span class="${dotClass}"></span>
+      <span class="${dotClass}" data-tip="${dotTip}"></span>
       <div class="device-info">
         <div class="device-name">${d.name || d.id}</div>
         <div class="device-meta">${d.ip || "no IP"} · ${d.board || "unknown board"} · fw ${d.fw_version || "?"} · ${timeAgo(d.last_seen)}</div>
       </div>
-      <span class="device-badge ${d.paired ? "" : "unpaired"}">${d.paired ? "Paired" : "Unpaired"}</span>
+      <span class="device-badge ${d.paired ? "" : "unpaired"}" data-tip="${d.paired ? "Paired — trusted for OTA and commands" : "Not paired — click Pair to register this device"}">${d.paired ? "Paired" : "Unpaired"}</span>
     `;
     const actions = el("div", "device-actions");
     if (!d.paired) {
       const pairBtn = el("button", "btn btn-secondary btn-sm");
       pairBtn.textContent = "Pair";
+      pairBtn.dataset.tip = "Pair this device with the hub to enable OTA and trusted commands";
       pairBtn.onclick = () => pairDevice(d.id);
       actions.appendChild(pairBtn);
     }
     const delBtn = el("button", "btn btn-danger btn-sm");
     delBtn.innerHTML = "&#x2715;";
-    delBtn.title = "Remove from fleet";
+    delBtn.dataset.tip = "Remove this device from the fleet";
     delBtn.onclick = async (e) => {
       e.stopPropagation();
       if (!confirm(`Remove "${d.name || d.id}" from fleet?`)) return;
@@ -697,9 +752,9 @@ async function loadWorkers() {
       ${sub ? `<div class="reg-card-sub">${sub}</div>` : ""}
       <div class="tag-row">
         ${tags}
-        <span class="tag" title="filesystem permission" style="opacity:.7">fs:${fs}</span>
-        <span class="tag" title="network permission"    style="opacity:.7">net:${net}</span>
-        ${item.quarantine ? '<span class="tag" style="color:var(--color-warning)">quarantined</span>' : ""}
+        <span class="tag" data-tip="Filesystem access level: ${fs}" style="opacity:.7">fs:${fs}</span>
+        <span class="tag" data-tip="Network access level: ${net}" style="opacity:.7">net:${net}</span>
+        ${item.quarantine ? '<span class="tag" data-tip="Imported or generated worker — runs sandboxed until reviewed" style="color:var(--color-warning)">quarantined</span>' : ""}
       </div>
     `;
     const testBtn = el("button", "btn btn-secondary btn-sm", "▶ Test");
@@ -780,13 +835,13 @@ async function loadJobs() {
     const costTags = Object.keys(cost).filter(k => k !== "realtime_safe").map(k => {
       const val   = String(cost[k]).toLowerCase();
       const color = k === "cpu" ? (cpuColor[val] || "var(--color-accent)") : "var(--color-text-muted)";
-      return `<span class="tag" style="font-size:10px;color:${color}">${k}:${val}</span>`;
+      return `<span class="tag" data-tip="${k} cost: ${val}" style="font-size:10px;color:${color}">${k}:${val}</span>`;
     }).join("");
     const rtSafe = cost.realtime_safe === false
-      ? '<span class="tag" style="font-size:10px;color:var(--color-warning)">not-rt-safe</span>' : "";
+      ? '<span class="tag" data-tip="This worker is not realtime-safe and may block the event loop" style="font-size:10px;color:var(--color-warning)">not-rt-safe</span>' : "";
 
     row.innerHTML = `
-      <span class="job-status ${j.status}">${j.status}</span>
+      <span class="job-status ${j.status}" data-tip="Job status: ${j.status}">${j.status}</span>
       <span style="font-weight:600;font-size:13px">${j.worker_name}</span>
       <span style="display:flex;gap:4px;align-items:center">${costTags}${rtSafe}</span>
       <span style="color:var(--color-text-muted);font-size:12px;flex:1">${j.id.slice(0,8)}</span>
@@ -795,7 +850,7 @@ async function loadJobs() {
     // Click to show outputs
     if (j.outputs || j.error) {
       row.style.cursor = "pointer";
-      row.title = "Click for details";
+      row.dataset.tip = "Click to view job outputs and timing details";
       row.onclick = () => {
         const detail = j.outputs ? JSON.stringify(JSON.parse(j.outputs || "{}"), null, 2) : "";
         openModal(`Job — ${j.worker_name}`, `
@@ -837,7 +892,7 @@ async function loadOTA() {
         <div class="reg-card-title">${fw.board} — v${fw.version}</div>
         <div class="reg-card-sub">Channel: ${fw.channel} · ${formatBytes(fw.size_bytes)}</div>
         <div class="tag-row">
-          <span class="tag">${fw.sha256 ? fw.sha256.slice(0,12) + "…" : "no checksum"}</span>
+          <span class="tag" ${fw.sha256 ? `data-tip="Full SHA-256: ${fw.sha256}"` : ""}>${fw.sha256 ? fw.sha256.slice(0,12) + "…" : "no checksum"}</span>
           <span class="tag">${timeAgo(fw.uploaded)}</span>
           ${goodBadge}${rbBadge}
         </div>
@@ -846,11 +901,13 @@ async function loadOTA() {
       btnRow.style.cssText = "display:flex;gap:6px;margin-top:10px;flex-wrap:wrap";
 
       const pushBtn = el("button", "btn btn-secondary btn-sm", "Push to Device");
+      pushBtn.dataset.tip = "Send this firmware to a paired device over the air";
       pushBtn.onclick = () => openPushModal(fw);
       btnRow.appendChild(pushBtn);
 
       if (!fw.known_good) {
         const goodBtn = el("button", "btn btn-secondary btn-sm", "✓ Mark Known Good");
+        goodBtn.dataset.tip = "Mark this build as verified — safe to use as a rollback target";
         goodBtn.onclick = async () => {
           try {
             await api.ota.markGood(fw._folder || `${fw.board}-${fw.version}`);
@@ -861,10 +918,12 @@ async function loadOTA() {
       }
 
       const rbBtn = el("button", "btn btn-secondary btn-sm", "↩ Set Rollback");
+      rbBtn.dataset.tip = "Choose which firmware version to fall back to if a push fails";
       rbBtn.onclick = () => openRollbackTargetModal(fw, catalog);
       btnRow.appendChild(rbBtn);
 
       const rolloutBtn = el("button", "btn btn-secondary btn-sm", "⟳ Staged Rollout");
+      rolloutBtn.dataset.tip = "Deploy to a percentage or subset of paired devices simultaneously";
       rolloutBtn.onclick = () => openRolloutModal(fw);
       btnRow.appendChild(rolloutBtn);
 
@@ -1156,7 +1215,7 @@ async function loadRules() {
                      : r.action_type === "webhook"    ? cfg.url || "?"
                      : "";
     row.innerHTML = `
-      <div class="rule-enabled-dot ${r.enabled ? "on" : "off"}"></div>
+      <div class="rule-enabled-dot ${r.enabled ? "on" : "off"}" data-tip="${r.enabled ? "Rule is active and fires on matching events" : "Rule is disabled — no actions will fire"}"></div>
       <div class="rule-info">
         <div class="rule-name">${r.name}</div>
         <div class="rule-meta">
@@ -1170,13 +1229,14 @@ async function loadRules() {
     `;
     const toggleBtn = el("button", `btn btn-secondary btn-sm`);
     toggleBtn.textContent = r.enabled ? "Disable" : "Enable";
+    toggleBtn.dataset.tip = r.enabled ? "Disable this rule" : "Enable this rule";
     toggleBtn.onclick = async () => {
       await api.rules.update(r.id, { enabled: !r.enabled }).catch(() => {});
       loadRules();
     };
     const delBtn = el("button", "btn btn-danger btn-sm");
     delBtn.innerHTML = "&#x2715;";
-    delBtn.title = "Delete rule";
+    delBtn.dataset.tip = "Delete this automation rule";
     delBtn.onclick = async () => {
       if (!confirm(`Delete rule "${r.name}"?`)) return;
       await api.rules.delete(r.id).catch(() => {});
@@ -1332,7 +1392,7 @@ async function _abLoadTaskList() {
         <div class="ab-task-title">${t.title}</div>
         <div class="ab-task-meta">${t.template} · ${t.lane} lane · ${timeAgo(t.updated)}</div>
       </div>
-      <span class="${_abStatusClass(t.status)}">${_abStatusLabel(t.status)}</span>
+      <span class="${_abStatusClass(t.status)}" data-tip="Task status: ${t.status}">${_abStatusLabel(t.status)}</span>
     `;
     card.onclick = () => _abOpenTask(t.id);
     listEl.appendChild(card);
@@ -1381,7 +1441,7 @@ async function _abLoadThread(taskId) {
     const ts = el("div", "ab-msg-ts", timeAgo(m.timestamp));
     div.textContent = m.role === "system" ? "[PROMPT — scroll to view]" : m.content.slice(0, 2000) + (m.content.length > 2000 ? "\n…(truncated)" : "");
     if (m.role === "system") {
-      div.title = m.content;
+      div.dataset.tip = "Click to view the full agent prompt";
       div.style.cursor = "pointer";
       div.onclick = () => openModal("Agent Prompt", `<pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow:auto">${m.content}</pre>`,
         [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
@@ -1948,7 +2008,7 @@ async function _toggleNotifications() {
   const btn = document.getElementById("btnNotif");
   if (_notifEnabled()) {
     localStorage.removeItem(_NOTIF_KEY);
-    if (btn) { btn.title = "Enable notifications"; btn.classList.remove("notif-on"); }
+    if (btn) { btn.dataset.tip = "Enable browser notifications for live events"; btn.classList.remove("notif-on"); }
   } else {
     const ok = await _requestNotifPermission();
     if (!ok) {
@@ -1956,7 +2016,7 @@ async function _toggleNotifications() {
       return;
     }
     localStorage.setItem(_NOTIF_KEY, "1");
-    if (btn) { btn.title = "Disable notifications"; btn.classList.add("notif-on"); }
+    if (btn) { btn.dataset.tip = "Disable browser notifications"; btn.classList.add("notif-on"); }
   }
 }
 
@@ -1992,10 +2052,10 @@ async function _toggleNotifications() {
   if (btn) {
     btn.onclick = _toggleNotifications;
     if (_notifEnabled()) {
-      btn.title = "Disable notifications";
+      btn.dataset.tip = "Disable browser notifications";
       btn.classList.add("notif-on");
     } else {
-      btn.title = "Enable notifications";
+      btn.dataset.tip = "Enable browser notifications for live events";
     }
   }
 })();

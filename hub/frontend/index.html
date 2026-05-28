@@ -100,21 +100,21 @@
         <div class="logo-tagline">YOUR LAB. YOUR RULES.</div>
       </div>
       <ul class="nav-list">
-        <li><a href="#" class="nav-item active" data-view="fleet">Fleet</a></li>
-        <li><a href="#" class="nav-item" data-view="projects">Projects</a></li>
-        <li><a href="#" class="nav-item" data-view="recipes">Recipes</a></li>
-        <li><a href="#" class="nav-item" data-view="workers">Workers</a></li>
-        <li><a href="#" class="nav-item" data-view="cards">Cards</a></li>
-        <li><a href="#" class="nav-item" data-view="jobs">Jobs</a></li>
-        <li><a href="#" class="nav-item" data-view="ota">OTA</a></li>
-        <li><a href="#" class="nav-item" data-view="design">Design</a></li>
-        <li><a href="#" class="nav-item" data-view="events">Events</a></li>
-        <li><a href="#" class="nav-item" data-view="rules">Rules</a></li>
-        <li><a href="#" class="nav-item" data-view="agent-bench">Agent Bench</a></li>
+        <li><a href="#" class="nav-item active" data-view="fleet"        data-tip="View and manage devices on your network">Fleet</a></li>
+        <li><a href="#" class="nav-item" data-view="projects"            data-tip="Organize devices into groups with shared files and themes">Projects</a></li>
+        <li><a href="#" class="nav-item" data-view="recipes"             data-tip="YAML-defined data processing pipelines for device streams">Recipes</a></li>
+        <li><a href="#" class="nav-item" data-view="workers"             data-tip="Code modules that process data — each has declared permissions">Workers</a></li>
+        <li><a href="#" class="nav-item" data-view="cards"               data-tip="Dashboard widgets that display live device data">Cards</a></li>
+        <li><a href="#" class="nav-item" data-view="jobs"                data-tip="Running and completed worker job history">Jobs</a></li>
+        <li><a href="#" class="nav-item" data-view="ota"                 data-tip="Over-the-air firmware updates and catalog management">OTA</a></li>
+        <li><a href="#" class="nav-item" data-view="design"              data-tip="Design token and theme editor — controls the visual appearance">Design</a></li>
+        <li><a href="#" class="nav-item" data-view="events"              data-tip="Real-time event log from devices and the hub">Events</a></li>
+        <li><a href="#" class="nav-item" data-view="rules"               data-tip="Automation rules that trigger actions when events occur">Rules</a></li>
+        <li><a href="#" class="nav-item" data-view="agent-bench"         data-tip="AI-assisted development workspace (optional feature)">Agent Bench</a></li>
       </ul>
       <div class="sidebar-footer">
         <span class="hub-status" id="hubStatus">Connecting…</span>
-        <button id="btnNotif" class="btn-notif" title="Enable notifications">🔔</button>
+        <button id="btnNotif" class="btn-notif" data-tip="Enable desktop notifications for hub events">🔔</button>
       </div>
     </nav>
 
@@ -126,8 +126,8 @@
         <header class="view-header">
           <h1>Fleet</h1>
           <div class="header-actions">
-            <button class="btn btn-secondary" id="btnScan">Scan LAN</button>
-            <button class="btn btn-primary" id="btnAddDevice">+ Add Device</button>
+            <button class="btn btn-secondary" id="btnScan"      data-tip="Scan your local subnet for ESPAI-compatible nodes">Scan LAN</button>
+            <button class="btn btn-primary"   id="btnAddDevice" data-tip="Manually add a device by entering its IP address">+ Add Device</button>
           </div>
         </header>
         <div class="stats-row" id="statsRow">
@@ -147,7 +147,7 @@
         <div id="proj-list-view">
           <header class="view-header">
             <h1>Projects</h1>
-            <button class="btn btn-primary" id="btnNewProject">+ New Project</button>
+            <button class="btn btn-primary" id="btnNewProject" data-tip="Create a project to group devices, files, and theme overrides">+ New Project</button>
           </header>
           <div class="card-grid" id="projectList">
             <div class="empty-state">No projects yet.</div>
@@ -157,12 +157,12 @@
         <div id="proj-detail-view" class="hidden">
           <header class="view-header">
             <div style="display:flex;align-items:center;gap:12px">
-              <button class="btn btn-secondary btn-sm" id="btnProjBack">← Back</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjBack" data-tip="Return to project list">← Back</button>
               <h1 id="projDetailName">Project</h1>
             </div>
             <div style="display:flex;gap:8px">
-              <button class="btn btn-secondary btn-sm" id="btnProjTheme">🎨 Theme</button>
-              <button class="btn btn-danger btn-sm" id="btnProjDelete">Delete Project</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjTheme"  data-tip="Override CSS design tokens while this project is active">🎨 Theme</button>
+              <button class="btn btn-danger btn-sm"    id="btnProjDelete" data-tip="Permanently delete this project (devices and files are not removed)">Delete Project</button>
             </div>
           </header>
           <p id="projDetailDesc" style="color:var(--color-text-muted);margin-bottom:20px;font-size:14px"></p>
@@ -170,7 +170,7 @@
             <div>
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
                 <p class="section-heading" style="margin:0">Files</p>
-                <button class="btn btn-secondary btn-sm" id="btnRefreshFiles" title="Refresh file list">↻</button>
+                <button class="btn btn-secondary btn-sm" id="btnRefreshFiles" data-tip="Refresh the project file list">↻</button>
                 <span id="projFilesStatus" style="font-size:11px;color:var(--color-text-muted)"></span>
               </div>
               <div id="projFileList" class="file-list"><div class="empty-state">Loading…</div></div>
@@ -220,9 +220,9 @@
         <header class="view-header">
           <h1>OTA / Firmware</h1>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-secondary" id="btnBackupDownload" title="Download hub backup">⬇ Backup</button>
-            <button class="btn btn-secondary" id="btnRestoreBackup"  title="Restore from backup">⬆ Restore</button>
-            <button class="btn btn-primary"   id="btnUploadFirmware">+ Upload Firmware</button>
+            <button class="btn btn-secondary" id="btnBackupDownload" data-tip="Download devices, projects, and rules as a JSON backup file">⬇ Backup</button>
+            <button class="btn btn-secondary" id="btnRestoreBackup"  data-tip="Restore from a backup file (events and OTA log are never overwritten)">⬆ Restore</button>
+            <button class="btn btn-primary"   id="btnUploadFirmware" data-tip="Upload a compiled .bin file to the local firmware catalog">+ Upload Firmware</button>
           </div>
         </header>
         <div class="ota-panel">
@@ -258,7 +258,7 @@
       <section class="view" id="view-rules">
         <header class="view-header">
           <h1>Automation Rules</h1>
-          <button class="btn btn-primary" id="btnNewRule">+ New Rule</button>
+          <button class="btn btn-primary" id="btnNewRule" data-tip="Create an automation rule that fires when matching events occur">+ New Rule</button>
         </header>
         <div class="rule-list" id="ruleList">
           <div class="empty-state">No rules yet. Rules fire automatically when matching events are published.</div>
@@ -277,7 +277,7 @@
             <p style="font-size:13px;color:var(--color-text-muted);margin:6px 0 18px">
               Set <code>ESPAI_AGENT_BENCH=true</code> in your <code>.env</code> and restart the hub to enable AI-assisted development.
             </p>
-            <button class="btn btn-primary" id="btnAbEnable">Enable Agent Bench</button>
+            <button class="btn btn-primary" id="btnAbEnable" data-tip="Write ESPAI_AGENT_BENCH=true to .env and activate the feature">Enable Agent Bench</button>
           </div>
         </div>
 
@@ -286,9 +286,9 @@
           <header class="view-header">
             <h1>Agent Bench</h1>
             <div style="display:flex;gap:8px">
-              <button class="btn btn-secondary" id="btnAbDoctor">&#x1F50E; Doctor</button>
-              <button class="btn btn-secondary" id="btnAbSettings">&#x2699; Settings</button>
-              <button class="btn btn-primary"   id="btnAbNewTask">+ New Task</button>
+              <button class="btn btn-secondary" id="btnAbDoctor"   data-tip="Check which tools and CLI adapters are installed">&#x1F50E; Doctor</button>
+              <button class="btn btn-secondary" id="btnAbSettings" data-tip="Configure Agent Bench options and write to .env">&#x2699; Settings</button>
+              <button class="btn btn-primary"   id="btnAbNewTask"  data-tip="Create a new AI-assisted development task">+ New Task</button>
             </div>
           </header>
           <div class="ab-filter-row" id="abFilterRow">
@@ -308,13 +308,13 @@
         <div id="ab-detail-view" class="hidden">
           <header class="view-header">
             <div style="display:flex;align-items:center;gap:12px">
-              <button class="btn btn-secondary btn-sm" id="btnAbBack">← Back</button>
+              <button class="btn btn-secondary btn-sm" id="btnAbBack" data-tip="Return to task list">← Back</button>
               <h1 id="abDetailTitle">Task</h1>
               <span class="ab-status-badge" id="abDetailStatus"></span>
             </div>
             <div style="display:flex;gap:8px">
-              <button class="btn btn-secondary btn-sm" id="btnAbViewPrompt">View Prompt</button>
-              <button class="btn btn-secondary btn-sm" id="btnAbViewDiff">View Diff</button>
+              <button class="btn btn-secondary btn-sm" id="btnAbViewPrompt" data-tip="View the full system prompt sent to the agent for this task">View Prompt</button>
+              <button class="btn btn-secondary btn-sm" id="btnAbViewDiff"   data-tip="View file changes made during the last agent run">View Diff</button>
             </div>
           </header>
 
@@ -329,12 +329,12 @@
                   <label>Paste agent response</label>
                   <textarea id="abPasteInput" rows="5" placeholder="Paste the agent's response here…"></textarea>
                 </div>
-                <button class="btn btn-primary btn-sm" id="btnAbPasteSubmit">Submit Response</button>
+                <button class="btn btn-primary btn-sm" id="btnAbPasteSubmit" data-tip="Add the agent's response to the task thread and move to review">Submit Response</button>
               </div>
               <!-- Run control -->
               <div id="abRunPanel" class="ab-run-panel">
-                <select id="abAdapterSelect" class="ab-adapter-select"></select>
-                <button class="btn btn-primary btn-sm" id="btnAbRun">&#x25B6; Run Task</button>
+                <select id="abAdapterSelect" class="ab-adapter-select" data-tip="Choose how to run this task: manually copy/paste the prompt, or use a CLI adapter for automatic execution"></select>
+                <button class="btn btn-primary btn-sm" id="btnAbRun" data-tip="Start an agent run using the selected adapter">&#x25B6; Run Task</button>
               </div>
             </div>
 
@@ -346,9 +346,9 @@
                 <textarea id="abReviewNotes" rows="4" placeholder="Explain your decision…"></textarea>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn ab-btn-approve" id="btnAbApprove">&#x2713; Approve</button>
-                <button class="btn ab-btn-changes" id="btnAbChanges">&#x21BA; Needs Changes</button>
-                <button class="btn ab-btn-reject"  id="btnAbReject">&#x2715; Reject</button>
+                <button class="btn ab-btn-approve" id="btnAbApprove" data-tip="Accept the agent's changes — marks the task ready to merge">&#x2713; Approve</button>
+                <button class="btn ab-btn-changes" id="btnAbChanges" data-tip="Send back for another run — agent will see your notes and retry">&#x21BA; Needs Changes</button>
+                <button class="btn ab-btn-reject"  id="btnAbReject"  data-tip="Discard this run — task is closed without applying any changes">&#x2715; Reject</button>
               </div>
             </div>
           </div>
@@ -361,6 +361,9 @@
 
   <!-- Sidebar tap-outside overlay (mobile only) -->
   <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- Global app tooltip (data-tip attribute on any element) -->
+  <div class="app-tip hidden" id="appTip" aria-hidden="true"></div>
 
   <!-- Doctor info tooltip (shown on hover) -->
   <div class="doctor-tooltip hidden" id="doctorTooltip" aria-hidden="true">
