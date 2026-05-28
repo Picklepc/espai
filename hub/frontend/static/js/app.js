@@ -1769,12 +1769,32 @@ async function _abLoadThread(taskId) {
   for (const m of msgs) {
     const div = el("div", `ab-msg ab-msg-${m.role}`);
     const ts = el("div", "ab-msg-ts", timeAgo(m.timestamp));
-    div.textContent = m.role === "system" ? "[PROMPT — scroll to view]" : m.content.slice(0, 2000) + (m.content.length > 2000 ? "\n…(truncated)" : "");
     if (m.role === "system") {
-      div.dataset.tip = "Click to view the full agent prompt";
-      div.style.cursor = "pointer";
-      div.onclick = () => openModal("Agent Prompt", `<pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow:auto">${m.content}</pre>`,
-        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      div.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--color-accent)">Prompt Generated</span>
+          <button class="btn btn-secondary btn-sm" style="padding:3px 9px;font-size:11px">Copy Prompt</button>
+          <button class="btn btn-secondary btn-sm" style="padding:3px 9px;font-size:11px">View Full</button>
+        </div>
+        <div style="font-size:12px;color:var(--color-text-muted);font-style:italic">The prompt is ready — copy it into Claude, ChatGPT, or another AI, apply the file changes it describes, then paste the response back in the panel below.</div>
+      `;
+      const [copyBtn, viewBtn] = div.querySelectorAll("button");
+      copyBtn.onclick = () => {
+        navigator.clipboard?.writeText(m.content).then(() => {
+          const orig = copyBtn.textContent; copyBtn.textContent = "Copied!"; setTimeout(() => copyBtn.textContent = orig, 1500);
+        }).catch(() => {});
+      };
+      viewBtn.onclick = () => openModal("Agent Prompt", `
+        <pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow:auto;line-height:1.5">${m.content}</pre>
+      `, [
+        { label: "Copy to Clipboard", cls: "btn btn-primary", action: () => {
+          navigator.clipboard?.writeText(m.content).catch(() => {});
+          closeModal();
+        }},
+        { label: "Close", cls: "btn btn-secondary", action: closeModal },
+      ]);
+    } else {
+      div.textContent = m.content.slice(0, 2000) + (m.content.length > 2000 ? "\n…(truncated)" : "");
     }
     div.appendChild(ts);
     threadEl.appendChild(div);
@@ -1784,6 +1804,7 @@ async function _abLoadThread(taskId) {
 
 async function _abSetupAdapterSelect() {
   const sel = document.getElementById("abAdapterSelect");
+  const desc = document.getElementById("abAdapterDesc");
   sel.innerHTML = "";
   let adapters = [];
   try {
@@ -1794,25 +1815,44 @@ async function _abSetupAdapterSelect() {
   for (const a of adapters) {
     const opt = document.createElement("option");
     opt.value = a.name;
-    opt.textContent = a.display_name + (a.installed === false ? " (not installed)" : "");
+    opt.textContent = a.display_name + (a.installed === false ? " — not installed" : "");
     if (a.installed === false) opt.disabled = true;
     sel.appendChild(opt);
   }
   if (_abCurrentTask?.adapter_id) sel.value = _abCurrentTask.adapter_id;
+  const updateDesc = () => { if (desc) desc.textContent = _ADAPTER_DESCRIPTIONS[sel.value] || ""; };
+  sel.removeEventListener("change", sel._descHandler);
+  sel._descHandler = updateDesc;
+  sel.addEventListener("change", updateDesc);
+  updateDesc();
 }
 
-function _abUpdateRunControls(task) {
-  const runPanel   = document.getElementById("abRunPanel");
-  const pastePanel = document.getElementById("abPastePanel");
-  const reviewPanel = document.getElementById("abReviewPanel");
+const _ADAPTER_DESCRIPTIONS = {
+  "manual":          "Manual — hub generates the prompt; you copy it into any AI chat (Claude, ChatGPT, etc.), apply the file changes yourself, then paste the response back here.",
+  "codex-cli":       "Codex CLI — runs automatically: hub executes the local codex CLI which reads the prompt, edits files, and reports back. Requires codex installed and OPENAI_API_KEY set.",
+  "claude-code-cli": "Claude Code CLI — runs automatically: hub executes the local claude CLI which reads the prompt, edits files directly, and reports back. Most capable automated option.",
+};
 
-  const canRun    = ["draft", "needs_changes"].includes(task.status);
+function _abUpdateRunControls(task) {
+  const runPanel    = document.getElementById("abRunPanel");
+  const pastePanel  = document.getElementById("abPastePanel");
+  const reviewPanel = document.getElementById("abReviewPanel");
+  const adapterDesc = document.getElementById("abAdapterDesc");
+
+  const canRun     = ["draft", "needs_changes"].includes(task.status);
   const needsPaste = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
-  const needsReview = ["awaiting_review"].includes(task.status);
+  // Only show review AFTER the response is submitted (run no longer awaiting_input)
+  const needsReview = task.status === "awaiting_review" && !needsPaste;
 
   runPanel.style.display = canRun ? "" : "none";
   pastePanel.classList.toggle("hidden", !needsPaste);
   reviewPanel.classList.toggle("hidden", !needsReview);
+
+  // Update adapter description
+  if (adapterDesc) {
+    const sel = document.getElementById("abAdapterSelect");
+    adapterDesc.textContent = sel ? (_ADAPTER_DESCRIPTIONS[sel.value] || "") : "";
+  }
 }
 
 function _startAbPoller(taskId) {
@@ -2104,8 +2144,27 @@ function _abWireEvents() {
       const { prompt } = await api.agentBench.getPrompt(_abCurrentTask.id);
       openModal("Agent Prompt", `
         <pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:450px;overflow:auto;line-height:1.5">${prompt}</pre>
-      `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      `, [
+        { label: "Copy to Clipboard", cls: "btn btn-primary", action: () => {
+          navigator.clipboard?.writeText(prompt).then(() => {
+            const b = document.querySelector("#modalFooter .btn-primary");
+            if (b) { const orig = b.textContent; b.textContent = "Copied!"; setTimeout(() => b.textContent = orig, 1500); }
+          }).catch(() => {});
+        }},
+        { label: "Close", cls: "btn btn-secondary", action: closeModal },
+      ]);
     } catch (err) { alert("Error: " + err.message); }
+  };
+
+  // Copy Prompt button — available in the paste panel for quick access
+  document.getElementById("btnAbCopyPrompt").onclick = async () => {
+    if (!_abCurrentTask) return;
+    const btn = document.getElementById("btnAbCopyPrompt");
+    try {
+      const { prompt } = await api.agentBench.getPrompt(_abCurrentTask.id);
+      await navigator.clipboard.writeText(prompt);
+      if (btn) { const orig = btn.textContent; btn.textContent = "Copied!"; setTimeout(() => btn.textContent = orig, 1500); }
+    } catch (err) { alert("Could not copy: " + err.message); }
   };
 
   document.getElementById("btnAbViewDiff").onclick = async () => {
@@ -2152,8 +2211,35 @@ function _abWireEvents() {
       const statusEl = document.getElementById("abDetailStatus");
       if (statusEl) { statusEl.className = _abStatusClass(task.status); statusEl.textContent = _abStatusLabel(task.status); }
       _abUpdateRunControls(task);
+
+      // After approval of a firmware or port-to-hub task, show build + OTA guidance
+      if (decision === "approved" && ["firmware-feature", "port-to-hub", "bug-fix"].includes(task.template)) {
+        _showNextStepsFirmware(task);
+      }
     } catch (err) { alert("Error: " + err.message); }
   };
+
+  function _showNextStepsFirmware(task) {
+    openModal("Changes Approved — Next Steps", `
+      <div class="ab-next-steps">
+        <h4>✓ Agent changes approved. Here's how to get firmware onto your device:</h4>
+        <ol>
+          <li><strong>Build the firmware</strong> — open the project's <code>firmware/</code> folder in a terminal and run:<br>
+            <code>pio run -e esp32dev</code><br>
+            The compiled binary will be at <code>.pio/build/&lt;env&gt;/firmware.bin</code>.</li>
+          <li><strong>Upload to the hub catalog</strong> — go to <strong>OTA / Firmware → + Upload Firmware</strong>, select the <code>.bin</code> file, set the board and version, choose channel <em>dev</em>.</li>
+          <li><strong>Push to device</strong> — click <strong>Push to Device</strong> on the catalog entry and select your paired ESP32. The hub sends the binary over WiFi.</li>
+          <li><strong>Monitor</strong> — watch Serial output (<code>pio device monitor</code>) to confirm the new firmware boots and behaves as expected.</li>
+        </ol>
+        <p style="margin-top:10px;font-size:12px;color:var(--color-text-muted)">
+          PlatformIO not installed? Run <strong>Agent Bench → Doctor → Install</strong> to add it from the portal.
+        </p>
+      </div>
+    `, [
+      { label: "Go to OTA", cls: "btn btn-primary", action: () => { closeModal(); showView("ota"); } },
+      { label: "Close", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  }
 
   document.getElementById("btnAbApprove").onclick  = () => _abDoReview("approved");
   document.getElementById("btnAbChanges").onclick  = () => _abDoReview("needs_changes");

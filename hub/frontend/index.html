@@ -362,17 +362,40 @@
               <div id="abThread" class="ab-thread"></div>
               <!-- Manual adapter: paste response -->
               <div id="abPastePanel" class="hidden">
-                <div class="form-field" style="margin-top:12px">
-                  <label data-tip="Copy the prompt from View Prompt, paste it into any AI chat, then paste the full response back here">Paste agent response</label>
-                  <textarea id="abPasteInput" rows="5" placeholder="Paste the agent's full response here — include all code blocks and explanations…"></textarea>
+                <div class="ab-manual-steps">
+                  <div class="ab-step-row">
+                    <span class="ab-step-num">1</span>
+                    <span>Click <strong>Copy Prompt</strong> to copy the task prompt to your clipboard.</span>
+                    <button class="btn btn-secondary btn-sm" id="btnAbCopyPrompt" data-tip="Copy the full agent prompt to your clipboard">Copy Prompt</button>
+                  </div>
+                  <div class="ab-step-row">
+                    <span class="ab-step-num">2</span>
+                    <span>Paste it into <strong>Claude, ChatGPT, or any AI chat</strong>. The AI will respond with file changes and explanations.</span>
+                  </div>
+                  <div class="ab-step-row">
+                    <span class="ab-step-num">3</span>
+                    <span><strong>Apply the file changes</strong> the AI described — create or edit the files it specified in your project directory.</span>
+                  </div>
+                  <div class="ab-step-row">
+                    <span class="ab-step-num">4</span>
+                    <span>Paste the AI's <strong>full response</strong> below, then click Submit to record it and move to review.</span>
+                  </div>
                 </div>
-                <button class="btn btn-primary btn-sm" id="btnAbPasteSubmit" data-tip="Add the agent's response to the task thread and move to review">Submit Response</button>
+                <div class="form-field" style="margin-top:10px">
+                  <label data-tip="Paste the complete AI response — include all code blocks and explanations so the diff snapshot captures what changed">Agent Response</label>
+                  <textarea id="abPasteInput" rows="6" placeholder="Paste the full AI response here — code blocks, file paths, and explanations…"></textarea>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button class="btn btn-primary btn-sm" id="btnAbPasteSubmit" data-tip="Record the response and take a file snapshot — then move to Review">Submit &amp; Snapshot</button>
+                  <span style="font-size:11px;color:var(--color-text-muted)">The hub will snapshot your files to compute a diff.</span>
+                </div>
               </div>
               <!-- Run control -->
               <div id="abRunPanel" class="ab-run-panel">
-                <select id="abAdapterSelect" class="ab-adapter-select" data-tip="Choose how to run this task: manually copy/paste the prompt, or use a CLI adapter for automatic execution"></select>
-                <button class="btn btn-primary btn-sm" id="btnAbRun" data-tip="Start an agent run using the selected adapter">&#x25B6; Run Task</button>
+                <select id="abAdapterSelect" class="ab-adapter-select" data-tip="Choose how to run: Manual requires you to copy/paste the prompt yourself; CLI adapters run automatically and modify files directly"></select>
+                <button class="btn btn-primary btn-sm" id="btnAbRun" data-tip="Start the agent run using the selected adapter">&#x25B6; Run Task</button>
               </div>
+              <div id="abAdapterDesc" class="ab-adapter-desc"></div>
             </div>
 
             <!-- Right: review panel -->
