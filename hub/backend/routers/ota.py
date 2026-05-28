@@ -226,13 +226,25 @@ def push_firmware(data: OTARequest):
     firmware_bytes = bin_path.read_bytes()
 
     try:
+        # Seed firmware uses WebServer's multipart upload handler, so we must
+        # encode the binary as multipart/form-data (not raw octet-stream).
+        boundary = "espai-ota-9f3a"
+        filename = fw_meta["filename"]
+        part_header = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+        part_footer = f"\r\n--{boundary}--\r\n".encode()
+        body = part_header + firmware_bytes + part_footer
+
         req = urllib.request.Request(
             f"http://{device_ip}/ota/update",
-            data=firmware_bytes,
+            data=body,
             method="POST",
             headers={
-                "Content-Type": "application/octet-stream",
-                "Content-Length": str(len(firmware_bytes)),
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Length": str(len(body)),
                 "X-Firmware-SHA256": fw_meta.get("sha256", ""),
                 "X-ESPAI-Operator": data.operator,
             },

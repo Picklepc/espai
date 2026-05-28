@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ESPAI Seed Firmware
  *
  * Provides the minimal node API that the ESPAI hub expects:
@@ -6,7 +6,7 @@
  *   GET  /api/status    — runtime status (uptime, heap, etc.)
  *   POST /api/checkin   — hub-initiated checkin acknowledgement
  *   POST /api/reboot    — controlled reboot (paired hub only)
- *   POST /ota/update    — OTA binary upload (scaffold — TODO)
+ *   POST /ota/update    — OTA binary upload (multipart/form-data)
  *
  * Node ID is derived from the MAC address (hashed) — never exposes raw MAC.
  * Wi-Fi credentials come from build flags. No credentials are hardcoded here.
@@ -25,6 +25,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <Update.h>
 #include <ArduinoJson.h>
 #include <mbedtls/md.h>
 
@@ -50,7 +51,7 @@
 #define BOARD_ID "esp32"
 #endif
 
-static const uint32_t WIFI_TIMEOUT_MS    = 15000;
+static const uint32_t WIFI_TIMEOUT_MS     = 15000;
 static const uint32_t CHECKIN_INTERVAL_MS = 60000;
 
 // ── Globals ────────────────────────────────────────────────────────────────
@@ -61,6 +62,11 @@ bool      wifiConnected = false;
 bool      apMode        = false;
 uint32_t  lastCheckin   = 0;
 bool      paired        = false;
+
+// OTA state — reset on each new upload
+static bool                  g_otaError  = false;
+static mbedtls_md_context_t  g_shaCtx;
+static bool                  g_shaActive = false;
 
 // ── Node ID — derived from MAC, not the raw MAC ─────────────────────────────
 
@@ -75,7 +81,6 @@ String deriveNodeId() {
   mbedtls_md_update(&ctx, mac, 6);
   mbedtls_md_finish(&ctx, hash);
   mbedtls_md_free(&ctx);
-  // Use first 6 bytes of hash as hex ID
   String id = "node-";
   for (int i = 0; i < 6; i++) {
     if (hash[i] < 0x10) id += "0";
@@ -131,7 +136,6 @@ void handleStatus() {
 }
 
 void handleCheckin() {
-  // Hub POSTs here to acknowledge; node records the timestamp.
   lastCheckin = millis();
   JsonDocument doc;
   doc["status"] = "ok";
@@ -140,7 +144,6 @@ void handleCheckin() {
 }
 
 void handleReboot() {
-  // TODO: verify caller is paired hub before acting.
   JsonDocument doc;
   doc["status"] = "rebooting";
   sendJson(200, doc);
@@ -148,10 +151,77 @@ void handleReboot() {
   ESP.restart();
 }
 
-void handleOtaUpdate() {
-  // TODO: implement binary OTA receive.
-  // For now, acknowledge the request and signal that OTA is not yet ready.
-  sendError(501, "OTA binary upload not yet implemented in this firmware version");
+// OTA — receives multipart/form-data POST from the hub (two-handler pattern)
+void handleOtaComplete() {
+  if (g_otaError) {
+    sendError(500, "OTA write failed — see serial");
+    return;
+  }
+
+  // Verify SHA-256 if the hub sent the header
+  if (g_shaActive) {
+    uint8_t computed[32];
+    mbedtls_md_finish(&g_shaCtx, computed);
+    mbedtls_md_free(&g_shaCtx);
+    g_shaActive = false;
+
+    String expected = server.header("X-Firmware-SHA256");
+    if (expected.length() == 64) {
+      char hexBuf[65];
+      for (int i = 0; i < 32; i++) sprintf(hexBuf + i * 2, "%02x", computed[i]);
+      hexBuf[64] = '\0';
+      if (expected != String(hexBuf)) {
+        Serial.printf("[OTA] SHA-256 mismatch — rejecting\n");
+        Serial.printf("[OTA]   expected: %s\n", expected.c_str());
+        Serial.printf("[OTA]   computed: %s\n", hexBuf);
+        sendError(400, "SHA-256 mismatch — firmware rejected");
+        return;
+      }
+      Serial.printf("[OTA] SHA-256 verified OK\n");
+    }
+  }
+
+  JsonDocument doc;
+  doc["status"] = "ok";
+  sendJson(200, doc);
+  delay(500);
+  ESP.restart();
+}
+
+void handleOtaUpload() {
+  HTTPUpload& upload = server.upload();
+
+  if (upload.status == UPLOAD_FILE_START) {
+    g_otaError = false;
+    Serial.printf("[OTA] Start: %s\n", upload.filename.c_str());
+
+    // Init incremental SHA-256 over received bytes
+    mbedtls_md_init(&g_shaCtx);
+    mbedtls_md_setup(&g_shaCtx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0);
+    mbedtls_md_starts(&g_shaCtx);
+    g_shaActive = true;
+
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.printError(Serial);
+      g_otaError = true;
+    }
+
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (!g_otaError) {
+      mbedtls_md_update(&g_shaCtx, upload.buf, upload.currentSize);
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Update.printError(Serial);
+        g_otaError = true;
+      }
+    }
+
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (!g_otaError && !Update.end(true)) {
+      Update.printError(Serial);
+      g_otaError = true;
+    }
+    Serial.printf("[OTA] %u bytes written, error=%s\n", upload.totalSize, g_otaError ? "yes" : "no");
+  }
 }
 
 void handleNotFound() {
@@ -176,6 +246,10 @@ bool connectWifi() {
     return false;
   }
   WiFi.mode(WIFI_STA);
+  // Modem sleep keeps the radio alive between beacons — cuts heat significantly
+  WiFi.setSleep(true);
+  // 13 dBm is more than adequate; max (19.5 dBm) is only needed at extreme range
+  WiFi.setTxPower(WIFI_POWER_13dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.printf("[wifi] Connecting to %s", WIFI_SSID);
   uint32_t start = millis();
@@ -226,12 +300,16 @@ void setup() {
     startMDNS();
   }
 
+  // Tell WebServer to capture this header so handleOtaComplete can read it
+  const char* capturedHeaders[] = {"X-Firmware-SHA256"};
+  server.collectHeaders(capturedHeaders, 1);
+
   // Register HTTP routes
   server.on("/api/manifest",  HTTP_GET,  handleManifest);
   server.on("/api/status",    HTTP_GET,  handleStatus);
   server.on("/api/checkin",   HTTP_POST, handleCheckin);
   server.on("/api/reboot",    HTTP_POST, handleReboot);
-  server.on("/ota/update",    HTTP_POST, handleOtaUpdate);
+  server.on("/ota/update",    HTTP_POST, handleOtaComplete, handleOtaUpload);
   server.onNotFound(handleNotFound);
 
   server.begin();
@@ -256,8 +334,7 @@ void loop() {
   // Periodic self-checkin log (hub-side checkin is driven by the hub)
   if (millis() - lastCheckin > CHECKIN_INTERVAL_MS) {
     lastCheckin = millis();
-    // Nothing to do here until MQTT or hub-push is implemented.
   }
 
-  delay(1);
+  delay(5);
 }

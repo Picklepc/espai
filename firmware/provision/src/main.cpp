@@ -689,7 +689,8 @@ static void prepWifiRadio() {
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  // 15 dBm is plenty for a setup portal in the same room; max (19.5) runs hot
+  WiFi.setTxPower(WIFI_POWER_15dBm);
 
   // Keep scans on US 2.4 GHz channels. Put OpenWrt test SSID on ch 1/6/11.
   wifi_country_t country = { "US", 1, 11, WIFI_COUNTRY_POLICY_MANUAL };
