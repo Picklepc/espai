@@ -1,0 +1,13 @@
+{
+  "schema": "ESPAI.firmware.v1",
+  "board": "seeed_xiao_esp32s3",
+  "version": "0.0.0",
+  "channel": "dev",
+  "filename": "firmware.bin",
+  "size_bytes": 748640,
+  "sha256": "0a2b56cae0bd241f8ffe3ee87d808baa0b427f70d4c60dd4b5c8b73e668d09fc",
+  "uploaded": "2026-05-28T23:16:27.390713+00:00",
+  "known_good": false,
+  "project_id": "c9ac1baa9ba4",
+  "source_bin": "C:\\Users\\Roto Router\\OneDrive\\Documents\\ESP32\\ESPai\\projects\\c9ac1baa9ba4\\firmware\\.pio\\build\\seeed_xiao_esp32s3\\firmware.bin"
+}
