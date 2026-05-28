@@ -1,0 +1,11 @@
+{
+  "schema": "ESPAI.firmware.v1",
+  "board": "seeed_xiao_esp32s3",
+  "version": "0.1.1",
+  "channel": "dev",
+  "filename": "espai-seed-0.1.1-xiao-esp32s3.bin",
+  "size_bytes": 759456,
+  "sha256": "a4d240fb8e198418dae9dc985bf51b8996a519f5570cfa9121f9fb7a244f4fc0",
+  "uploaded": "2026-05-28T12:47:07.004061+00:00",
+  "known_good": false
+}
