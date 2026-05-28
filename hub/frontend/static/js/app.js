@@ -988,6 +988,14 @@ document.getElementById("btnImportProject").onclick = () => {
 
 // ── Registry views (recipes, workers, cards) ───────────────────────────────
 
+function _packBadge(item) {
+  const pack = item._pack || "official";
+  const tip  = pack === "custom"
+    ? "Custom (local only) — stored in custom/ subfolder, gitignored"
+    : "Official — tracked in git and published to GitHub";
+  return `<span class="pack-badge ${pack}" data-tip="${tip}">${pack === "custom" ? "⚙ Custom" : "★ Official"}</span>`;
+}
+
 function renderRegistry(items, containerId, fields) {
   const el_ = document.getElementById(containerId);
   if (!items.length) {
@@ -1005,7 +1013,10 @@ function renderRegistry(items, containerId, fields) {
       ...(item.outputs || []).map(o => `<span class="tag accent">${o}</span>`),
     ].slice(0, 6).join("");
     card.innerHTML = `
-      <div class="reg-card-title">${title}</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div class="reg-card-title">${title}</div>
+        ${_packBadge(item)}
+      </div>
       ${sub ? `<div class="reg-card-sub">${sub}</div>` : ""}
       <div class="tag-row">${tags}</div>
     `;
@@ -1034,7 +1045,10 @@ async function loadWorkers() {
       ...(item.outputs || []).map(o => `<span class="tag accent">${o}</span>`),
     ].slice(0, 6).join("");
     card.innerHTML = `
-      <div class="reg-card-title">${title}</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div class="reg-card-title">${title}</div>
+        ${_packBadge(item)}
+      </div>
       ${sub ? `<div class="reg-card-sub">${sub}</div>` : ""}
       <div class="tag-row">
         ${tags}
@@ -2122,6 +2136,48 @@ function _abWireEvents() {
   document.getElementById("btnAbRun").onclick = async () => {
     if (!_abCurrentTask) return;
     const adapter_id = document.getElementById("abAdapterSelect").value;
+    const isCLI = adapter_id !== "manual";
+
+    // CLI adapters: open a terminal session instead of a silent background thread.
+    // The user gets full interactivity — they can watch Claude work, answer questions,
+    // and Ctrl+C if anything goes wrong.
+    if (isCLI && _termAvailable) {
+      try {
+        const { prompt } = await api.agentBench.getPrompt(_abCurrentTask.id);
+        const title = _abCurrentTask.title;
+
+        // Write prompt to temp file via a short init sequence, then launch the adapter
+        const cliCmd = adapter_id === "claude-code-cli" ? "claude --dangerously-skip-permissions"
+                     : adapter_id === "codex-cli"       ? "codex exec"
+                     : adapter_id;
+
+        // Get project dir if available
+        let projectDir = null;
+        if (_abCurrentTask.project_id) {
+          const files = await api.projects.files(_abCurrentTask.project_id).catch(() => null);
+          if (files?.root) projectDir = files.root.replace(/\\/g, "/") + "/firmware";
+        }
+
+        const initCmds = [];
+        if (projectDir) initCmds.push(`cd "${projectDir}"`);
+        initCmds.push(`Write-Host "=== Agent Task: ${title.replace(/"/g, "'")} ===" -ForegroundColor Cyan`);
+        initCmds.push(`Write-Host "Starting ${adapter_id}..." -ForegroundColor Yellow`);
+        // Pipe prompt via here-string then start the CLI
+        initCmds.push(`$p = @'\n${prompt.replace(/'/g, "''")}\n'@; $p | ${cliCmd}`);
+
+        await termOpenAgentSession(title, null, null);
+        // Re-implement directly so we control the exact init commands
+        const s = await api.terminal.create({ title, init_cmds: initCmds });
+        _termAttach(s.id, title);
+
+        // Mark task as running in the thread (visual only — terminal is the executor)
+        const statusEl = document.getElementById("abDetailStatus");
+        if (statusEl) { statusEl.className = _abStatusClass("running"); statusEl.textContent = "Running in Terminal"; }
+      } catch (err) { alert("Could not open terminal session: " + err.message); }
+      return;
+    }
+
+    // Manual adapter or terminal unavailable → original background flow
     try {
       const result = await api.agentBench.runTask(_abCurrentTask.id, { adapter_id });
       if (result.adapter === "manual") {
@@ -2269,6 +2325,360 @@ function _abWireEvents() {
   });
 }
 
+// ── Terminal view ──────────────────────────────────────────────────────────
+//
+// Each session is a real PTY on the hub server, bridged via WebSocket.
+// Sessions persist until manually closed or the shell exits.
+// Multiple sessions display as tabs; only one xterm instance is visible.
+//
+// Non-agent uses: pio build, git, pio device monitor, general shell, npm.
+// Agent integration: CLI adapter "Run Task" opens a terminal session
+//                   instead of the opaque background thread.
+
+const _termSessions = {};   // { id: { title, ws, xterm, fitAddon, div } }
+let   _termActiveId  = null;
+let   _termAvailable = null;  // cached from /api/terminal/available
+
+const _TERM_FONT_SIZE_KEY = "espai_term_font_size";
+
+function _termFontSize() {
+  return parseInt(localStorage.getItem(_TERM_FONT_SIZE_KEY) || "14");
+}
+
+async function loadTerminal() {
+  // Check PTY availability once
+  if (_termAvailable === null) {
+    try {
+      const info = await api.terminal.available();
+      _termAvailable = info.available;
+    } catch (_) {
+      _termAvailable = false;
+    }
+  }
+
+  const panel       = document.getElementById("termPanel");
+  const unavailable = document.getElementById("termUnavailable");
+
+  if (!_termAvailable) {
+    panel?.classList.add("hidden");
+    unavailable?.classList.remove("hidden");
+    return;
+  }
+
+  unavailable?.classList.add("hidden");
+  panel?.classList.remove("hidden");
+
+  // Restore any sessions the server already knows about (page reload)
+  try {
+    const existing = await api.terminal.sessions();
+    for (const s of existing) {
+      if (!_termSessions[s.id]) _termAttach(s.id, s.title);
+    }
+  } catch (_) {}
+
+  // If no sessions, open a shell automatically
+  if (!Object.keys(_termSessions).length) {
+    await _termNewSession({ title: "Shell" });
+  }
+}
+
+async function _termNewSession(opts = {}) {
+  const { title, init_cmds, cwd } = opts;
+  try {
+    const s = await api.terminal.create({ title, init_cmds, cwd });
+    _termAttach(s.id, s.title || title || "Shell");
+    return s.id;
+  } catch (err) {
+    alert("Could not open terminal: " + err.message);
+    return null;
+  }
+}
+
+function _termAttach(sid, title) {
+  if (_termSessions[sid]) { _termActivate(sid); return; }
+
+  // Create xterm instance
+  const xterm = new Terminal({
+    fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+    fontSize:    _termFontSize(),
+    theme: {
+      background:   "#0d0d0d",
+      foreground:   "#eeddc4",
+      cursor:       "#1aafc4",
+      selectionBackground: "rgba(26,175,196,0.3)",
+      black:        "#080c10",
+      brightBlack:  "#3a4a5a",
+      red:          "#e03248",
+      brightRed:    "#e05060",
+      green:        "#20bf96",
+      brightGreen:  "#40dfb6",
+      yellow:       "#f0a820",
+      brightYellow: "#f8c840",
+      blue:         "#1aafc4",
+      brightBlue:   "#3acfe4",
+      magenta:      "#c070e0",
+      brightMagenta:"#e090ff",
+      cyan:         "#1aafc4",
+      brightCyan:   "#40cfe4",
+      white:        "#eeddc4",
+      brightWhite:  "#ffffff",
+    },
+    cursorBlink:  true,
+    allowTransparency: false,
+    scrollback:   5000,
+  });
+
+  const fitAddon = new FitAddon.FitAddon();
+  xterm.loadAddon(fitAddon);
+
+  // Create DOM container
+  const surface = document.getElementById("termSurface");
+  const div = document.createElement("div");
+  div.className = "term-instance";
+  div.dataset.sid = sid;
+  surface.appendChild(div);
+  xterm.open(div);
+
+  // Connect WebSocket
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/api/terminal/ws/${sid}`);
+
+  ws.onopen = () => {
+    _termSessions[sid].wsReady = true;
+    _termFit(sid);
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "output" || msg.type === "exit") {
+        xterm.write(msg.data);
+      }
+    } catch (_) {
+      xterm.write(e.data);
+    }
+  };
+
+  ws.onclose = () => {
+    const tab = document.querySelector(`.term-tab[data-sid="${sid}"] .term-tab-dot`);
+    if (tab) tab.classList.add("disconnected");
+  };
+
+  xterm.onData(data => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "input", data }));
+    }
+  });
+
+  xterm.onResize(({ cols, rows }) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "resize", cols, rows }));
+    }
+  });
+
+  _termSessions[sid] = { title, ws, xterm, fitAddon, div };
+  _termRenderTabs();
+  _termActivate(sid);
+}
+
+function _termActivate(sid) {
+  if (_termActiveId === sid) return;
+  _termActiveId = sid;
+
+  // Show correct instance, hide others
+  document.querySelectorAll(".term-instance").forEach(d => {
+    d.classList.toggle("active", d.dataset.sid === sid);
+  });
+
+  // Update tab highlight
+  document.querySelectorAll(".term-tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.sid === sid);
+  });
+
+  const closeBtn = document.getElementById("btnTermClose");
+  if (closeBtn) closeBtn.style.display = sid ? "" : "none";
+
+  // Fit after making visible
+  requestAnimationFrame(() => _termFit(sid));
+}
+
+function _termFit(sid) {
+  const s = _termSessions[sid];
+  if (!s) return;
+  try {
+    s.fitAddon.fit();
+    if (s.ws.readyState === WebSocket.OPEN) {
+      const { cols, rows } = s.xterm;
+      s.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+    }
+  } catch (_) {}
+}
+
+function _termRenderTabs() {
+  const tabs = document.getElementById("termTabs");
+  if (!tabs) return;
+  tabs.innerHTML = "";
+  for (const [sid, s] of Object.entries(_termSessions)) {
+    const tab = el("div", `term-tab${sid === _termActiveId ? " active" : ""}`, `
+      <span class="term-tab-dot"></span>
+      <span>${s.title}</span>
+    `);
+    tab.dataset.sid = sid;
+    tab.dataset.tip = `Session: ${s.title}`;
+    tab.onclick = () => _termActivate(sid);
+    tabs.appendChild(tab);
+  }
+}
+
+async function _termCloseActive() {
+  const sid = _termActiveId;
+  if (!sid) return;
+  const s = _termSessions[sid];
+  if (s) {
+    s.ws.close();
+    s.xterm.dispose();
+    s.div.remove();
+    delete _termSessions[sid];
+  }
+  try { await api.terminal.close(sid); } catch (_) {}
+  _termActiveId = null;
+
+  // Activate another session if any remain
+  const remaining = Object.keys(_termSessions);
+  if (remaining.length) {
+    _termRenderTabs();
+    _termActivate(remaining[remaining.length - 1]);
+  } else {
+    _termRenderTabs();
+    const closeBtn = document.getElementById("btnTermClose");
+    if (closeBtn) closeBtn.style.display = "none";
+  }
+}
+
+// Public: open a terminal session for an agent task run
+// Called from Agent Bench when CLI adapter is selected
+async function termOpenAgentSession(taskTitle, projectDir, taskPromptFile) {
+  showView("terminal");
+  await new Promise(r => setTimeout(r, 200));  // let view render
+
+  const initCmds = [];
+  if (projectDir) initCmds.push(`cd "${projectDir}"`);
+  initCmds.push(`echo "=== Agent Task: ${taskTitle} ==="`);
+  if (taskPromptFile) {
+    initCmds.push(`echo "Prompt saved to: ${taskPromptFile}"`);
+    initCmds.push(`claude --dangerously-skip-permissions`);
+  }
+
+  return _termNewSession({
+    title:     taskTitle,
+    init_cmds: initCmds,
+  });
+}
+
+// Wire terminal view buttons once DOM is ready
+function _termWireEvents() {
+  document.getElementById("btnTermShell")?.addEventListener("click", () =>
+    _termNewSession({ title: "Shell" })
+  );
+
+  document.getElementById("btnTermMonitor")?.addEventListener("click", async () => {
+    // Show device picker then open monitor
+    const devices = await api.devices.list().catch(() => []);
+    const paired  = devices.filter(d => d.paired);
+    if (!paired.length) {
+      openModal("No Paired Devices",
+        '<div class="empty-state">Pair a device from Fleet view to use Serial Monitor.</div>',
+        [{ label: "Go to Fleet", cls: "btn btn-primary", action: () => { closeModal(); showView("fleet"); } },
+         { label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      return;
+    }
+    const opts = paired.map(d =>
+      `<option value="${d.id}">${d.name || d.id} (${d.board || "?"})</option>`
+    ).join("");
+    openModal("Serial Monitor", `
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px">Select a device — opens <code>pio device monitor</code> in a new terminal session.</p>
+      <div class="form-field">
+        <label>Device</label><select id="monDevSel">${opts}</select>
+      </div>
+      <div class="form-field">
+        <label data-tip="Must match the device's firmware baud rate (usually 115200)">Baud rate</label>
+        <input type="number" id="monBaud" value="115200" min="9600">
+      </div>
+    `, [
+      { label: "Open Monitor", cls: "btn btn-primary", action: () => {
+        const baud = document.getElementById("monBaud").value || "115200";
+        closeModal();
+        _termNewSession({ title: "Monitor", init_cmds: [`pio device monitor --baud ${baud}`] });
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  });
+
+  document.getElementById("btnTermBuild")?.addEventListener("click", async () => {
+    const projects = await api.projects.list().catch(() => []);
+    if (!projects.length) {
+      openModal("No Projects",
+        '<div class="empty-state">Create a project first, then use Build Firmware to compile it.</div>',
+        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      return;
+    }
+    const opts = projects.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+    openModal("Build Firmware", `
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px">
+        Opens a terminal in the project's <code>firmware/</code> directory and runs <code>pio run</code>.
+      </p>
+      <div class="form-field">
+        <label>Project</label><select id="buildProjSel">${opts}</select>
+      </div>
+      <div class="form-field">
+        <label data-tip="PlatformIO environment name — leave blank to use the default from platformio.ini">Environment (optional)</label>
+        <input type="text" id="buildEnv" placeholder="e.g. esp32dev">
+      </div>
+    `, [
+      { label: "Build", cls: "btn btn-primary", action: async () => {
+        const pid  = document.getElementById("buildProjSel").value;
+        const env  = document.getElementById("buildEnv").value.trim();
+        const proj = await api.projects.files(pid).catch(() => null);
+        const root = proj?.root ? proj.root.replace(/\\/g, "/") + "/firmware" : null;
+        const cmd  = env ? `pio run -e ${env}` : "pio run";
+        closeModal();
+        _termNewSession({
+          title:     projects.find(p => p.id === pid)?.name || "Build",
+          cwd:       root || undefined,
+          init_cmds: root ? [cmd] : [`echo "Navigate to firmware/ directory first"`, cmd],
+        });
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  });
+
+  document.getElementById("btnTermSettings")?.addEventListener("click", () => {
+    openModal("Terminal Settings", `
+      <div class="form-field">
+        <label data-tip="Adjust the font size in all terminal sessions">Font Size</label>
+        <input type="number" id="termFontSize" value="${_termFontSize()}" min="8" max="24">
+      </div>
+    `, [
+      { label: "Apply", cls: "btn btn-primary", action: () => {
+        const size = parseInt(document.getElementById("termFontSize").value || "14");
+        localStorage.setItem(_TERM_FONT_SIZE_KEY, String(size));
+        for (const s of Object.values(_termSessions)) {
+          try { s.xterm.options.fontSize = size; s.fitAddon.fit(); } catch (_) {}
+        }
+        closeModal();
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  });
+
+  document.getElementById("btnTermClose")?.addEventListener("click", () => _termCloseActive());
+
+  // Refit when window resizes
+  window.addEventListener("resize", () => {
+    if (_termActiveId) _termFit(_termActiveId);
+  });
+}
+
 // ── View router ────────────────────────────────────────────────────────────
 
 const viewLoaders = {
@@ -2279,6 +2689,7 @@ const viewLoaders = {
   cards:         loadCards,
   jobs:          loadJobs,
   ota:           loadOTA,
+  terminal:      loadTerminal,
   design:        loadDesign,
   events:        loadEvents,
   rules:         loadRules,
@@ -2402,6 +2813,7 @@ async function _toggleNotifications() {
   checkHubStatus();
   setInterval(checkHubStatus, 30_000);
   _abWireEvents();
+  _termWireEvents();
 
   // Mobile sidebar toggle
   const sidebar   = document.getElementById("sidebar");

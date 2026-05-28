@@ -140,6 +140,17 @@ def cmd_doctor(args):
     check_cmd("node",       "--version", label="Node.js")
 
     print()
+    print("  Terminal:")
+    if sys.platform == "win32":
+        has_term = check_python_pkg("pywinpty", "winpty")
+        if not has_term:
+            info("Install: pip install pywinpty  (requires Windows 10 1903+)")
+    else:
+        has_term = check_python_pkg("ptyprocess")
+        if not has_term:
+            info("Install: pip install ptyprocess")
+
+    print()
     print("  Agent Bench adapters:")
     agent_bench_enabled = os.environ.get("ESPAI_AGENT_BENCH", "").lower() in ("1", "true", "yes")
     if agent_bench_enabled:

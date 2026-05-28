@@ -4,5 +4,9 @@ pyyaml>=6.0
 python-multipart>=0.0.9
 jsonschema>=4.22.0
 
+# Terminal (browser PTY sessions)
+pywinpty>=2.0.10; sys_platform == "win32"
+ptyprocess>=0.7.0; sys_platform != "win32"
+
 # Optional — install for mDNS discovery
 # zeroconf>=0.131.0

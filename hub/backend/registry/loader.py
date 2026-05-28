@@ -40,8 +40,29 @@ def _load_yaml(path: Path) -> dict | None:
         return None
 
 
+def _scan_dir(directory: Path, descriptor: str, pack: str, results: list) -> None:
+    """Scan one directory level for manifests, tagging items with pack status."""
+    for candidate in sorted(directory.iterdir()):
+        if not candidate.is_dir():
+            continue
+        manifest_path = candidate / descriptor
+        if manifest_path.exists():
+            data = _load_yaml(manifest_path)
+            if data is not None:
+                data["_path"]   = str(candidate)
+                data["_folder"] = candidate.name
+                data["_pack"]   = pack   # "official" | "custom"
+                results.append(data)
+
+
 def scan_folder(root: Path, kind: str) -> list[dict[str, Any]]:
-    """Return a list of parsed manifests for *kind* found under *root*."""
+    """
+    Return parsed manifests for *kind* found under *root*.
+
+    Scans the root directory (official items, tracked in git) and the
+    optional `custom/` subdirectory (local-only items, gitignored).
+    Each item carries `_pack: "official"` or `_pack: "custom"`.
+    """
     descriptor = _DESCRIPTOR_NAMES.get(kind)
     if not descriptor:
         raise ValueError(f"Unknown registry kind: {kind!r}")
@@ -50,18 +71,11 @@ def scan_folder(root: Path, kind: str) -> list[dict[str, Any]]:
     if not root.exists():
         return results
 
-    for candidate in sorted(root.iterdir()):
-        if not candidate.is_dir():
-            continue
-        manifest_path = candidate / descriptor
-        if not manifest_path.exists():
-            continue
-        data = _load_yaml(manifest_path)
-        if data is None:
-            continue
-        data["_path"] = str(candidate)
-        data["_folder"] = candidate.name
-        results.append(data)
+    _scan_dir(root, descriptor, "official", results)
+
+    custom_dir = root / "custom"
+    if custom_dir.exists():
+        _scan_dir(custom_dir, descriptor, "custom", results)
 
     return results
 

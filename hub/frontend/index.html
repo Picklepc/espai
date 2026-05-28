@@ -111,6 +111,7 @@
         <li><a href="#" class="nav-item" data-view="events"              data-tip="Real-time event log from devices and the hub">Events</a></li>
         <li><a href="#" class="nav-item" data-view="rules"               data-tip="Automation rules that trigger actions when events occur">Rules</a></li>
         <li><a href="#" class="nav-item" data-view="agent-bench"         data-tip="AI-assisted development workspace (optional feature)">Agent Bench</a></li>
+        <li><a href="#" class="nav-item" data-view="terminal"           data-tip="Full PTY terminal — run builds, Git, serial monitor, and Claude Code directly in the browser">Terminal</a></li>
       </ul>
       <div class="sidebar-footer">
         <span class="hub-status" id="hubStatus">Connecting…</span>
@@ -416,6 +417,43 @@
 
       </section>
 
+      <!-- Terminal view -->
+      <section class="view" id="view-terminal">
+        <header class="view-header">
+          <h1>Terminal</h1>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary btn-sm" id="btnTermShell"   data-tip="Open a new general-purpose shell session">+ Shell</button>
+            <button class="btn btn-secondary btn-sm" id="btnTermMonitor" data-tip="Open pio device monitor to watch serial output from a paired device">Serial Monitor</button>
+            <button class="btn btn-secondary btn-sm" id="btnTermBuild"   data-tip="Open a shell pre-navigated to a project's firmware directory">Build Firmware</button>
+            <button class="btn btn-secondary btn-sm" id="btnTermSettings" data-tip="Terminal display settings — font size, shell, theme">&#x2699; Settings</button>
+          </div>
+        </header>
+        <p class="view-desc">Full PTY terminal — run PlatformIO builds, Git, serial monitor, Claude Code, or any shell command directly from the browser. Multiple sessions run simultaneously in tabs.</p>
+
+        <!-- Unavailable notice (shown when pywinpty/ptyprocess not installed) -->
+        <div id="termUnavailable" class="hidden">
+          <div class="ab-disabled-panel">
+            <div class="ab-disabled-icon">&#x1F4BB;</div>
+            <p>Terminal requires a PTY backend.</p>
+            <p style="font-size:13px;color:var(--color-text-muted);margin:6px 0 18px">
+              Run <code>python ESPAI.py install-deps</code> to install
+              <strong>pywinpty</strong> (Windows) or <strong>ptyprocess</strong> (Linux/macOS),
+              then restart the hub.
+            </p>
+          </div>
+        </div>
+
+        <!-- Terminal panel (shown when available) -->
+        <div id="termPanel" class="term-panel hidden">
+          <div class="term-tab-bar">
+            <div id="termTabs" class="term-tabs"></div>
+            <button id="btnTermClose" class="btn btn-danger btn-sm" style="margin-left:auto;display:none"
+              data-tip="Close the active terminal session">&#x2715; Close</button>
+          </div>
+          <div id="termSurface" class="term-surface"></div>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -443,6 +481,11 @@
       <div class="modal-footer" id="modalFooter"></div>
     </div>
   </div>
+
+  <!-- xterm.js — browser terminal emulator (CDN, no build step needed) -->
+  <link  rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@4.19.0/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/xterm@4.19.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.5.0/lib/xterm-addon-fit.js"></script>
 
   <script src="/static/js/api.js"></script>
   <script src="/static/js/app.js"></script>

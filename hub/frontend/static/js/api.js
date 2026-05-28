@@ -122,6 +122,14 @@ const api = {
     status:   ()     => apiFetch("/api/admin/status"),
   },
 
+  // Terminal
+  terminal: {
+    available:     ()      => apiFetch("/api/terminal/available"),
+    sessions:      ()      => apiFetch("/api/terminal/sessions"),
+    create:        (body)  => apiFetch("/api/terminal/sessions",         { method: "POST",   body: JSON.stringify(body) }),
+    close:         (id)    => apiFetch(`/api/terminal/sessions/${id}`,   { method: "DELETE" }),
+  },
+
   // Meta
   meta: () => apiFetch("/api/meta"),
 
