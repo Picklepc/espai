@@ -303,13 +303,17 @@ function _stopPairPoller() {
 
 document.getElementById("btnAddDevice").onclick = () => {
   openModal("Add Device Manually", `
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      Use this when your device doesn't respond to LAN scan — for example if it's on a
+      different subnet, has a static IP, or is connected via a serial-to-network bridge.
+    </p>
     <div class="form-field">
-      <label>IP Address</label>
-      <input type="text" id="newDeviceIP" placeholder="192.168.1.100">
+      <label data-tip="The device's current IP address on your local network — check your router's DHCP table or the device's serial output">IP Address</label>
+      <input type="text" id="newDeviceIP" placeholder="e.g. 192.168.1.45">
     </div>
     <div class="form-field">
-      <label>Name (optional)</label>
-      <input type="text" id="newDeviceName" placeholder="My Node">
+      <label data-tip="A human-readable name shown in Fleet, events, and rules — use something descriptive like the room or sensor type">Name (optional)</label>
+      <input type="text" id="newDeviceName" placeholder="e.g. kitchen-sensor">
     </div>
   `, [
     { label: "Add", cls: "btn btn-primary", action: async () => {
@@ -369,12 +373,14 @@ document.getElementById("btnBackupDownload").onclick = () => api.admin.download(
 
 document.getElementById("btnRestoreBackup").onclick = () => {
   openModal("Restore from Backup", `
-    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px">
-      Paste backup JSON below. Only <b>devices</b>, <b>projects</b>, and <b>rules</b> will be restored.
-      Events, jobs, and OTA log are never overwritten.
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px;line-height:1.6">
+      Paste the JSON from a previous backup download. Only <strong>devices</strong>,
+      <strong>projects</strong>, and <strong>rules</strong> are restored — events, jobs,
+      and OTA history are never overwritten. Existing records with matching IDs are updated.
     </p>
     <div class="form-field">
-      <textarea id="restoreJson" rows="10" style="font-family:monospace;font-size:11px" placeholder='{"devices":[...],"projects":[...],"rules":[],...}'></textarea>
+      <label style="font-size:12px" data-tip="Paste the full JSON from a hub backup download — the file you get when clicking the Backup button">Backup JSON</label>
+      <textarea id="restoreJson" rows="9" style="font-family:monospace;font-size:11px" placeholder='{"devices":[...],"projects":[...],"rules":[...]}'></textarea>
     </div>
     <p id="restoreStatus" style="font-size:12px;min-height:14px;margin-top:6px"></p>
   `, [
@@ -402,24 +408,29 @@ document.getElementById("btnRestoreBackup").onclick = () => {
 
 document.getElementById("btnUploadFirmware").onclick = () => {
   openModal("Upload Firmware Binary", `
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      Upload a compiled <code>.bin</code> from PlatformIO, Arduino IDE, or ESP-IDF.
+      In PlatformIO the file is typically at <code>.pio/build/&lt;env&gt;/firmware.bin</code>.
+      After upload, use <strong>Push to Device</strong> to deploy it to a paired ESP32.
+    </p>
     <div class="form-field">
-      <label>Firmware .bin file</label>
+      <label data-tip="The compiled firmware binary — .bin format only. Found in .pio/build/&lt;env&gt;/firmware.bin after a PlatformIO build.">Firmware .bin file</label>
       <input type="file" id="fwFile" accept=".bin">
     </div>
     <div class="form-field">
-      <label>Board</label>
+      <label data-tip="Must match your PlatformIO environment name or IDF target exactly (e.g. esp32dev, lolin32, esp32-s3-devkitc-1). A board mismatch is flagged as a warning when pushing.">Board</label>
       <input type="text" id="fwBoard" placeholder="esp32dev" value="esp32dev">
     </div>
     <div class="form-field">
-      <label>Version</label>
+      <label data-tip="Semantic version — increment with every build so devices can determine whether an update is available (e.g. 1.0.0, 1.1.0, 2.0.0).">Version</label>
       <input type="text" id="fwVersion" placeholder="1.0.0" value="1.0.0">
     </div>
     <div class="form-field">
-      <label>Channel</label>
+      <label data-tip="Release stage: dev for active development builds, beta for limited rollout testing, stable for production devices. Devices can be configured to follow a specific channel.">Channel</label>
       <select id="fwChannel">
-        <option value="dev">dev</option>
-        <option value="beta">beta</option>
-        <option value="stable">stable</option>
+        <option value="dev">dev — active development, may be unstable</option>
+        <option value="beta">beta — ready for limited testing</option>
+        <option value="stable">stable — production-ready release</option>
       </select>
     </div>
   `, [
@@ -491,12 +502,26 @@ function _clearProjectTheme() {
   _projectThemeVars = [];
 }
 
+function _pathToVSCodeUri(rootPath) {
+  const fwd = (rootPath || "").replace(/\\/g, "/");
+  return encodeURI("vscode://file/" + fwd);
+}
+
 async function refreshProjectFiles(projectId, silent = false) {
   const fileList  = document.getElementById("projFileList");
   const statusEl  = document.getElementById("projFilesStatus");
   if (!silent) fileList.innerHTML = '<div class="empty-state">Loading…</div>';
   try {
-    const { files } = await api.projects.files(projectId);
+    const { files, root } = await api.projects.files(projectId);
+
+    // Wire VS Code button when we have a root path
+    const vsBtn = document.getElementById("btnOpenVSCode");
+    if (vsBtn && root) {
+      const fwDir = root.replace(/\\/g, "/") + "/firmware";
+      vsBtn.style.display = "";
+      vsBtn.dataset.tip   = `Open ${fwDir} in VS Code`;
+      vsBtn.onclick       = () => window.open(_pathToVSCodeUri(fwDir), "_self");
+    }
     const snapshot = JSON.stringify(files.map(f => f.path + f.size_bytes));
 
     // Avoid re-rendering if nothing changed (silent poll)
@@ -573,6 +598,7 @@ async function renderProjectDevices(project, linkedIds) {
         <span class="file-size">${dev ? (dev.board || "?") : "not in fleet"}</span>
       `;
       const unlinkBtn = el("button", "btn btn-danger btn-sm", "Unlink");
+      unlinkBtn.dataset.tip = "Remove this device from the project — the device stays in Fleet";
       unlinkBtn.style.marginLeft = "8px";
       unlinkBtn.onclick = async () => {
         const newIds = linkedIds.filter(id => id !== did);
@@ -588,6 +614,7 @@ async function renderProjectDevices(project, linkedIds) {
   }
 
   const linkBtn = el("button", "btn btn-secondary btn-sm", "+ Link Device");
+  linkBtn.dataset.tip = "Associate a fleet device with this project for OTA and agent targeting";
   linkBtn.style.marginTop = "10px";
   linkBtn.onclick = () => {
     const available = allDevs.filter(d => !linkedIds.includes(d.id));
@@ -624,6 +651,8 @@ document.getElementById("btnProjBack").onclick = () => {
   _currentProject = null;
   _stopFilesPoller();
   _clearProjectTheme();
+  const vsBtn = document.getElementById("btnOpenVSCode");
+  if (vsBtn) vsBtn.style.display = "none";
   document.getElementById("proj-detail-view").classList.add("hidden");
   document.getElementById("proj-list-view").classList.remove("hidden");
 };
@@ -679,13 +708,18 @@ document.getElementById("btnProjDelete").onclick = async () => {
 
 document.getElementById("btnNewProject").onclick = () => {
   openModal("New Project", `
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      A project groups related firmware or hub code with linked devices and a custom theme.
+      Create one for each device capability you want to build, then develop it in VS Code
+      or hand it off to Agent Bench to build autonomously.
+    </p>
     <div class="form-field">
-      <label>Name</label>
-      <input type="text" id="newProjName" placeholder="My Project">
+      <label data-tip="Shown in the project list and used to identify this project in Agent Bench tasks">Name</label>
+      <input type="text" id="newProjName" placeholder="e.g. Motion Sensor Node">
     </div>
     <div class="form-field">
-      <label>Description (optional)</label>
-      <textarea id="newProjDesc" rows="3" placeholder="What does this project do?"></textarea>
+      <label data-tip="Passed to the agent as context — describe the project purpose so the agent understands what it is building">Description (optional)</label>
+      <textarea id="newProjDesc" rows="3" placeholder="e.g. PIR-based motion detection node — detects movement, blinks the onboard LED, and publishes a device.motion event to the hub"></textarea>
     </div>
   `, [
     { label: "Create", cls: "btn btn-primary", action: async () => {
@@ -695,6 +729,69 @@ document.getElementById("btnNewProject").onclick = () => {
       await api.projects.create({ name, description: desc || null });
       closeModal();
       loadProjects();
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+};
+
+// ── Import existing PIO project ────────────────────────────────────────────
+
+document.getElementById("btnImportProject").onclick = () => {
+  openModal("Import PIO Project", `
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      Copy an existing PlatformIO project folder into the hub. Build artifacts
+      (<code>.pio/</code>) and Git history are excluded automatically. After import,
+      use Agent Bench with the <strong>port-to-hub</strong> template to have the agent
+      analyse the firmware and mirror its features as hub workers — with automatic
+      ESP32 fallback when the hub is unreachable.
+    </p>
+    <div class="form-field">
+      <label data-tip="Full path to the PlatformIO project folder on this machine — the folder that contains platformio.ini">Project Folder Path</label>
+      <input type="text" id="importPath" placeholder="e.g. C:\\Users\\you\\Projects\\motion-sensor" style="font-family:monospace;font-size:12px">
+    </div>
+    <div class="form-field">
+      <label data-tip="Name shown in the project list — defaults to the folder name if left blank">Project Name</label>
+      <input type="text" id="importName" placeholder="e.g. Motion Sensor Node">
+    </div>
+    <div class="form-field">
+      <label data-tip="Passed to the agent as context about what this project does">Description (optional)</label>
+      <textarea id="importDesc" rows="2" placeholder="e.g. PIR motion sensor on GPIO 14 — reports to hub and blinks LED on trigger"></textarea>
+    </div>
+    <p id="importStatus" style="font-size:12px;color:var(--color-accent);margin-top:8px;min-height:14px"></p>
+  `, [
+    { label: "Import", cls: "btn btn-primary", action: async () => {
+      const source_path = document.getElementById("importPath").value.trim();
+      const rawName     = document.getElementById("importName").value.trim();
+      const description = document.getElementById("importDesc").value.trim();
+      const statusEl    = document.getElementById("importStatus");
+
+      if (!source_path) { if (statusEl) statusEl.textContent = "Enter a folder path."; return; }
+
+      // Derive name from last path component if not provided
+      const name = rawName || source_path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || "Imported Project";
+
+      if (statusEl) statusEl.textContent = "Copying files…";
+      try {
+        const result = await api.projects.import({ source_path, name, description: description || null });
+        closeModal();
+        openModal("Import Complete ✓", `
+          <p style="margin-bottom:10px">
+            <strong>${result.name}</strong> imported — ${result.file_count} files copied.
+            ${result.has_platformio ? '<span style="color:var(--color-success)">✓ PlatformIO project detected.</span>' : ""}
+          </p>
+          <p style="font-size:13px;color:var(--color-text-muted);line-height:1.6">
+            Next: open the project, link a device, then use
+            <strong>Agent Bench → port-to-hub</strong> to have the agent analyse the
+            firmware and wire up hub connectivity with standalone fallback.
+          </p>
+        `, [{ label: "Open Project", cls: "btn btn-primary", action: async () => {
+          closeModal();
+          const p = await api.projects.get(result.id).catch(() => null);
+          if (p) openProject(p); else loadProjects();
+        }}]);
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "Error: " + err.message;
+      }
     }},
     { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
   ]);
@@ -768,14 +865,17 @@ async function loadWorkers() {
 function openWorkerTestModal(worker) {
   const wname = worker.name || worker._folder;
   openModal(`Test Worker — ${worker.display_name || wname}`, `
-    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px">
-      Inputs JSON (or leave as <code>{}</code> for no inputs):
+    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px;line-height:1.6">
+      Provide input values matching this worker's declared input schema, or leave as
+      <code>{}</code> if it takes no inputs. The hub runs the worker in its sandbox and
+      returns outputs, stdout, and any errors.
     </p>
     <div class="form-field">
+      <label style="font-size:12px" data-tip="JSON object with keys matching the worker's declared inputs. Check the worker's manifest for the expected field names and types.">Inputs JSON</label>
       <textarea id="workerTestInputs" rows="5" style="font-family:monospace;font-size:12px">{}</textarea>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
-      <label style="font-size:12px">Timeout (s)</label>
+      <label style="font-size:12px" data-tip="Maximum seconds to wait before the hub kills the worker process and returns a timeout error">Timeout (s)</label>
       <input type="number" id="workerTestTimeout" value="30" min="1" max="60" style="width:60px">
     </div>
     <div id="workerTestResult" style="margin-top:14px"></div>
@@ -965,7 +1065,7 @@ async function openPushModal(fw) {
   ).join("");
   openModal(`Push Firmware — ${fw.board} v${fw.version}`, `
     <div class="form-field">
-      <label>Target Device</label>
+      <label data-tip="Only paired devices are eligible for OTA. Pair a device from the Fleet view if it does not appear here.">Target Device</label>
       <select id="pushDeviceSel">${opts}</select>
     </div>
     <div id="boardCompatWarn" class="compat-warning hidden">
@@ -975,7 +1075,7 @@ async function openPushModal(fw) {
       </label>
     </div>
     <div class="form-field">
-      <label>Operator</label>
+      <label data-tip="Logged in the OTA audit trail — use your name or a label that identifies who triggered this push (e.g. local, ci, patrick)">Operator</label>
       <input type="text" id="pushOperator" value="local" placeholder="your name or label">
     </div>
     <p style="font-size:12px;color:var(--color-text-muted);margin-top:8px">
@@ -1252,25 +1352,30 @@ async function loadRules() {
 
 document.getElementById("btnNewRule").onclick = () => {
   openModal("New Automation Rule", `
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      Rules fire automatically when matching events arrive from a device or the hub.
+      Use them to run workers, call webhooks, or change the UI theme in response to
+      sensor readings, alerts, or state changes.
+    </p>
     <div class="form-field">
-      <label>Rule Name</label>
-      <input type="text" id="ruleNameInput" placeholder="Alert on checkin">
+      <label data-tip="A descriptive label shown in the rule list">Rule Name</label>
+      <input type="text" id="ruleNameInput" placeholder="e.g. Alert on motion detected">
     </div>
     <div class="form-field">
-      <label>Trigger Event Type</label>
-      <input type="text" id="ruleEventType" placeholder="device.checkin">
+      <label data-tip="Matches the event_type field exactly. Common types: device.checkin, device.motion, device.alert, sensor.reading, firmware.update">Trigger Event Type</label>
+      <input type="text" id="ruleEventType" placeholder="e.g. device.motion">
     </div>
     <div class="form-field">
-      <label>Source Filter (optional — leave blank for any)</label>
-      <input type="text" id="ruleSourceFilter" placeholder="my-node-id">
+      <label data-tip="Only fire when the event source matches this value — usually a device ID or device name. Leave blank to match events from any device.">Source Filter (optional — blank matches any)</label>
+      <input type="text" id="ruleSourceFilter" placeholder="e.g. kitchen-sensor-abc123">
     </div>
     <div class="form-field">
-      <label>Action</label>
+      <label data-tip="What to do when this rule fires">Action</label>
       <select id="ruleActionType">
-        <option value="log_event">Log Event (no side effects)</option>
-        <option value="run_worker">Run Worker</option>
-        <option value="webhook">Webhook POST</option>
-        <option value="theme_change">Theme Token Override</option>
+        <option value="log_event">Log Event — record in event log, no side effects</option>
+        <option value="run_worker">Run Worker — execute a hub code module</option>
+        <option value="webhook">Webhook POST — call an external HTTP endpoint</option>
+        <option value="theme_change">Theme Override — temporarily change the UI appearance</option>
       </select>
     </div>
     <div class="form-field" id="ruleActionConfigField">
@@ -1342,9 +1447,19 @@ function _abStatusLabel(status) {
   const labels = {
     draft: "Draft", running: "Running", awaiting_review: "Review",
     approved: "Approved", rejected: "Rejected", needs_changes: "Changes", merged: "Merged",
+    awaiting_input: "Waiting",
   };
   return labels[status] || status;
 }
+
+const _AB_TEMPLATE_LABELS = {
+  "firmware-feature": "Firmware Feature",
+  "hub-feature":      "Hub Feature",
+  "port-to-hub":      "Port to Hub",
+  "recipe-feature":   "Recipe Feature",
+  "bug-fix":          "Bug Fix",
+  "custom":           "Custom",
+};
 
 async function loadAgentBench() {
   _stopAbPoller();
@@ -1415,10 +1530,10 @@ async function _abOpenTask(taskId) {
   const metaEl = document.getElementById("abThreadMeta");
   const allowed = JSON.parse(task.allowed_paths || "[]");
   metaEl.innerHTML = `
-    <span>Template: <strong>${task.template}</strong></span>
-    <span>Lane: <strong>${task.lane}</strong></span>
-    ${task.adapter_id ? `<span>Adapter: <strong>${task.adapter_id}</strong></span>` : ""}
-    ${allowed.length ? `<span>Paths: <strong>${allowed.length}</strong></span>` : ""}
+    <span data-tip="Task template — determines which codebase sections the agent focuses on">Template: <strong>${_AB_TEMPLATE_LABELS[task.template] || task.template}</strong></span>
+    <span data-tip="Development lane — agents always work in dev, never production">Lane: <strong>${task.lane}</strong></span>
+    ${task.adapter_id ? `<span data-tip="Adapter used to run the agent">Adapter: <strong>${task.adapter_id}</strong></span>` : ""}
+    ${allowed.length ? `<span data-tip="Number of directory paths the agent is allowed to modify">Paths: <strong>${allowed.length}</strong></span>` : ""}
   `;
 
   await _abLoadThread(taskId);
@@ -1532,34 +1647,40 @@ function _abWireEvents() {
       ...projects.map(p => `<option value="${p.id}">${p.name}</option>`),
     ].join("");
     openModal("New Agent Task", `
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+        Describe what you want to build in plain language. The agent reads the relevant
+        codebase sections, writes the code, and submits a diff for your review.
+        Choose a template that matches your task type so the agent focuses on the right files.
+      </p>
       <div class="form-field">
-        <label>Title</label>
-        <input type="text" id="abNewTitle" placeholder="Add motion detection to firmware">
+        <label data-tip="A short name to identify this task in the list — shown alongside the status badge">Title</label>
+        <input type="text" id="abNewTitle" placeholder="e.g. Add PIR motion sensor on GPIO 14">
       </div>
       <div class="form-field">
-        <label>Description</label>
-        <textarea id="abNewDesc" rows="4" placeholder="Describe what the agent should build or fix…"></textarea>
+        <label data-tip="The agent reads this carefully — be specific. Include pin numbers, API names, event types, or file names if you know them. The more detail, the less back-and-forth.">Description</label>
+        <textarea id="abNewDesc" rows="5" placeholder="e.g. Add a PIR motion sensor on GPIO pin 14. When triggered, blink the onboard LED 3 times and publish a device.motion event to the hub with the device name, sensor pin, and a UTC timestamp in the payload."></textarea>
       </div>
       <div class="form-field">
-        <label>Template</label>
+        <label data-tip="Tells the agent which part of the codebase to focus on. firmware-feature targets ESP32 C++ source; hub-feature targets the Python backend; recipe-feature targets YAML pipelines; bug-fix works across any area.">Template</label>
         <select id="abNewTemplate">
-          <option value="custom">custom</option>
-          <option value="firmware-feature">firmware-feature</option>
-          <option value="hub-feature">hub-feature</option>
-          <option value="recipe-feature">recipe-feature</option>
-          <option value="bug-fix">bug-fix</option>
+          <option value="firmware-feature">firmware-feature — add or change ESP32 firmware code</option>
+          <option value="hub-feature">hub-feature — add or change the hub backend or API</option>
+          <option value="port-to-hub">port-to-hub — mirror device features as hub workers + add ESP32 fallback</option>
+          <option value="recipe-feature">recipe-feature — create or edit a YAML data pipeline</option>
+          <option value="bug-fix">bug-fix — diagnose and fix a specific problem</option>
+          <option value="custom">custom — no template constraints, use allowed paths as-is</option>
         </select>
       </div>
       <div class="form-field">
-        <label>Project (optional)</label>
+        <label data-tip="Link a project so the agent knows which codebase to work in. Required for firmware-feature and hub-feature tasks — the agent uses the project description as additional context.">Project</label>
         <select id="abNewProject">${projOpts}</select>
       </div>
       <div class="form-field">
-        <label>Acceptance criteria (one per line)</label>
-        <textarea id="abNewCriteria" rows="3" placeholder="- Builds without error&#10;- LED blinks correctly"></textarea>
+        <label data-tip="Conditions the agent checks its own work against before submitting. One per line. Clear, testable criteria help the agent self-correct — e.g. Firmware builds without errors, Event payload includes sensor_id field.">Acceptance Criteria (one per line)</label>
+        <textarea id="abNewCriteria" rows="3" placeholder="- Firmware compiles without errors&#10;- LED blinks exactly 3 times on motion trigger&#10;- Hub receives device.motion event within 2 seconds of trigger"></textarea>
       </div>
       <div class="form-field">
-        <label>Allowed paths (one per line)</label>
+        <label data-tip="Directories the agent is allowed to read and modify. Leave blank to use the template defaults. Paths outside this list (and always-blocked paths like secrets/ and data/) cannot be touched.">Allowed Paths (one per line, leave blank for template defaults)</label>
         <textarea id="abNewPaths" rows="2" placeholder="firmware/seed/src&#10;hub/backend/routers"></textarea>
       </div>
     `, [
@@ -1581,6 +1702,25 @@ function _abWireEvents() {
       }},
       { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
     ]);
+
+    // Update description placeholder when template changes
+    const _templatePlaceholders = {
+      "firmware-feature": "e.g. Add a PIR motion sensor on GPIO pin 14. When triggered, blink the onboard LED 3 times and publish a device.motion event to the hub with device name, sensor pin, and UTC timestamp.",
+      "hub-feature":      "e.g. Add a GET /api/sensors/latest endpoint that returns the most recent sensor reading for a given device ID from the events table.",
+      "port-to-hub":      "e.g. This project has a web server with /api/temperature and /api/motion endpoints. Port these to hub workers that store readings in the events table. Add hub check-in to the firmware and fall back to the device web server when the hub is unreachable (>10s timeout).",
+      "recipe-feature":   "e.g. Create a recipe that reads temperature from device.sensor events and forwards readings above 30°C to a webhook at http://homeassistant.local/api/webhook/hot-alert.",
+      "bug-fix":          "e.g. The firmware reboots after ~2 hours. The serial log shows a heap exhaustion error in the JSON serialisation block around line 142 of main.cpp — investigate and fix the memory leak.",
+      "custom":           "e.g. Describe what you want to build or change — include file names, variable names, or API details if you know them.",
+    };
+    const abTemplSel = document.getElementById("abNewTemplate");
+    const abDescTA   = document.getElementById("abNewDesc");
+    if (abTemplSel && abDescTA) {
+      const _updatePlaceholder = () => {
+        abDescTA.placeholder = _templatePlaceholders[abTemplSel.value] || _templatePlaceholders["custom"];
+      };
+      abTemplSel.addEventListener("change", _updatePlaceholder);
+      _updatePlaceholder();
+    }
   };
 
   const _PORTAL_INSTALLABLE = new Set(["pio", "codex", "claude"]);

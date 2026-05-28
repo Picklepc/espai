@@ -130,14 +130,15 @@
             <button class="btn btn-primary"   id="btnAddDevice" data-tip="Manually add a device by entering its IP address">+ Add Device</button>
           </div>
         </header>
+        <p class="view-desc">Your ESP32 network. Scan to auto-discover nodes, then pair them to unlock OTA firmware pushes and remote control. Unpaired devices are visible but can't receive updates.</p>
         <div class="stats-row" id="statsRow">
-          <div class="stat-card"><span class="stat-value" id="statTotal">—</span><span class="stat-label">Total Devices</span></div>
-          <div class="stat-card"><span class="stat-value accent" id="statOnline">—</span><span class="stat-label">Online</span></div>
-          <div class="stat-card"><span class="stat-value" id="statPaired">—</span><span class="stat-label">Paired</span></div>
-          <div class="stat-card"><span class="stat-value" id="statJobs">—</span><span class="stat-label">Active Jobs</span></div>
+          <div class="stat-card" data-tip="All devices discovered on the network, paired or not"><span class="stat-value" id="statTotal">—</span><span class="stat-label">Total Devices</span></div>
+          <div class="stat-card" data-tip="Devices that have checked in within the last 2 minutes"><span class="stat-value accent" id="statOnline">—</span><span class="stat-label">Online</span></div>
+          <div class="stat-card" data-tip="Devices registered and trusted by the hub — eligible for OTA updates and remote commands"><span class="stat-value" id="statPaired">—</span><span class="stat-label">Paired</span></div>
+          <div class="stat-card" data-tip="Worker processes currently running on the hub"><span class="stat-value" id="statJobs">—</span><span class="stat-label">Active Jobs</span></div>
         </div>
         <div class="device-list" id="deviceList">
-          <div class="empty-state">No devices found. Scan LAN or add a device manually.</div>
+          <div class="empty-state">No devices yet — click <strong>Scan LAN</strong> to probe your network, or <strong>+ Add Device</strong> to enter an IP manually.</div>
         </div>
       </section>
 
@@ -147,10 +148,14 @@
         <div id="proj-list-view">
           <header class="view-header">
             <h1>Projects</h1>
-            <button class="btn btn-primary" id="btnNewProject" data-tip="Create a project to group devices, files, and theme overrides">+ New Project</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary" id="btnImportProject" data-tip="Copy an existing PlatformIO folder into a new project — agent can then port features to the hub">⬆ Import PIO Project</button>
+              <button class="btn btn-primary"   id="btnNewProject"    data-tip="Create a new project with a fresh firmware scaffold and hub integration template">+ New Project</button>
+            </div>
           </header>
+          <p class="view-desc">A project is a workspace for a firmware build or hub module. Create one, link your devices, then develop it manually in VS Code or autonomously via Agent Bench.</p>
           <div class="card-grid" id="projectList">
-            <div class="empty-state">No projects yet.</div>
+            <div class="empty-state">No projects yet — click <strong>+ New Project</strong> to create your first workspace.</div>
           </div>
         </div>
         <!-- Detail subview -->
@@ -161,11 +166,19 @@
               <h1 id="projDetailName">Project</h1>
             </div>
             <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary btn-sm" id="btnOpenVSCode" data-tip="Open this project's firmware folder in VS Code" style="display:none">&#128196; VS Code</button>
               <button class="btn btn-secondary btn-sm" id="btnProjTheme"  data-tip="Override CSS design tokens while this project is active">🎨 Theme</button>
               <button class="btn btn-danger btn-sm"    id="btnProjDelete" data-tip="Permanently delete this project (devices and files are not removed)">Delete Project</button>
             </div>
           </header>
-          <p id="projDetailDesc" style="color:var(--color-text-muted);margin-bottom:20px;font-size:14px"></p>
+          <p id="projDetailDesc" style="color:var(--color-text-muted);margin-bottom:12px;font-size:14px"></p>
+          <div class="proj-workflow-hint">
+            <strong>VS Code:</strong> Click the VS Code button above to open the firmware folder directly — the firmware works standalone without the hub.
+            <span class="hint-sep">|</span>
+            <strong>Agent Bench:</strong> Go to <em>Agent Bench → + New Task</em>, link this project, and describe what to build. Use the <em>port-to-hub</em> template to offload device features to hub workers with ESP32 fallback.
+            <span class="hint-sep">|</span>
+            <strong>Standalone:</strong> All projects build and run independently — the hub is always optional and the ESP32 uses its own web server when the hub is unreachable.
+          </div>
           <div class="proj-detail-grid">
             <div>
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -186,6 +199,7 @@
       <!-- Recipes view -->
       <section class="view" id="view-recipes">
         <header class="view-header"><h1>Recipes</h1></header>
+        <p class="view-desc">YAML-defined pipelines that transform and route data arriving from your devices — chain workers together, filter streams, and forward results to dashboards or external services.</p>
         <div class="registry-grid" id="recipeList">
           <div class="empty-state">Loading…</div>
         </div>
@@ -194,6 +208,7 @@
       <!-- Workers view -->
       <section class="view" id="view-workers">
         <header class="view-header"><h1>Workers</h1></header>
+        <p class="view-desc">Sandboxed code modules (Python or JS) that run on the hub to process events. Each worker declares filesystem and network permissions — imported workers are quarantined until reviewed.</p>
         <div class="registry-grid" id="workerList">
           <div class="empty-state">Loading…</div>
         </div>
@@ -202,6 +217,7 @@
       <!-- Cards view -->
       <section class="view" id="view-cards">
         <header class="view-header"><h1>Cards</h1></header>
+        <p class="view-desc">Dashboard widgets that subscribe to live event streams and display sensor readings or device state in real time. Cards are defined alongside their recipe or worker.</p>
         <div class="registry-grid" id="cardList">
           <div class="empty-state">Loading…</div>
         </div>
@@ -210,8 +226,9 @@
       <!-- Jobs view -->
       <section class="view" id="view-jobs">
         <header class="view-header"><h1>Jobs</h1></header>
+        <p class="view-desc">Every time a worker runs, it creates a job record. Browse execution history, inspect outputs, and diagnose failures here.</p>
         <div class="job-list" id="jobList">
-          <div class="empty-state">No jobs.</div>
+          <div class="empty-state">No jobs yet — jobs are created when a worker runs via a rule, the API, or Agent Bench.</div>
         </div>
       </section>
 
@@ -225,6 +242,7 @@
             <button class="btn btn-primary"   id="btnUploadFirmware" data-tip="Upload a compiled .bin file to the local firmware catalog">+ Upload Firmware</button>
           </div>
         </header>
+        <p class="view-desc">Upload compiled firmware binaries and push them to paired devices wirelessly. Use channels (dev → beta → stable) to control which devices receive each build, and set rollback targets for safe recovery.</p>
         <div class="ota-panel">
           <div class="panel-section">
             <h2>Firmware Catalog</h2>
@@ -240,6 +258,7 @@
       <!-- Design view -->
       <section class="view" id="view-design">
         <header class="view-header"><h1>Design System</h1></header>
+        <p class="view-desc">Live CSS token inspector. Tokens control colors, spacing, and typography. Project-level overrides can replace them while a specific project is active.</p>
         <div class="panel-section">
           <h2>Active Tokens</h2>
           <div id="tokenList" class="token-grid"></div>
@@ -249,8 +268,9 @@
       <!-- Events view -->
       <section class="view" id="view-events">
         <header class="view-header"><h1>Event Log</h1></header>
+        <p class="view-desc">A live stream of all events published by devices and the hub. Events trigger automation rules and are retained for 48 hours. Connect your device and check here to confirm it's sending data.</p>
         <div class="event-list" id="eventList">
-          <div class="empty-state">No events.</div>
+          <div class="empty-state">No events yet — pair and connect a device to see its checkin and sensor events appear here in real time.</div>
         </div>
       </section>
 
@@ -260,8 +280,9 @@
           <h1>Automation Rules</h1>
           <button class="btn btn-primary" id="btnNewRule" data-tip="Create an automation rule that fires when matching events occur">+ New Rule</button>
         </header>
+        <p class="view-desc">Automatically run workers, call webhooks, or change the UI theme when specific device events occur. Rules are evaluated in order for every event the hub receives.</p>
         <div class="rule-list" id="ruleList">
-          <div class="empty-state">No rules yet. Rules fire automatically when matching events are published.</div>
+          <div class="empty-state">No rules yet — click <strong>+ New Rule</strong> to fire a worker or webhook when a device event matches.</div>
         </div>
       </section>
 
@@ -274,8 +295,13 @@
           <div class="ab-disabled-panel">
             <div class="ab-disabled-icon">&#x1F916;</div>
             <p>Agent Bench is disabled.</p>
-            <p style="font-size:13px;color:var(--color-text-muted);margin:6px 0 18px">
-              Set <code>ESPAI_AGENT_BENCH=true</code> in your <code>.env</code> and restart the hub to enable AI-assisted development.
+            <p style="font-size:13px;color:var(--color-text-muted);margin:6px 0 4px">
+              Agent Bench lets you describe a feature or bug fix in plain language and have an AI
+              agent write the code, submit a diff, and wait for your review.
+            </p>
+            <p style="font-size:13px;color:var(--color-text-muted);margin:0 0 18px">
+              Set <code>ESPAI_AGENT_BENCH=true</code> in your <code>.env</code> and restart the hub,
+              or click below to enable it now.
             </p>
             <button class="btn btn-primary" id="btnAbEnable" data-tip="Write ESPAI_AGENT_BENCH=true to .env and activate the feature">Enable Agent Bench</button>
           </div>
@@ -286,21 +312,22 @@
           <header class="view-header">
             <h1>Agent Bench</h1>
             <div style="display:flex;gap:8px">
-              <button class="btn btn-secondary" id="btnAbDoctor"   data-tip="Check which tools and CLI adapters are installed">&#x1F50E; Doctor</button>
-              <button class="btn btn-secondary" id="btnAbSettings" data-tip="Configure Agent Bench options and write to .env">&#x2699; Settings</button>
-              <button class="btn btn-primary"   id="btnAbNewTask"  data-tip="Create a new AI-assisted development task">+ New Task</button>
+              <button class="btn btn-secondary" id="btnAbDoctor"   data-tip="Check which tools and CLI adapters are installed and get install guidance">&#x1F50E; Doctor</button>
+              <button class="btn btn-secondary" id="btnAbSettings" data-tip="Configure Agent Bench options — adapters, review requirements, dev device access">&#x2699; Settings</button>
+              <button class="btn btn-primary"   id="btnAbNewTask"  data-tip="Create a new task — describe what to build and the agent will write the code">+ New Task</button>
             </div>
           </header>
+          <p class="view-desc">Describe a task in plain language and let an AI agent write the code, submit a diff, and await your review. Works for firmware features, hub code, recipes, and bug fixes. Run <strong>Doctor</strong> first to confirm your tools are ready.</p>
           <div class="ab-filter-row" id="abFilterRow">
-            <button class="ab-filter active" data-status="">All</button>
-            <button class="ab-filter" data-status="draft">Draft</button>
-            <button class="ab-filter" data-status="running">Running</button>
-            <button class="ab-filter" data-status="awaiting_review">Review</button>
-            <button class="ab-filter" data-status="approved">Approved</button>
-            <button class="ab-filter" data-status="rejected">Rejected</button>
+            <button class="ab-filter active" data-status=""               data-tip="Show all tasks">All</button>
+            <button class="ab-filter" data-status="draft"                 data-tip="Tasks created but not yet run">Draft</button>
+            <button class="ab-filter" data-status="running"               data-tip="Tasks currently being executed by an agent">Running</button>
+            <button class="ab-filter" data-status="awaiting_review"       data-tip="Agent completed — waiting for your approve/reject decision">Review</button>
+            <button class="ab-filter" data-status="approved"              data-tip="Tasks you approved — changes are ready to merge">Approved</button>
+            <button class="ab-filter" data-status="rejected"              data-tip="Tasks closed without applying changes">Rejected</button>
           </div>
           <div id="abTaskList" class="ab-task-list">
-            <div class="empty-state">No agent tasks yet.</div>
+            <div class="empty-state">No agent tasks yet — click <strong>+ New Task</strong> to describe what you want to build.</div>
           </div>
         </div>
 
@@ -326,8 +353,8 @@
               <!-- Manual adapter: paste response -->
               <div id="abPastePanel" class="hidden">
                 <div class="form-field" style="margin-top:12px">
-                  <label>Paste agent response</label>
-                  <textarea id="abPasteInput" rows="5" placeholder="Paste the agent's response here…"></textarea>
+                  <label data-tip="Copy the prompt from View Prompt, paste it into any AI chat, then paste the full response back here">Paste agent response</label>
+                  <textarea id="abPasteInput" rows="5" placeholder="Paste the agent's full response here — include all code blocks and explanations…"></textarea>
                 </div>
                 <button class="btn btn-primary btn-sm" id="btnAbPasteSubmit" data-tip="Add the agent's response to the task thread and move to review">Submit Response</button>
               </div>
@@ -342,8 +369,8 @@
             <div id="abReviewPanel" class="ab-review-panel hidden">
               <h3 class="section-heading">Review</h3>
               <div class="form-field">
-                <label>Notes (optional)</label>
-                <textarea id="abReviewNotes" rows="4" placeholder="Explain your decision…"></textarea>
+                <label data-tip="Your notes are included in the next agent run if you choose Needs Changes — be specific about what to fix">Notes (optional)</label>
+                <textarea id="abReviewNotes" rows="4" placeholder="e.g. The LED blinks correctly but the event payload is missing the sensor_id field — please add it…"></textarea>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button class="btn ab-btn-approve" id="btnAbApprove" data-tip="Accept the agent's changes — marks the task ready to merge">&#x2713; Approve</button>

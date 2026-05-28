@@ -1,6 +1,7 @@
 ﻿import json
 import re
 import secrets
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +34,12 @@ class ProjectUpdate(BaseModel):
 
 class ProjectThemePatch(BaseModel):
     theme_overrides: dict = {}   # CSS custom property name → value
+
+
+class ProjectImport(BaseModel):
+    source_path: str
+    name: str
+    description: str | None = None
 
 
 # ── Firmware template written into each new project ──────────────────────────
@@ -273,6 +280,89 @@ def project_files(project_id: str):
             rel = f.relative_to(proj_dir).as_posix()
             files.append({"path": rel, "size_bytes": f.stat().st_size})
     return {"project_id": project_id, "root": str(proj_dir), "files": files}
+
+
+_IMPORT_IGNORE = shutil.ignore_patterns(".pio", ".git", "__pycache__", "*.pyc", "node_modules")
+
+_IMPORT_SIZE_LIMIT = 200 * 1024 * 1024  # 200 MB safety cap
+
+
+def _dir_size(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+@router.post("/import")
+def import_project(data: ProjectImport):
+    src = Path(data.source_path)
+    if not src.exists():
+        raise HTTPException(400, f"Path not found: {data.source_path!r}")
+    if not src.is_dir():
+        raise HTTPException(400, "source_path must be a directory")
+
+    # Size guard (skip .pio which can be huge)
+    copyable = [
+        f for f in src.rglob("*")
+        if f.is_file() and ".pio" not in f.parts and ".git" not in f.parts
+    ]
+    total_bytes = sum(f.stat().st_size for f in copyable)
+    if total_bytes > _IMPORT_SIZE_LIMIT:
+        raise HTTPException(
+            400,
+            f"Project is {total_bytes // 1_048_576} MB — exceeds 200 MB import limit. "
+            "Run `pio run --target clean` first to remove build artifacts.",
+        )
+
+    has_pio = (src / "platformio.ini").exists()
+    project_id = secrets.token_hex(6)
+    now = _now()
+
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO projects (id, name, description, devices, created) VALUES (?,?,?,?,?)",
+            (project_id, data.name, data.description, json.dumps([]), now),
+        )
+
+    proj_dir = PROJECTS_DIR / project_id
+    fw_dest  = proj_dir / "firmware"
+    try:
+        shutil.copytree(str(src), str(fw_dest), ignore=_IMPORT_IGNORE)
+    except Exception as exc:
+        shutil.rmtree(str(proj_dir), ignore_errors=True)
+        with get_conn() as conn:
+            conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+        raise HTTPException(500, f"Copy failed: {exc}")
+
+    (proj_dir / "workers").mkdir(exist_ok=True)
+    (proj_dir / "captures").mkdir(exist_ok=True)
+
+    meta = {
+        "schema": "ESPAI.project.v1",
+        "id": project_id,
+        "name": data.name,
+        "description": data.description or "",
+        "created": now,
+        "imported_from": str(src),
+    }
+    (proj_dir / ".ESPAI-project.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    notes = (
+        f"# {data.name}\n\n{data.description or 'Imported project.'}\n\n"
+        f"Imported from: `{src}`\n\n"
+        + ("PlatformIO project detected — build with `pio run`.\n" if has_pio else "")
+        + "\n## Notes\n"
+    )
+    (proj_dir / "notes.md").write_text(notes, encoding="utf-8")
+    (proj_dir / ".gitignore").write_text("captures/\n.pio/\n*.private.*\nsecrets.*\n", encoding="utf-8")
+
+    file_count = len(copyable)
+    return {
+        "id": project_id,
+        "name": data.name,
+        "created": now,
+        "source_path": str(src),
+        "file_count": file_count,
+        "has_platformio": has_pio,
+    }
 
 
 @router.post("/")

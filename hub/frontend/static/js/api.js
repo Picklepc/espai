@@ -40,6 +40,7 @@ const api = {
     get:        (id)     => apiFetch(`/api/projects/${id}`),
     files:      (id)     => apiFetch(`/api/projects/${id}/files`),
     create:     (body)   => apiFetch("/api/projects/",        { method: "POST",   body: JSON.stringify(body) }),
+    import:     (body)   => apiFetch("/api/projects/import",  { method: "POST",   body: JSON.stringify(body) }),
     update:     (id, b)  => apiFetch(`/api/projects/${id}`,   { method: "PATCH",  body: JSON.stringify(b) }),
     delete:     (id)     => apiFetch(`/api/projects/${id}`,   { method: "DELETE" }),
     theme:      (id)     => apiFetch(`/api/projects/${id}/theme`),
