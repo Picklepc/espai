@@ -1526,23 +1526,26 @@ function _abWireEvents() {
   document.getElementById("btnAbDoctor").onclick = async () => {
     const d = await api.agentBench.doctor().catch(err => ({ error: err.message }));
     if (d.error) { openModal("Doctor", `<p class="empty-state">${d.error}</p>`, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]); return; }
-    const rows = Object.entries(d.tools || {}).map(([name, info]) => {
-      const color = info.found ? "var(--color-success)" : "var(--color-text-muted)";
-      return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:13px">
-        <span style="color:${color};font-weight:700;min-width:14px">${info.found ? "✓" : "—"}</span>
-        <span style="min-width:80px;color:var(--color-text-muted)">${name}</span>
-        <span style="font-size:12px">${info.version || (info.found ? "found" : "not found")}</span>
+    const toolRows = Object.entries(d.tools || {}).map(([name, info]) => {
+      const ok = info.found;
+      return `<div class="doctor-row">
+        <span class="doctor-icon ${ok ? "ok" : "miss"}">${ok ? "✓" : "—"}</span>
+        <span class="doctor-name">${name}</span>
+        <span class="doctor-val">${info.version || (ok ? "found" : "not found")}</span>
       </div>`;
     }).join("");
     const adapterRows = Object.entries(d.adapters_ready || {}).map(([k, v]) => {
-      const color = v ? "var(--color-success)" : "var(--color-text-muted)";
-      return `<span style="color:${color};font-size:12px;font-weight:700">${k}</span>`;
-    }).join(" · ");
+      return `<div class="doctor-row">
+        <span class="doctor-icon ${v ? "ok" : "miss"}">${v ? "✓" : "✗"}</span>
+        <span class="doctor-name">${k}</span>
+        <span class="doctor-val" style="color:${v ? "var(--color-success)" : "var(--color-danger)"}">${v ? "ready" : "not installed"}</span>
+      </div>`;
+    }).join("");
     openModal("Agent Bench Doctor", `
-      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:14px">Tool availability:</p>
-      ${rows}
-      <hr style="border:none;border-top:1px solid var(--color-card-border);margin:12px 0">
-      <p style="font-size:12px;margin-bottom:8px">Adapters ready: ${adapterRows}</p>
+      <p class="doctor-section-label">Tools</p>
+      ${toolRows}
+      <p class="doctor-section-label" style="margin-top:14px">Adapters</p>
+      ${adapterRows}
     `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
   };
 
@@ -1816,6 +1819,17 @@ async function _toggleNotifications() {
   checkHubStatus();
   setInterval(checkHubStatus, 30_000);
   _abWireEvents();
+
+  // Mobile sidebar toggle
+  const sidebar   = document.getElementById("sidebar");
+  const hamburger = document.getElementById("btnHamburger");
+  const overlay_  = document.getElementById("sidebarOverlay");
+  function closeSidebar() { sidebar.classList.remove("open"); if (overlay_) overlay_.classList.remove("active"); }
+  function openSidebar()  { sidebar.classList.add("open");    if (overlay_) overlay_.classList.add("active"); }
+  hamburger?.addEventListener("click", () => sidebar.classList.contains("open") ? closeSidebar() : openSidebar());
+  overlay_?.addEventListener("click", closeSidebar);
+  navItems.forEach(item => item.addEventListener("click", () => { if (window.innerWidth < 700) closeSidebar(); }));
+
   showView("fleet");
   setInterval(() => {
     const active = document.querySelector(".view.active");

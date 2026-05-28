@@ -579,6 +579,106 @@ code {
   margin: 8px 0 4px;
 }
 
+/* ── Mobile nav ───────────────────────────────────────────────────────────── */
+
+.mobile-bar {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 52px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-card-border);
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  z-index: 60;
+}
+
+.mobile-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--color-text);
+}
+
+.hamburger {
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px;
+}
+
+.hamburger span {
+  display: block;
+  width: 22px;
+  height: 2px;
+  background: var(--color-text);
+  border-radius: 2px;
+  transition: transform 0.2s, opacity 0.2s;
+}
+
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 49;
+}
+
+@media (max-width: 700px) {
+  .mobile-bar { display: flex; }
+
+  .app-shell { flex-direction: column; }
+
+  .sidebar {
+    position: fixed;
+    top: 0; left: -220px;
+    width: 200px;
+    height: 100vh;
+    z-index: 50;
+    transition: left 0.22s ease;
+    padding-top: 0;
+  }
+
+  .sidebar.open { left: 0; }
+
+  .sidebar-overlay.active { display: block; }
+
+  .main-content {
+    margin-top: 52px;
+    height: calc(100vh - 52px);
+  }
+}
+
+/* ── Doctor dialog ─────────────────────────────────────────────────────────── */
+
+.doctor-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+
+.doctor-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 7px;
+  font-size: 13px;
+}
+
+.doctor-icon { font-weight: 700; min-width: 16px; text-align: center; }
+.doctor-icon.ok   { color: var(--color-success); }
+.doctor-icon.miss { color: var(--color-text-muted); }
+
+.doctor-name { min-width: 110px; color: var(--color-text-muted); }
+.doctor-val  { color: var(--color-text); font-size: 12px; }
+
 /* ── Agent Bench ──────────────────────────────────────────────────────────── */
 
 .ab-disabled-panel {

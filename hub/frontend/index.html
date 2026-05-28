@@ -9,6 +9,14 @@
 <body>
   <div id="app" class="app-shell">
 
+    <!-- Mobile top bar -->
+    <div class="mobile-bar" id="mobileBar">
+      <button class="hamburger" id="btnHamburger" aria-label="Toggle navigation">
+        <span></span><span></span><span></span>
+      </button>
+      <span class="mobile-title">ESPAI</span>
+    </div>
+
     <!-- Sidebar nav -->
     <nav class="sidebar" id="sidebar">
       <div class="sidebar-logo">
@@ -350,6 +358,9 @@
 
     </main>
   </div>
+
+  <!-- Sidebar tap-outside overlay (mobile only) -->
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
   <!-- Modal scaffold -->
   <div class="modal-overlay hidden" id="modalOverlay">
