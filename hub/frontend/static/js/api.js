@@ -124,10 +124,11 @@ const api = {
 
   // Terminal
   terminal: {
-    available:     ()      => apiFetch("/api/terminal/available"),
-    sessions:      ()      => apiFetch("/api/terminal/sessions"),
-    create:        (body)  => apiFetch("/api/terminal/sessions",         { method: "POST",   body: JSON.stringify(body) }),
-    close:         (id)    => apiFetch(`/api/terminal/sessions/${id}`,   { method: "DELETE" }),
+    available:      ()      => apiFetch("/api/terminal/available"),
+    sessions:       ()      => apiFetch("/api/terminal/sessions"),
+    create:         (body)  => apiFetch("/api/terminal/sessions",               { method: "POST",   body: JSON.stringify(body) }),
+    createAgent:    (body)  => apiFetch("/api/terminal/sessions/agent",         { method: "POST",   body: JSON.stringify(body) }),
+    close:          (id)    => apiFetch(`/api/terminal/sessions/${id}`,         { method: "DELETE" }),
   },
 
   // Meta

@@ -2138,39 +2138,20 @@ function _abWireEvents() {
     const adapter_id = document.getElementById("abAdapterSelect").value;
     const isCLI = adapter_id !== "manual";
 
-    // CLI adapters: open a terminal session instead of a silent background thread.
-    // The user gets full interactivity — they can watch Claude work, answer questions,
-    // and Ctrl+C if anything goes wrong.
+    // CLI adapters: open a real interactive terminal session.
+    // The backend writes the prompt to a temp file and pipes it to the CLI
+    // so there are no shell-quoting issues with special characters.
     if (isCLI && _termAvailable) {
       try {
-        const { prompt } = await api.agentBench.getPrompt(_abCurrentTask.id);
-        const title = _abCurrentTask.title;
+        // Ask the server to create the session — it handles prompt file + piping
+        const s = await api.terminal.createAgent({
+          task_id:    _abCurrentTask.id,
+          adapter_id: adapter_id,
+        });
+        showView("terminal");
+        await new Promise(r => setTimeout(r, 150));  // let view render
+        _termAttach(s.id, s.title);
 
-        // Write prompt to temp file via a short init sequence, then launch the adapter
-        const cliCmd = adapter_id === "claude-code-cli" ? "claude --dangerously-skip-permissions"
-                     : adapter_id === "codex-cli"       ? "codex exec"
-                     : adapter_id;
-
-        // Get project dir if available
-        let projectDir = null;
-        if (_abCurrentTask.project_id) {
-          const files = await api.projects.files(_abCurrentTask.project_id).catch(() => null);
-          if (files?.root) projectDir = files.root.replace(/\\/g, "/") + "/firmware";
-        }
-
-        const initCmds = [];
-        if (projectDir) initCmds.push(`cd "${projectDir}"`);
-        initCmds.push(`Write-Host "=== Agent Task: ${title.replace(/"/g, "'")} ===" -ForegroundColor Cyan`);
-        initCmds.push(`Write-Host "Starting ${adapter_id}..." -ForegroundColor Yellow`);
-        // Pipe prompt via here-string then start the CLI
-        initCmds.push(`$p = @'\n${prompt.replace(/'/g, "''")}\n'@; $p | ${cliCmd}`);
-
-        await termOpenAgentSession(title, null, null);
-        // Re-implement directly so we control the exact init commands
-        const s = await api.terminal.create({ title, init_cmds: initCmds });
-        _termAttach(s.id, title);
-
-        // Mark task as running in the thread (visual only — terminal is the executor)
         const statusEl = document.getElementById("abDetailStatus");
         if (statusEl) { statusEl.className = _abStatusClass("running"); statusEl.textContent = "Running in Terminal"; }
       } catch (err) { alert("Could not open terminal session: " + err.message); }
@@ -2555,25 +2536,6 @@ async function _termCloseActive() {
   }
 }
 
-// Public: open a terminal session for an agent task run
-// Called from Agent Bench when CLI adapter is selected
-async function termOpenAgentSession(taskTitle, projectDir, taskPromptFile) {
-  showView("terminal");
-  await new Promise(r => setTimeout(r, 200));  // let view render
-
-  const initCmds = [];
-  if (projectDir) initCmds.push(`cd "${projectDir}"`);
-  initCmds.push(`echo "=== Agent Task: ${taskTitle} ==="`);
-  if (taskPromptFile) {
-    initCmds.push(`echo "Prompt saved to: ${taskPromptFile}"`);
-    initCmds.push(`claude --dangerously-skip-permissions`);
-  }
-
-  return _termNewSession({
-    title:     taskTitle,
-    init_cmds: initCmds,
-  });
-}
 
 // Wire terminal view buttons once DOM is ready
 function _termWireEvents() {

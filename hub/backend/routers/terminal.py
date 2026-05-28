@@ -95,6 +95,9 @@ class _Session:
 
 _sessions: dict[str, _Session] = {}
 
+# Temp prompt files — cleaned up when session closes
+_prompt_files: dict[str, Path] = {}   # session_id → temp file path
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -176,7 +179,104 @@ def close_session(session_id: str):
         session.pty.close()
     except Exception:
         pass
+    # Clean up temp prompt file if one was created for this session
+    pf = _prompt_files.pop(session_id, None)
+    if pf and pf.exists():
+        try:
+            pf.unlink()
+        except Exception:
+            pass
     return {"status": "closed"}
+
+
+class AgentSessionCreate(BaseModel):
+    task_id:    str
+    adapter_id: str = "claude-code-cli"
+    cwd:        Optional[str] = None
+
+
+@router.post("/sessions/agent")
+def create_agent_session(data: AgentSessionCreate):
+    """
+    Create a terminal session pre-loaded to run an agent task.
+
+    Writes the task prompt to a temp file (avoids all shell-quoting issues),
+    then opens a shell with init commands that pipe the file to the CLI adapter.
+    The user sees a real interactive terminal and can watch/respond as the
+    agent works.
+    """
+    if not pty_available():
+        raise HTTPException(503, "No PTY backend available.")
+
+    # ── Fetch task and build prompt ──────────────────────────────────────────
+    from ..db import get_conn
+    from ..routers.agent_bench import _build_prompt
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (data.task_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"Task {data.task_id!r} not found")
+    task = dict(row)
+
+    project = None
+    if task.get("project_id"):
+        with get_conn() as conn:
+            p = conn.execute("SELECT * FROM projects WHERE id=?", (task["project_id"],)).fetchone()
+        project = dict(p) if p else None
+
+    prompt = _build_prompt(task, project)
+
+    # ── Write prompt to temp file ─────────────────────────────────────────────
+    import tempfile
+    tf = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", delete=False,
+        encoding="utf-8", prefix="espai_task_"
+    )
+    tf.write(prompt)
+    tf.flush()
+    tf.close()
+    prompt_path = Path(tf.name)
+
+    # ── Build adapter CLI command ─────────────────────────────────────────────
+    from ..routers.agent_bench import _extra_tool_dirs
+    augmented = os.pathsep.join([os.environ.get("PATH", "")] + _extra_tool_dirs())
+    cli_name  = "claude" if "claude" in data.adapter_id else "codex"
+    cli_bin   = shutil.which(cli_name, path=augmented) or cli_name
+
+    # ── Build shell-safe init commands ───────────────────────────────────────
+    # All path quoting stays inside this function — no prompt text in shell args.
+    title = task.get("title", "Agent Task")
+    cwd   = data.cwd or str(ROOT)
+
+    if sys.platform == "win32":
+        ppath = str(prompt_path).replace("\\", "\\\\")
+        cbin  = cli_bin.replace("\\", "\\\\")
+        init_cmds = [
+            f'Write-Host "=== {title.replace(chr(34), chr(39))} ===" -ForegroundColor Cyan',
+            f'Write-Host "Adapter: {data.adapter_id}  |  Prompt: {ppath}" -ForegroundColor DarkGray',
+            f'Write-Host "Starting..." -ForegroundColor Yellow',
+            f'Get-Content -Path \'{str(prompt_path)}\' -Raw | & \'{cbin}\' --dangerously-skip-permissions',
+        ]
+    else:
+        init_cmds = [
+            f'echo "=== {title} ==="',
+            f'echo "Prompt file: {prompt_path}"',
+            f'"{cli_bin}" --dangerously-skip-permissions < "{prompt_path}"',
+        ]
+
+    # ── Spawn PTY ────────────────────────────────────────────────────────────
+    try:
+        pty = _spawn_pty(_default_shell(), cwd=cwd)
+    except Exception as exc:
+        prompt_path.unlink(missing_ok=True)
+        raise HTTPException(500, f"PTY spawn failed: {exc}")
+
+    sid     = str(uuid.uuid4())
+    session = _Session(sid, pty, _default_shell(), title)
+    session._init_cmds = init_cmds
+    _sessions[sid]      = session
+    _prompt_files[sid]  = prompt_path
+
+    return {"id": sid, "title": title, "prompt_path": str(prompt_path)}
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
