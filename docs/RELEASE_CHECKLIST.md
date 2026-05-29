@@ -198,6 +198,7 @@ python espai.py serve
 Document in release notes:
 
 - ESP32 OTA binary receive is a 501 placeholder — flash via USB for now
+- Firmware CI builds not yet wired — pre-built `.bin` artifacts for common boards (esp32, esp32s3, esp32c3) should be added to the GitHub Release as a `build-firmware` matrix job; board compatibility metadata (`board:` field in catalog JSON) needs to match OTA router's existing compatibility check; start by auditing `firmware/seed/platformio.ini` environments
 - Docker sidecar worker runner not implemented — subprocesses only
 - Caddy/mDNS project routing not wired — `Open App` falls back to device IP
 - Git-branch rollback for OTA not implemented
