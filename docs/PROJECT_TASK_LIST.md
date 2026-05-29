@@ -221,6 +221,7 @@
 ### Linux experience
 - [x] **Linux: AppImage** — CI assembles `AppDir` from PyInstaller one-dir output; generates teal-diamond icon via PIL; adds `AppRun` + `.desktop`; builds `ESPAI-{version}-x86_64.AppImage` using appimagetool (FUSE-free extract method for CI compatibility); attached to GitHub Release
 - [ ] **Linux: `.deb` package** — installs binary to `/usr/local/bin/espai`, data skeleton to `/etc/espai/` (read-only defaults) and `~/.local/share/espai/` (user data); systemd service unit included
+- [ ] **Firmware CI builds** — add `build-firmware` matrix job to `release.yml`; PlatformIO matrix over board envs (`esp32`, `esp32s3`, `esp32c3` to start); artifacts named `ESPAI-firmware-seed-{board}-{version}.bin`; attached to GitHub Release; audit `firmware/seed/platformio.ini` envs first; wire `board:` field in catalog metadata JSON to match OTA router's existing compatibility check
 
 ### First-run experience
 - [x] **First-run scaffold** — `_first_run_scaffold()` in espai.py; when `sys.frozen` and `data/.espai-initialized` absent: copies content packs (recipes/workers/cards/design/agents/policies/schemas) from PyInstaller bundle (_MEIPASS) to exe dir; writes default .env; creates sentinel file; prints welcome message with paths
