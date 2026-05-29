@@ -48,7 +48,9 @@ const api = {
     setTheme:    (id, b)  => apiFetch(`/api/projects/${id}/theme`,        { method: "PUT", body: JSON.stringify(b) }),
     importBuild: (id, ch) => apiFetch(`/api/projects/${id}/import-build${ch ? "?channel=" + ch : ""}`, { method: "POST" }),
     appUrl:           (id)     => apiFetch(`/api/projects/${id}/app-url`),
-    regenerateContext:(id)     => apiFetch(`/api/projects/${id}/regenerate-context`, { method: "POST" }),
+    regenerateContext: (id)      => apiFetch(`/api/projects/${id}/regenerate-context`, { method: "POST" }),
+    approvalMode:      (id)      => apiFetch(`/api/projects/${id}/approval-mode`),
+    setApprovalMode:   (id, mode)=> apiFetch(`/api/projects/${id}/approval-mode?mode=${encodeURIComponent(mode)}`, { method: "PUT" }),
     // Project data store
     dataLatest:  (id)             => apiFetch(`/api/projects/${id}/data/latest`),
     dataHistory: (id, params)     => {

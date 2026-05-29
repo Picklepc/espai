@@ -183,6 +183,14 @@
             </div>
           </header>
           <p id="projDetailDesc" style="color:var(--color-text-muted);margin-bottom:12px;font-size:14px"></p>
+          <div class="proj-mode-bar" id="projModeBar" data-tip="Controls how much friction the Agent Bench adds before applying changes — lower friction for early prototypes, higher for stable projects">
+            <span class="proj-mode-label">Agent Mode</span>
+            <div class="proj-mode-seg" id="projModeSeg">
+              <button class="proj-mode-btn" data-mode="prototype" data-tip="Prototype — minimal friction; one-click approve; skip diff review; ship fast">🚀 Prototype</button>
+              <button class="proj-mode-btn" data-mode="dev"       data-tip="Dev — default; review required; full diff and notes available before approving">⚙ Dev</button>
+              <button class="proj-mode-btn" data-mode="stable"    data-tip="Stable — strict review; must acknowledge diff before approving; safest for production projects">🔒 Stable</button>
+            </div>
+          </div>
           <div class="proj-workflow-hint">
             <strong>VS Code:</strong> Click the VS Code button above to open the firmware folder directly — the firmware works standalone without the hub.
             <span class="hint-sep">|</span>
@@ -425,13 +433,23 @@
 
             <!-- Right: review panel -->
             <div id="abReviewPanel" class="ab-review-panel hidden">
-              <h3 class="section-heading">Session Complete</h3>
-              <p style="font-size:12px;color:var(--color-text-muted);margin:0 0 12px">
+              <!-- Mode banner — swapped by JS based on project approval mode -->
+              <div id="abModeBanner"></div>
+              <h3 class="section-heading" id="abReviewHeading">Session Complete</h3>
+              <p id="abReviewHint" style="font-size:12px;color:var(--color-text-muted);margin:0 0 12px">
                 Claude finished the terminal session. View Diff to see what changed.
                 If the changes look good and Claude committed, mark it Done.
                 If you need more work, add notes and re-run — Claude will pick up where it left off.
               </p>
-              <div class="form-field">
+              <!-- Stable mode: diff acknowledgement gate -->
+              <div id="abStableGate" class="hidden" style="margin-bottom:12px">
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"
+                       data-tip="Check this after viewing the diff — required before approving in Stable mode">
+                  <input type="checkbox" id="abDiffAcknowledge">
+                  I have reviewed the diff and the changes look correct
+                </label>
+              </div>
+              <div class="form-field" id="abNotesField">
                 <label data-tip="Notes for the next session — Claude will see these and continue from here">Notes for next session (optional)</label>
                 <textarea id="abReviewNotes" rows="3" placeholder="e.g. Looks good but the upload step failed — please also add OTA push logic…"></textarea>
               </div>

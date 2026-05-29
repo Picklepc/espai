@@ -705,6 +705,84 @@ code {
   max-width: 680px;
 }
 
+/* ── Project approval mode selector ─────────────────────────────────────── */
+
+.proj-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  margin-bottom: 14px;
+  background: var(--color-card);
+  border: 1px solid var(--color-card-border);
+  border-radius: var(--radius-card);
+  transition: border-color .2s;
+}
+.proj-mode-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+.proj-mode-seg {
+  display: flex;
+  gap: 4px;
+}
+.proj-mode-btn {
+  padding: 4px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--color-card-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.proj-mode-btn:hover { background: var(--color-hover); color: var(--color-text); }
+.proj-mode-btn.active[data-mode="prototype"] {
+  background: rgba(26,175,100,.15); color: #1aaf64;
+  border-color: rgba(26,175,100,.4);
+}
+.proj-mode-btn.active[data-mode="dev"] {
+  background: rgba(var(--color-accent-rgb, 100,160,255),.15); color: var(--color-accent);
+  border-color: rgba(var(--color-accent-rgb, 100,160,255),.4);
+}
+.proj-mode-btn.active[data-mode="stable"] {
+  background: rgba(230,140,60,.15); color: #e68c3c;
+  border-color: rgba(230,140,60,.4);
+}
+
+/* ── Agent Bench mode banners ────────────────────────────────────────────── */
+
+.ab-mode-banner {
+  padding: 7px 12px;
+  border-radius: var(--radius-card);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.ab-mode-prototype {
+  background: rgba(26,175,100,.12);
+  color: #1aaf64;
+  border: 1px solid rgba(26,175,100,.3);
+}
+.ab-mode-stable {
+  background: rgba(230,140,60,.12);
+  color: #e68c3c;
+  border: 1px solid rgba(230,140,60,.3);
+}
+.ab-btn-prototype {
+  background: rgba(26,175,100,.2) !important;
+  color: #1aaf64 !important;
+  border-color: rgba(26,175,100,.4) !important;
+  font-weight: 700;
+}
+.ab-btn-prototype:hover {
+  background: rgba(26,175,100,.35) !important;
+}
+
 .proj-workflow-hint {
   font-size: 12px;
   color: var(--color-text-muted);

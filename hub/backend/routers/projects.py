@@ -661,6 +661,36 @@ def delete_project(project_id: str):
     return {"status": "deleted"}
 
 
+_APPROVAL_MODES = ("prototype", "dev", "stable")
+
+
+@router.get("/{project_id}/approval-mode")
+def get_approval_mode(project_id: str):
+    """
+    Return the agent approval mode for this project.
+    prototype — changes ship fast; review panel is minimal; no notes required
+    dev       — default; review required; full diff + notes available
+    stable    — review required; diff must be acknowledged before approve
+    """
+    meta = _read_project_meta(project_id)
+    return {"mode": meta.get("agent_approval_mode", "dev")}
+
+
+@router.put("/{project_id}/approval-mode")
+def set_approval_mode(project_id: str, mode: str):
+    """Set the agent approval mode for this project."""
+    if mode not in _APPROVAL_MODES:
+        raise HTTPException(400, f"mode must be one of: {', '.join(_APPROVAL_MODES)}")
+    with get_conn() as conn:
+        exists = conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not exists:
+        raise HTTPException(404, f"Project {project_id!r} not found")
+    meta = _read_project_meta(project_id)
+    meta["agent_approval_mode"] = mode
+    _write_project_meta(project_id, meta)
+    return {"mode": mode}
+
+
 @router.post("/{project_id}/regenerate-context")
 def regenerate_project_context(project_id: str):
     """Regenerate the per-project ESPAI.md context file from current project metadata."""

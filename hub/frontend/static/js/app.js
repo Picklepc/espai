@@ -848,6 +848,7 @@ async function openProject(p) {
   const linkedIds = Array.isArray(p.devices) ? p.devices : [];
   await renderProjectDevices(p, linkedIds);
   renderProjectFirmware(p, linkedIds);
+  _loadProjectApprovalMode(p.id);
 }
 
 async function renderProjectDevices(project, linkedIds) {
@@ -975,6 +976,45 @@ document.getElementById("btnProjBack").onclick = () => {
 document.getElementById("btnRefreshFiles").onclick = () => {
   if (_currentProject) refreshProjectFiles(_currentProject.id);
 };
+
+// ── Project approval mode selector ─────────────────────────────────────────
+
+let _projApprovalMode = "dev";
+
+async function _loadProjectApprovalMode(projectId) {
+  try {
+    const { mode } = await api.projects.approvalMode(projectId);
+    _projApprovalMode = mode || "dev";
+  } catch (_) {
+    _projApprovalMode = "dev";
+  }
+  _renderApprovalModeSeg(_projApprovalMode);
+}
+
+function _renderApprovalModeSeg(mode) {
+  document.querySelectorAll(".proj-mode-btn").forEach(btn => {
+    const isActive = btn.dataset.mode === mode;
+    btn.classList.toggle("active", isActive);
+  });
+  const bar = document.getElementById("projModeBar");
+  if (bar) {
+    bar.dataset.mode = mode;
+    bar.style.borderColor = mode === "prototype" ? "rgba(26,175,100,.4)"
+                          : mode === "stable"    ? "rgba(230,140,60,.4)"
+                          : "rgba(255,255,255,.08)";
+  }
+}
+
+document.getElementById("projModeSeg").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".proj-mode-btn");
+  if (!btn || !_currentProject) return;
+  const mode = btn.dataset.mode;
+  try {
+    await api.projects.setApprovalMode(_currentProject.id, mode);
+    _projApprovalMode = mode;
+    _renderApprovalModeSeg(mode);
+  } catch (err) { alert("Error: " + err.message); }
+});
 
 document.getElementById("btnProjRegenCtx").onclick = async () => {
   if (!_currentProject) return;
@@ -1917,6 +1957,7 @@ document.getElementById("btnNewRule").onclick = () => {
 let _abCurrentTask = null;
 let _abStatusFilter = "";
 let _abPollTimer = null;
+let _abTaskProjectMode = "dev"; // approval mode of the current task's project
 
 function _abStatusClass(status) {
   return "ab-status-badge ab-status-" + (status || "draft");
@@ -2047,8 +2088,16 @@ async function _abOpenTask(taskId) {
 
   await _abLoadThread(taskId);
   await _abSetupAdapterSelect();
-  _abUpdateRunControls(task);
 
+  // Fetch project approval mode for this task
+  const projId = task.context_id || task.project_id;
+  _abTaskProjectMode = "dev";
+  if (projId) {
+    try { const { mode } = await api.projects.approvalMode(projId); _abTaskProjectMode = mode || "dev"; }
+    catch (_) {}
+  }
+
+  _abUpdateRunControls(task);
   _startAbPoller(taskId);
 }
 
@@ -2150,9 +2199,7 @@ function _abUpdateRunControls(task) {
 
   const canRun      = ["draft", "needs_changes"].includes(task.status);
   const isStuck     = task.status === "running";
-  // Manual adapter flow: latest run awaiting_input means waiting for paste
   const needsPaste  = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
-  // Show review panel for awaiting_review regardless of how it got there
   const needsReview = task.status === "awaiting_review" && !needsPaste;
 
   runPanel.style.display = canRun ? "" : "none";
@@ -2160,9 +2207,50 @@ function _abUpdateRunControls(task) {
   reviewPanel.classList.toggle("hidden", !needsReview);
   if (resetBtn) resetBtn.style.display = isStuck ? "" : "none";
 
+  if (needsReview) _abApplyReviewMode(_abTaskProjectMode);
+
   if (adapterDesc) {
     const sel = document.getElementById("abAdapterSelect");
     adapterDesc.textContent = sel ? (_ADAPTER_DESCRIPTIONS[sel.value] || "") : "";
+  }
+}
+
+function _abApplyReviewMode(mode) {
+  const banner      = document.getElementById("abModeBanner");
+  const heading     = document.getElementById("abReviewHeading");
+  const hint        = document.getElementById("abReviewHint");
+  const stableGate  = document.getElementById("abStableGate");
+  const notesField  = document.getElementById("abNotesField");
+  const approveBtn  = document.getElementById("btnAbApprove");
+  const checkbox    = document.getElementById("abDiffAcknowledge");
+
+  if (mode === "prototype") {
+    banner.innerHTML = `<div class="ab-mode-banner ab-mode-prototype" data-tip="This project is in Prototype mode — minimal friction; changes ship fast">🚀 Prototype mode — fast path active</div>`;
+    if (heading) heading.textContent = "Session Complete — Ship It?";
+    if (hint) hint.textContent = "Prototype mode: no diff review required. Click Ship It to apply changes and continue.";
+    if (stableGate) stableGate.classList.add("hidden");
+    if (notesField) notesField.classList.add("hidden");
+    if (approveBtn) { approveBtn.textContent = "✓ Ship It"; approveBtn.classList.add("ab-btn-prototype"); approveBtn.disabled = false; }
+
+  } else if (mode === "stable") {
+    banner.innerHTML = `<div class="ab-mode-banner ab-mode-stable" data-tip="This project is in Stable mode — review the diff before approving">🔒 Stable mode — review required</div>`;
+    if (heading) heading.textContent = "Session Complete — Review Required";
+    if (hint) hint.textContent = "Stable mode: view the diff before approving. Check the box below to confirm you've reviewed the changes.";
+    if (stableGate) stableGate.classList.remove("hidden");
+    if (notesField) notesField.classList.remove("hidden");
+    if (approveBtn) { approveBtn.textContent = "✓ Mark Done"; approveBtn.disabled = !(checkbox?.checked); }
+    if (checkbox) {
+      checkbox.onchange = () => { if (approveBtn) approveBtn.disabled = !checkbox.checked; };
+    }
+
+  } else {
+    // dev (default)
+    banner.innerHTML = "";
+    if (heading) heading.textContent = "Session Complete";
+    if (hint) hint.textContent = "Claude finished the terminal session. View Diff to see what changed. If the changes look good and Claude committed, mark it Done. If you need more work, add notes and re-run.";
+    if (stableGate) stableGate.classList.add("hidden");
+    if (notesField) notesField.classList.remove("hidden");
+    if (approveBtn) { approveBtn.textContent = "✓ Mark Done"; approveBtn.classList.remove("ab-btn-prototype"); approveBtn.disabled = false; }
   }
 }
 
