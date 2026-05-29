@@ -135,8 +135,8 @@
 ### Pending / follow-on
 - [ ] Thread grouping in Agent Bench list — collapse parent + children to one expandable row with run count
 - [ ] Cross-domain path inheritance — when a project task needs to create/modify a shared worker, prompt user to grant `workers/` access inline
-- [ ] Worker quarantine auto-lift — after agent task approved, prompt reviewer to lift quarantine on newly created workers
-- [ ] Agent Bench filter by context_type in sidebar
+- [x] Worker quarantine auto-lift — after agent task approved, `_checkQuarantineLift` checks allowed_paths for worker folders, finds quarantined workers, shows modal with "Lift Quarantine" (calls `PATCH /api/workers/{name}/quarantine?quarantine=false`) or "Keep Quarantined"
+- [x] Agent Bench filter by context_type in sidebar — second filter row (All contexts / Project / Worker / Standalone); client-side filter applied after status-filter fetch
 
 ## Milestone 14 — Registry Content Packs
 
@@ -174,10 +174,10 @@
 
 ## Milestone 16 — ESPAI Context Files
 
-- [ ] Auto-generate `ESPAI.md` in every new and imported project — explains the platform, hub services, agent rules, firmware scaffold structure, capabilities and limitations
-- [ ] Include in agent prompt automatically when present (injected before task description)
-- [ ] Root-level `ESPAI.md` — platform overview for contributors and new developers
-- [ ] Agent rule file (`agents/rules.md`) — explicit do/do-not list included in every agent prompt
+- [x] Auto-generate `ESPAI.md` in every new project — `_generate_espai_md()` in projects.py writes project-specific context (ID, hub data push/pull examples, firmware quickstart, structure, constraints); also `POST /api/projects/{id}/regenerate-context` + "↺ Context" button in project detail
+- [x] Include in agent prompt automatically — `_build_prompt()` in agent_bench.py injects `projects/{id}/ESPAI.md` when present, before task description
+- [x] Root-level `ESPAI.md` — platform overview for contributors and new developers
+- [x] Agent rule file (`agents/rules.md`) — explicit do/do-not list injected into every agent prompt by `_build_prompt()`
 
 ## Milestone 17 — Local Project Access (Caddy / mDNS routing)
 

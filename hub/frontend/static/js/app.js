@@ -976,6 +976,21 @@ document.getElementById("btnRefreshFiles").onclick = () => {
   if (_currentProject) refreshProjectFiles(_currentProject.id);
 };
 
+document.getElementById("btnProjRegenCtx").onclick = async () => {
+  if (!_currentProject) return;
+  try {
+    await api.projects.regenerateContext(_currentProject.id);
+    // Refresh file list so ESPAI.md shows up
+    refreshProjectFiles(_currentProject.id);
+    openModal("Context Regenerated", `
+      <p>The <code>ESPAI.md</code> file for <strong>${_currentProject.name}</strong> has been updated.</p>
+      <p style="font-size:12px;color:var(--color-text-muted);margin-top:8px">
+        Agents will receive this file before every task prompt for this project.
+      </p>
+    `, [{ label: "Close", cls: "btn btn-primary", action: closeModal }]);
+  } catch (err) { alert("Error: " + err.message); }
+};
+
 document.getElementById("btnProjTheme").onclick = async () => {
   if (!_currentProject) return;
   const current = await api.projects.theme(_currentProject.id).catch(() => ({ project_overrides: {} }));
@@ -2567,8 +2582,41 @@ function _abWireEvents() {
       if (decision === "approved" && ["firmware-feature", "port-to-hub", "bug-fix"].includes(task.template)) {
         _showNextStepsFirmware(task);
       }
+      // After any approval, check if agent created/modified quarantined workers
+      if (decision === "approved") {
+        _checkQuarantineLift(task);
+      }
     } catch (err) { alert("Error: " + err.message); }
   };
+
+  async function _checkQuarantineLift(task) {
+    const paths = JSON.parse(task.allowed_paths || "[]");
+    const workerNames = paths
+      .map(p => p.match(/^workers\/([^/]+)\/?$/)?.[1])
+      .filter(Boolean);
+    if (!workerNames.length) return;
+    const workers = await api.workers.list().catch(() => []);
+    const quarantined = workers.filter(w => workerNames.includes(w.name) && w.quarantine);
+    if (!quarantined.length) return;
+    openModal("Quarantined Workers Detected", `
+      <p>The following worker(s) created or modified by this task are still <strong>quarantined</strong>:</p>
+      <ul style="margin:10px 0 12px 18px">
+        ${quarantined.map(w => `<li><strong>${w.name}</strong> — <code>workers/${w.name}/worker.yaml</code></li>`).join("")}
+      </ul>
+      <p style="font-size:13px">Quarantined workers can be tested but cannot run production jobs. Review the generated code, then lift quarantine to enable them.</p>
+      <p style="font-size:12px;color:var(--color-text-muted);margin-top:8px">Lifting quarantine sets <code>quarantine: false, trusted: true</code> in the worker YAML.</p>
+    `, [
+      { label: "Lift Quarantine", cls: "btn btn-primary", action: async () => {
+        try {
+          for (const w of quarantined) {
+            await api.workers.setQuarantine(w.name, false);
+          }
+          closeModal();
+        } catch (err) { alert("Error: " + err.message); }
+      }},
+      { label: "Keep Quarantined", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  }
 
   function _showNextStepsFirmware(task) {
     openModal("Changes Approved — Next Steps", `
@@ -2596,7 +2644,7 @@ function _abWireEvents() {
   document.getElementById("btnAbChanges").onclick  = () => _abDoReview("needs_changes");
   document.getElementById("btnAbReject").onclick   = () => _abDoReview("rejected");
 
-  // Filter buttons
+  // Status filter buttons
   document.getElementById("abFilterRow").addEventListener("click", async (e) => {
     const btn = e.target.closest(".ab-filter");
     if (!btn) return;
@@ -2604,6 +2652,64 @@ function _abWireEvents() {
     document.querySelectorAll(".ab-filter").forEach(b => b.classList.toggle("active", b === btn));
     await _abLoadTaskList();
   });
+
+  // Context-type filter buttons
+  let _abCtxFilter = "";
+  document.getElementById("abContextFilterRow").addEventListener("click", async (e) => {
+    const btn = e.target.closest(".ab-ctx-filter");
+    if (!btn) return;
+    _abCtxFilter = btn.dataset.ctx;
+    document.querySelectorAll(".ab-ctx-filter").forEach(b => b.classList.toggle("active", b === btn));
+    await _abLoadTaskList();
+  });
+
+  // Patch _abLoadTaskList to respect the context filter
+  const _origLoadTaskList = _abLoadTaskList;
+  _abLoadTaskList = async function () {
+    const listEl = document.getElementById("abTaskList");
+    listEl.innerHTML = '<div class="empty-state">Loading…</div>';
+    const params = _abStatusFilter ? { status: _abStatusFilter } : {};
+    let tasks = await api.agentBench.listTasks(params).catch(() => []);
+
+    // Apply context filter client-side (no query param for context_type yet)
+    if (_abCtxFilter === "project")      tasks = tasks.filter(t => t.context_type === "project");
+    else if (_abCtxFilter === "worker")  tasks = tasks.filter(t => t.context_type === "worker");
+    else if (_abCtxFilter === "none")    tasks = tasks.filter(t => !t.context_type);
+
+    if (!tasks.length) {
+      listEl.innerHTML = '<div class="empty-state">No tasks match this filter.</div>';
+      return;
+    }
+    listEl.innerHTML = "";
+    for (const t of tasks) {
+      const card = el("div", "ab-task-card");
+      const ctxBadge = t.context_type
+        ? `<span class="ab-context-badge" data-tip="Scoped to ${t.context_type}: ${t.context_id || ''}">${t.context_type === "project" ? "🗂" : "⚙"} ${(t.context_id || "").slice(0,10)}</span>`
+        : (t.project_id ? `<span class="ab-context-badge" data-tip="Linked to project ${t.project_id.slice(0,8)}">🗂</span>` : "");
+      const threadBadge = t.parent_task_id
+        ? `<span class="ab-thread-badge" data-tip="Follow-up in a task thread">↩ thread</span>` : "";
+      const delBtn = el("button", "btn btn-danger btn-sm", "✕");
+      delBtn.dataset.tip = "Delete this task permanently";
+      delBtn.style.cssText = "flex-shrink:0;margin-left:8px;padding:2px 8px";
+      delBtn.onclick = async (e) => {
+        e.stopPropagation();
+        if (!confirm(`Delete task "${t.title}"? This cannot be undone.`)) return;
+        await api.agentBench.deleteTask(t.id).catch(err => alert(err.message));
+        _abLoadTaskList();
+      };
+      card.innerHTML = `
+        <div class="ab-task-info">
+          <div class="ab-task-title">${t.title}</div>
+          <div class="ab-task-meta">${_AB_TEMPLATE_LABELS[t.template] || t.template} · ${t.lane} lane · ${timeAgo(t.updated)}${ctxBadge}${threadBadge}</div>
+        </div>
+        <span class="${_abStatusClass(t.status)}" data-tip="Task status: ${t.status}">${_abStatusLabel(t.status)}</span>
+      `;
+      card.style.cursor = "pointer";
+      card.onclick = () => _abOpenTask(t.id);
+      card.appendChild(delBtn);
+      listEl.appendChild(card);
+    }
+  };
 }
 
 // ── Terminal view ──────────────────────────────────────────────────────────

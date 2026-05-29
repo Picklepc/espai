@@ -278,9 +278,37 @@ def _compute_diffs(before: dict, after: dict) -> list[dict]:
 
 
 def _build_prompt(task: dict, project: dict | None) -> str:
+    from ..config import PROJECTS_DIR as _PROJECTS_DIR
     adapter_dir = AGENTS_DIR / "adapters"
     system_path = adapter_dir / "claude-code" / "prompts" / "system.md"
     system = system_path.read_text(encoding="utf-8") if system_path.exists() else ""
+
+    # Inject agents/rules.md — explicit do/do-not list
+    rules_md = ""
+    rules_path = ROOT / "agents" / "rules.md"
+    if rules_path.exists():
+        try:
+            rules_md = "\n---\n\n" + rules_path.read_text(encoding="utf-8") + "\n"
+        except Exception:
+            pass
+
+    # Inject per-project ESPAI.md when present — project-specific context
+    project_context_md = ""
+    proj_id = (
+        task.get("context_id") if task.get("context_type") == "project"
+        else (project.get("id") if project else None)
+    )
+    if proj_id:
+        espai_path = _PROJECTS_DIR / proj_id / "ESPAI.md"
+        if espai_path.exists():
+            try:
+                project_context_md = (
+                    "\n---\n\n## Project Context (from projects/"
+                    + proj_id + "/ESPAI.md)\n\n"
+                    + espai_path.read_text(encoding="utf-8") + "\n"
+                )
+            except Exception:
+                pass
 
     allowed = json.loads(task.get("allowed_paths") or "[]")
     criteria = json.loads(task.get("acceptance_criteria") or "[]")
@@ -298,8 +326,7 @@ def _build_prompt(task: dict, project: dict | None) -> str:
     if task.get("parent_task_id"):
         thread_note = f"\n**Note:** This is a follow-up task (parent: `{task['parent_task_id']}`). Review the previous task's diff and address any remaining issues.\n"
 
-    prompt = f"""{system}
-
+    prompt = f"""{system}{rules_md}{project_context_md}
 ---
 
 ## Task: {task['title']}

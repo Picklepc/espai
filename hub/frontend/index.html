@@ -178,6 +178,7 @@
               <button class="btn btn-secondary btn-sm" id="btnProjUploadFirmware" data-tip="Upload a .bin file and tag it to this project — then flash it to a linked device in one click from the Firmware section below">⬆ Upload Firmware</button>
               <button class="btn btn-secondary btn-sm" id="btnProjFlashUSB" data-tip="Flash firmware directly via USB cable (pio run -t upload) — use when device is not yet on WiFi">&#128299; Flash USB</button>
               <button class="btn btn-secondary btn-sm" id="btnProjTheme"    data-tip="Override CSS design tokens while this project is active">🎨 Theme</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjRegenCtx" data-tip="Regenerate the project ESPAI.md context file — agents receive this before every task prompt">↺ Context</button>
               <button class="btn btn-danger btn-sm"    id="btnProjDelete"   data-tip="Permanently delete this project (devices and files are not removed)">Delete Project</button>
             </div>
           </header>
@@ -351,6 +352,12 @@
             <button class="ab-filter" data-status="awaiting_review"       data-tip="Agent completed — waiting for your approve/reject decision">Review</button>
             <button class="ab-filter" data-status="approved"              data-tip="Tasks you approved — changes are ready to merge">Approved</button>
             <button class="ab-filter" data-status="rejected"              data-tip="Tasks closed without applying changes">Rejected</button>
+          </div>
+          <div class="ab-filter-row" id="abContextFilterRow" style="margin-top:4px">
+            <button class="ab-ctx-filter active" data-ctx=""         data-tip="Show tasks from all contexts">All contexts</button>
+            <button class="ab-ctx-filter" data-ctx="project"         data-tip="Tasks scoped to a specific project">Project</button>
+            <button class="ab-ctx-filter" data-ctx="worker"          data-tip="Tasks scoped to a specific worker">Worker</button>
+            <button class="ab-ctx-filter" data-ctx="none"            data-tip="Tasks with no context scope">Standalone</button>
           </div>
           <div id="abTaskList" class="ab-task-list">
             <div class="empty-state">No agent tasks yet — click <strong>+ New Task</strong> to describe what you want to build.</div>

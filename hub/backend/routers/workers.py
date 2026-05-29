@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,47 @@ def get_worker(worker_name: str):
         if w.get("name") == worker_name or w.get("_folder") == worker_name:
             return w
     raise HTTPException(404, f"Worker {worker_name!r} not found")
+
+
+@router.patch("/{worker_name}/quarantine")
+def set_worker_quarantine(worker_name: str, quarantine: bool = True):
+    """
+    Set the quarantine flag in a worker's YAML manifest.
+    Pass quarantine=false to lift quarantine after reviewing agent-generated code.
+    """
+    if not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", worker_name):
+        raise HTTPException(400, "Invalid worker name")
+    all_workers = scan_folder(WORKERS_DIR, "worker")
+    worker = next(
+        (w for w in all_workers if w.get("name") == worker_name or w.get("_folder") == worker_name),
+        None,
+    )
+    if not worker:
+        raise HTTPException(404, f"Worker {worker_name!r} not found")
+
+    folder = worker.get("_folder", worker_name)
+    yaml_path = WORKERS_DIR / folder / "worker.yaml"
+    if not yaml_path.exists():
+        raise HTTPException(404, f"worker.yaml not found for {worker_name!r}")
+
+    import yaml as _yaml
+    try:
+        with open(yaml_path, encoding="utf-8") as fh:
+            data = _yaml.safe_load(fh) or {}
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to read worker.yaml: {exc}")
+
+    data["quarantine"] = quarantine
+    if not quarantine:
+        data["trusted"] = True
+
+    try:
+        with open(yaml_path, "w", encoding="utf-8") as fh:
+            _yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to write worker.yaml: {exc}")
+
+    return {"worker": worker_name, "quarantine": quarantine, "trusted": not quarantine}
 
 
 @router.get("/{worker_name}/compat")

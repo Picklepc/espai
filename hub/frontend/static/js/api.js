@@ -47,7 +47,8 @@ const api = {
     theme:       (id)     => apiFetch(`/api/projects/${id}/theme`),
     setTheme:    (id, b)  => apiFetch(`/api/projects/${id}/theme`,        { method: "PUT", body: JSON.stringify(b) }),
     importBuild: (id, ch) => apiFetch(`/api/projects/${id}/import-build${ch ? "?channel=" + ch : ""}`, { method: "POST" }),
-    appUrl:      (id)     => apiFetch(`/api/projects/${id}/app-url`),
+    appUrl:           (id)     => apiFetch(`/api/projects/${id}/app-url`),
+    regenerateContext:(id)     => apiFetch(`/api/projects/${id}/regenerate-context`, { method: "POST" }),
     // Project data store
     dataLatest:  (id)             => apiFetch(`/api/projects/${id}/data/latest`),
     dataHistory: (id, params)     => {
@@ -60,10 +61,11 @@ const api = {
 
   // Registry
   workers:  {
-    list:   ()        => apiFetch("/api/workers/"),
-    get:    (n)       => apiFetch(`/api/workers/${n}`),
-    test:   (n, body) => apiFetch(`/api/workers/${encodeURIComponent(n)}/test`, { method: "POST", body: JSON.stringify(body) }),
-    compat: (n)       => apiFetch(`/api/workers/${encodeURIComponent(n)}/compat`),
+    list:          ()         => apiFetch("/api/workers/"),
+    get:           (n)        => apiFetch(`/api/workers/${n}`),
+    test:          (n, body)  => apiFetch(`/api/workers/${encodeURIComponent(n)}/test`, { method: "POST", body: JSON.stringify(body) }),
+    compat:        (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/compat`),
+    setQuarantine: (n, state) => apiFetch(`/api/workers/${encodeURIComponent(n)}/quarantine?quarantine=${state}`, { method: "PATCH" }),
   },
   recipes: {
     list:     ()  => apiFetch("/api/recipes/"),
