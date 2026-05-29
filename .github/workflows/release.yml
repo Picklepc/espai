@@ -1,0 +1,216 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  # ── Windows build + Inno Setup installer ─────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-bundle.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller espai.spec --noconfirm
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        # Strip leading "v" from tag (v0.1.0 → 0.1.0) and pass to Inno Setup.
+        run: |
+          $ver = '${{ github.ref_name }}'.TrimStart('v')
+          New-Item -ItemType Directory -Force installer-output | Out-Null
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+              "/DMyAppVersion=$ver" `
+              installer\espai.iss
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESPAI-windows-installer
+          path: installer-output\ESPAI-Setup-*.exe
+          retention-days: 5
+
+  # ── Linux build + AppImage ────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libzbar0 python3-gi gir1.2-appindicator3-0.1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-bundle.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller espai.spec --noconfirm
+
+      - name: Generate app icon
+        run: |
+          python3 - << 'PYEOF'
+          from PIL import Image, ImageDraw
+          import math, os
+          size = 256
+          img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+          draw = ImageDraw.Draw(img)
+          cx, cy = size // 2, size // 2
+          r = size * 0.36
+          pts = [
+              (cx,             cy - r),
+              (cx + r,         cy),
+              (cx + r * 0.50,  cy + r * 0.70),
+              (cx - r * 0.50,  cy + r * 0.70),
+              (cx - r,         cy),
+          ]
+          draw.polygon(pts, fill=(26, 175, 196, 230))
+          s = 0.82
+          inner = [(cx+(x-cx)*s, cy+(y-cy)*s) for x,y in pts]
+          draw.polygon(inner, fill=(8, 12, 16, 240))
+          star_r, star_w = size*0.15, size*0.04
+          sp = []
+          for i in range(8):
+              a = math.radians(i*45-90)
+              rad = star_r if i%2==0 else star_w
+              sp.append((cx+rad*math.cos(a), cy+rad*math.sin(a)))
+          draw.polygon(sp, fill=(240, 168, 32, 255))
+          os.makedirs("AppDir", exist_ok=True)
+          img.save("AppDir/espai.png")
+          PYEOF
+
+      - name: Assemble AppDir
+        run: |
+          # Lay the PyInstaller one-dir output into AppDir.
+          cp -r dist/espai/. AppDir/
+
+          # AppRun — entry point executed by the AppImage runtime.
+          cat > AppDir/AppRun << 'APPRUN'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          exec "${HERE}/espai" "$@"
+          APPRUN
+          chmod +x AppDir/AppRun
+
+          # FreeDesktop .desktop file required by appimagetool.
+          cat > AppDir/espai.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Name=ESPAI
+          Comment=Local-first ESP32 fleet management hub
+          Exec=espai
+          Icon=espai
+          Type=Application
+          Categories=Development;Utility;
+          Terminal=false
+          DESKTOP
+
+      - name: Build AppImage
+        run: |
+          VER="${{ github.ref_name }}"
+          VER="${VER#v}"
+
+          # Download appimagetool and use the --appimage-extract method to
+          # avoid the FUSE dependency that GitHub Actions runners don't have.
+          wget -q \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -O appimagetool
+          chmod +x appimagetool
+          ./appimagetool --appimage-extract          # → squashfs-root/
+          ARCH=x86_64 ./squashfs-root/AppRun AppDir "ESPAI-${VER}-x86_64.AppImage"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESPAI-linux
+          path: ESPAI-*-x86_64.AppImage
+          retention-days: 5
+
+  # ── GitHub Release ────────────────────────────────────────────────────────
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for release notes
+
+      - name: Download Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: ESPAI-windows-installer
+          path: artifacts/
+
+      - name: Download Linux AppImage
+        uses: actions/download-artifact@v4
+        with:
+          name: ESPAI-linux
+          path: artifacts/
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          PREV=$(git tag --sort=-version:refname | sed -n '2p')
+          if [ -n "$PREV" ]; then
+            NOTES=$(git log "$PREV"..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          else
+            NOTES=$(git log --pretty=format:"- %s (%h)" --no-merges | head -40)
+          fi
+          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "ESPAI ${{ github.ref_name }}"
+          body: |
+            ## ESPAI ${{ github.ref_name }}
+
+            Local-first ESP32 fleet management hub.
+
+            ### Download
+
+            | Platform | File | Notes |
+            |---|---|---|
+            | **Windows** | `ESPAI-Setup-{version}.exe` | Run the installer — no admin required |
+            | **Linux** | `ESPAI-{version}-x86_64.AppImage` | `chmod +x` then run — no install needed |
+
+            **Windows:** ESPAI starts silently in the system tray after install.
+            Right-click the icon → Open Dashboard / Open Logs / Start at Login.
+
+            **Linux:** Works on Ubuntu, Fedora, Arch, and most x86-64 distros.
+            System tray requires a compatible desktop environment (GNOME with AppIndicator, KDE Plasma, etc.).
+            Run `./ESPAI-*.AppImage serve` to start the hub directly from a terminal.
+
+            ### Changes
+            ${{ steps.notes.outputs.NOTES }}
+          files: |
+            artifacts/ESPAI-Setup-*.exe
+            artifacts/ESPAI-*-x86_64.AppImage
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

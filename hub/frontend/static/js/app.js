@@ -47,6 +47,16 @@ function showView(name) {
     document.getElementById("proj-detail-view")?.classList.add("hidden");
     document.getElementById("proj-list-view")?.classList.remove("hidden");
   }
+  // Reset registry detail views when navigating away
+  for (const t of ["worker", "card", "recipe"]) {
+    if (name !== `${t}s`) {
+      document.getElementById(`${t}-detail-view`)?.classList.add("hidden");
+      document.getElementById(`${t}-list-view`)?.classList.remove("hidden");
+    }
+  }
+  if (name !== "workers" && name !== "cards" && name !== "recipes") {
+    _regEditorCtx = null;
+  }
   if (name !== "agent-bench") {
     _stopAbPoller();
   }
@@ -348,9 +358,19 @@ async function loadHome() {
   // Local Network categorized grid (loads independently)
   loadLocalNetwork();
 
-  // Device list
+  // Build device → [project + role] map from the nodes lists
+  const devProjectMap = new Map();
+  for (const p of projects) {
+    const nodes = Array.isArray(p.nodes) ? p.nodes : (Array.isArray(p.devices) ? p.devices.map(id => ({ device_id: id, role: "node" })) : []);
+    for (const n of nodes) {
+      if (!devProjectMap.has(n.device_id)) devProjectMap.set(n.device_id, []);
+      devProjectMap.get(n.device_id).push({ name: p.name, id: p.id, role: n.role || "node" });
+    }
+  }
+
+  // Device list — pill style for the dashboard
   const devListEl = document.getElementById("homeDeviceList");
-  if (devListEl) _renderDeviceCards(devListEl, devices, loadHome);
+  if (devListEl) _renderDevicePills(devListEl, devices, loadHome, devProjectMap);
 
   if (!projects.length) {
     grid.innerHTML = '<div class="empty-state">No projects yet — click <strong>+ New Project</strong> to create your first one.</div>';
@@ -381,24 +401,45 @@ async function loadHome() {
     const bg   = `hsl(${hue},40%,22%)`;
     const accent = `hsl(${hue},60%,50%)`;
 
+    // Node count — use structured nodes if available, fallback to devices array
+    const nodes      = Array.isArray(p.nodes) ? p.nodes : linkedIds.map(id => ({ device_id: id, role: "node" }));
+    const nodeCount  = nodes.length;
+    const topology   = p.meta?.topology || "standalone";
+    const appType    = p.meta?.app_type || "firmware";
+    const topoIcon   = _TOPOLOGY_ICONS?.[topology] || "◎";
+    const topoLabel  = topology !== "standalone" ? `${topoIcon} ${topology}` : null;
+
+    const statusLabel = onlineLinked
+      ? `<span style="color:var(--color-success)">${onlineLinked}/${nodeCount} ONLINE</span>`
+      : nodeCount
+        ? `<span style="color:var(--color-text-muted)">${nodeCount} NODE${nodeCount > 1 ? "S" : ""} · OFFLINE</span>`
+        : `<span style="color:var(--color-text-muted)">NO NODES</span>`;
+    const dotColor = onlineLinked ? "var(--color-success)"
+                   : nodeCount ? "var(--color-warning)" : "#546e7a";
+
     const card = el("div", "home-proj-card");
+    card.dataset.tip = "Click Detail → to open project, or Open App to launch the web interface";
     card.innerHTML = `
-      <div class="home-proj-thumb" style="background:${bg};border-bottom:3px solid ${accent}"
-           data-tip="Click Project → to open project detail, or Open App to launch the web interface">
-        <div style="font-size:2.5rem;font-weight:900;color:${accent};letter-spacing:-.02em;line-height:1">
+      <div class="home-proj-hero" style="background:${bg}">
+        <div class="home-proj-initials" style="color:${accent};text-shadow:0 0 24px ${accent}88">
           ${p.name.slice(0,2).toUpperCase()}</div>
-        <div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:8px;font-family:monospace">${slug}</div>
+        <div class="home-proj-slug">${slug}</div>
+        ${topoLabel ? `<div style="position:absolute;top:6px;right:8px;font-family:monospace;font-size:8px;letter-spacing:.06em;color:${accent};opacity:.8">${topoLabel.toUpperCase()}</div>` : ""}
+      </div>
+      <div class="home-proj-status" data-tip="${onlineLinked} of ${nodeCount} nodes online · topology: ${topology} · app: ${appType}">
+        <span class="home-proj-status-dot" style="background:${dotColor};box-shadow:0 0 6px ${dotColor}"></span>
+        <span style="font-family:monospace;font-size:9px;letter-spacing:.08em">${statusLabel}</span>
+        ${appType !== "firmware" ? `<span style="margin-left:auto;font-family:monospace;font-size:8px;color:var(--color-text-muted)">${appType === "hub" ? "HUB APP" : "HYBRID"}</span>` : ""}
       </div>
       <div class="home-proj-body">
         <div class="home-proj-name">${p.name}</div>
-        <div class="home-proj-desc">${p.description || ""}</div>
-        <div class="tag-row" style="margin-top:6px">${deviceBadge}</div>
+        <div class="home-proj-desc">${p.description || '<span style="opacity:.4;font-style:italic">no description</span>'}</div>
       </div>
       <div class="home-proj-actions">
         <a href="${appUrl}" target="_blank" class="btn btn-primary btn-sm"
-           data-tip="Open ${p.name} web app">Open App ↗</a>
+           data-tip="Open ${p.name} web app in a new tab">Open App ↗</a>
         <button class="btn btn-secondary btn-sm home-goto-proj"
-                data-tip="Open project detail — files, devices, firmware, agent tasks">Project →</button>
+                data-tip="Open project detail — nodes, files, firmware, agent tasks">Detail →</button>
       </div>`;
     card.querySelector(".home-goto-proj").onclick = () => {
       showView("projects");
@@ -445,15 +486,21 @@ async function loadLocalNetwork() {
 
   const services = await api.services.list().catch(() => []);
 
+  // Outer band wrapper — always rendered so the section header appears
+  const outerBand = el("div", "home-band");
+  const outerHd = el("div", "home-band-hd");
+  const totalVisible = services.length;
+  outerHd.innerHTML = `<span class="home-band-label">Local Network</span>
+    <span style="font-family:monospace;font-size:9px;color:var(--color-text-muted);letter-spacing:.06em">${totalVisible} service${totalVisible !== 1 ? "s" : ""}</span>`;
+  outerBand.appendChild(outerHd);
+
   if (!services.length) {
-    container.innerHTML = `
-      <div class="home-section-header">
-        <h2 class="home-section-title">Local Network</h2>
-      </div>
-      <div class="svc-discover-hint">
-        No services yet. Click <strong>🔍 Discover</strong> to scan your LAN, or
-        <strong>+ Add Service</strong> to add Jellyfin, Home Assistant, or any local web service by hostname and port.
-      </div>`;
+    const hint = el("div", "svc-discover-hint");
+    hint.innerHTML = `No services yet. Click <strong>🔍 Discover</strong> to scan your LAN, or
+      <strong>+ Add Service</strong> to add Jellyfin, Home Assistant, or any local web service by hostname and port.`;
+    outerBand.appendChild(hint);
+    container.innerHTML = "";
+    container.appendChild(outerBand);
     return;
   }
 
@@ -466,68 +513,60 @@ async function loadLocalNetwork() {
   }
 
   container.innerHTML = "";
+  container.appendChild(outerBand);
 
   for (const cat of _SVC_CATEGORY_ORDER) {
     const items = groups[cat];
     if (!items?.length) continue;
 
-    const section = el("div", "svc-category");
-    const hdr = el("div", "svc-category-header");
-    hdr.innerHTML = `<h3 class="svc-category-title">${_SVC_CATEGORY_LABELS[cat] || cat}</h3>
-                     <span style="font-size:11px;color:var(--color-text-muted)">${items.length} service${items.length !== 1 ? "s" : ""}</span>`;
-    section.appendChild(hdr);
+    const band = el("div", "svc-band");
+    const hd = el("div", "svc-band-hd");
+    hd.innerHTML = `<span class="svc-band-label">${_SVC_CATEGORY_LABELS[cat] || cat}</span>
+                    <span class="svc-band-count">${items.length}</span>`;
+    band.appendChild(hd);
 
     const grid = el("div", "svc-grid");
     for (const svc of items) {
       grid.appendChild(_makeSvcCard(svc));
     }
-    section.appendChild(grid);
-    container.appendChild(section);
+    band.appendChild(grid);
+    outerBand.appendChild(band);
   }
 }
 
 function _makeSvcCard(svc) {
-  const color   = svc.color || _SVC_COLORS[svc.service_type] || _SVC_COLORS.unknown;
-  const emoji   = _SVC_EMOJIS[svc.service_type] || "🌐";
-  const label   = svc.label || svc.title || `${svc.host}:${svc.port}`;
-  const addr    = svc.port === 80 ? svc.host : `${svc.host}:${svc.port}`;
-  const url     = `${svc.protocol || "http"}://${svc.host}${svc.port !== 80 ? ":" + svc.port : ""}/`;
+  const color    = svc.color || _SVC_COLORS[svc.service_type] || _SVC_COLORS.unknown;
+  const emoji    = _SVC_EMOJIS[svc.service_type] || "🌐";
+  const label    = svc.label || svc.title || `${svc.host}:${svc.port}`;
+  const addr     = svc.port === 80 ? svc.host : `${svc.host}:${svc.port}`;
+  const url      = `${svc.protocol || "http"}://${svc.host}${svc.port !== 80 ? ":" + svc.port : ""}/`;
   const isPinned = svc.pinned;
 
-  const card = el("div", "svc-card");
+  const tile = el("div", "svc-tile");
+  tile.style.setProperty("--tile-color", color);
+  tile.dataset.tip = `${label} · ${addr}${svc.last_seen ? " · seen " + timeAgo(svc.last_seen) : ""}`;
 
-  // Coloured strip at top
-  const strip = el("div", "svc-card-strip");
-  strip.style.background = color;
-  card.appendChild(strip);
-
-  // Top row: icon + name + address
-  const top = el("div", "svc-card-top");
-  const iconEl = el("div", "svc-card-icon");
-  iconEl.style.background = color + "22";
+  // Icon bubble
+  const iconEl = el("div", "svc-tile-icon");
   if (svc.favicon_url) {
     const img = document.createElement("img");
     img.src = svc.favicon_url;
     img.alt = emoji;
-    img.onerror = () => { iconEl.innerHTML = `<span style="font-size:20px">${emoji}</span>`; };
+    img.onerror = () => { iconEl.innerHTML = `<span style="font-size:22px">${emoji}</span>`; };
     iconEl.appendChild(img);
   } else {
-    iconEl.innerHTML = `<span style="font-size:20px">${emoji}</span>`;
+    iconEl.innerHTML = `<span style="font-size:22px">${emoji}</span>`;
   }
-  top.appendChild(iconEl);
+  tile.appendChild(iconEl);
 
-  const info = el("div", "svc-card-info");
-  const nameEl = el("div", "svc-card-name", label);
-  nameEl.dataset.tip = `${label} — ${url}`;
-  info.appendChild(nameEl);
-  const addrEl = el("div", "svc-card-addr", addr);
-  if (svc.last_seen) addrEl.dataset.tip = `Last seen: ${timeAgo(svc.last_seen)}`;
-  info.appendChild(addrEl);
-  top.appendChild(info);
-  card.appendChild(top);
+  // Name + address
+  const nameEl = el("div", "svc-tile-name", label);
+  tile.appendChild(nameEl);
+  const addrEl = el("div", "svc-tile-addr", addr);
+  tile.appendChild(addrEl);
 
-  // Action row
-  const actions = el("div", "svc-card-actions");
+  // Buttons
+  const ctrl = el("div", "svc-tile-ctrl");
 
   const openBtn = document.createElement("a");
   openBtn.href = url;
@@ -536,49 +575,38 @@ function _makeSvcCard(svc) {
   openBtn.className = "btn btn-primary btn-sm";
   openBtn.textContent = "Open ↗";
   openBtn.dataset.tip = `Open ${label} in a new tab`;
-  actions.appendChild(openBtn);
+  ctrl.appendChild(openBtn);
+
+  const moreBtn = el("button", "btn btn-secondary btn-sm", "⋯");
+  moreBtn.dataset.tip = "Edit label, category, pin, or hide this service";
+  moreBtn.onclick = (e) => {
+    e.stopPropagation();
+    _openSvcEditModal(svc);
+  };
+  ctrl.appendChild(moreBtn);
+
+  tile.appendChild(ctrl);
+
+  // Pin glyph in corner
+  if (isPinned) {
+    const pin = el("div", "");
+    pin.style.cssText = "position:absolute;top:5px;right:7px;font-size:10px;opacity:.7";
+    pin.textContent = "📌";
+    tile.appendChild(pin);
+  }
 
   if (svc.is_espai && svc.project_id) {
-    const projBtn = el("button", "btn btn-secondary btn-sm", "Project →");
-    projBtn.dataset.tip = "Open the ESPAI project detail for this device";
-    projBtn.onclick = () => {
+    tile.style.cursor = "pointer";
+    tile.ondblclick = () => {
       showView("projects");
       setTimeout(async () => {
         const proj = await api.projects.get(svc.project_id).catch(() => null);
         if (proj) openProject(proj);
       }, 100);
     };
-    actions.appendChild(projBtn);
   }
 
-  // Rename button
-  const renameBtn = el("button", "btn btn-secondary btn-sm", "✎");
-  renameBtn.dataset.tip = "Rename or recategorise this service";
-  renameBtn.onclick = () => _openSvcEditModal(svc);
-  actions.appendChild(renameBtn);
-
-  // Pin button
-  const pinBtn = el("button", "btn btn-secondary btn-sm", isPinned ? "📌" : "⊙");
-  pinBtn.dataset.tip = isPinned ? "Unpin — move back to normal order" : "Pin to top of category";
-  if (isPinned) pinBtn.classList.add("svc-pin-active");
-  pinBtn.onclick = async () => {
-    await api.services.update(svc.id, { pinned: !isPinned }).catch(() => {});
-    loadLocalNetwork();
-  };
-  actions.appendChild(pinBtn);
-
-  // Hide button
-  const hideBtn = el("button", "btn btn-secondary btn-sm", "✕");
-  hideBtn.dataset.tip = "Hide from grid — run Discover again or add manually to restore";
-  hideBtn.onclick = async () => {
-    if (!confirm(`Hide "${label}"?`)) return;
-    await api.services.update(svc.id, { hidden: true }).catch(() => {});
-    loadLocalNetwork();
-  };
-  actions.appendChild(hideBtn);
-
-  card.appendChild(actions);
-  return card;
+  return tile;
 }
 
 function _openSvcEditModal(svc) {
@@ -601,6 +629,17 @@ function _openSvcEditModal(svc) {
       const label    = document.getElementById("svcEditLabel").value.trim() || null;
       const category = document.getElementById("svcEditCat").value;
       await api.services.update(svc.id, { label, category }).catch(err => alert(err.message));
+      closeModal();
+      loadLocalNetwork();
+    }},
+    { label: svc.pinned ? "Unpin" : "📌 Pin", cls: "btn btn-secondary", action: async () => {
+      await api.services.update(svc.id, { pinned: !svc.pinned }).catch(() => {});
+      closeModal();
+      loadLocalNetwork();
+    }},
+    { label: "Hide", cls: "btn btn-secondary", action: async () => {
+      if (!confirm(`Hide "${currentLabel || svc.host}"?`)) return;
+      await api.services.update(svc.id, { hidden: true }).catch(() => {});
       closeModal();
       loadLocalNetwork();
     }},
@@ -680,6 +719,99 @@ document.getElementById("btnHomeAddService").onclick = () => {
   ]);
   setTimeout(() => document.getElementById("svcAddHost")?.focus(), 100);
 };
+
+// ── Home dashboard device pills ──────────────────────────────────────────────
+function _renderDevicePills(listEl, devices, onRefresh, devProjectMap = new Map()) {
+  if (!devices.length) {
+    listEl.innerHTML = '<div class="empty-state">No devices found. Use Scan LAN or + Add Device to discover nodes.</div>';
+    return;
+  }
+  listEl.innerHTML = "";
+  for (const d of devices) {
+    const online_ = isOnline(d.last_seen);
+    const pillColor = online_ ? "var(--color-success)" : d.paired ? "var(--color-warning)" : "#546e7a";
+    const statusTxt = online_ ? "ONLINE" : d.paired ? "OFFLINE" : "UNREGISTERED";
+    const badgeCls  = online_ ? "online" : d.paired ? "paired" : "unpaired";
+    const glyph     = online_ ? "◉" : d.paired ? "◎" : "○";
+    const projMemberships = devProjectMap.get(d.id) || [];
+
+    const pill = el("div", "device-pill");
+    pill.style.setProperty("--pill-color", pillColor);
+
+    const glyphEl = el("div", "device-pill-glyph", glyph);
+    const infoEl  = el("div", "device-pill-info");
+    const nameEl  = el("div", "device-pill-name", d.name || d.id);
+    const metaEl  = el("div", "device-pill-meta",
+      `${d.ip || "no IP"} · ${d.board || "?"} · fw ${d.fw_version || "?"} · ${timeAgo(d.last_seen)}`);
+    infoEl.appendChild(nameEl);
+    infoEl.appendChild(metaEl);
+
+    // Project membership chips
+    if (projMemberships.length) {
+      const projEl = el("div", "");
+      projEl.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-top:4px";
+      for (const m of projMemberships.slice(0, 4)) {
+        const chip = el("span", `node-role node-role-${m.role}`);
+        chip.textContent = m.name;
+        chip.dataset.tip = `Node in "${m.name}" as ${m.role}`;
+        chip.style.cursor = "pointer";
+        chip.onclick = () => {
+          showView("projects");
+          setTimeout(async () => {
+            const proj = await api.projects.get(m.id).catch(() => null);
+            if (proj) openProject(proj);
+          }, 100);
+        };
+        projEl.appendChild(chip);
+      }
+      if (projMemberships.length > 4) {
+        const more = el("span", "node-role node-role-node", `+${projMemberships.length - 4}`);
+        more.dataset.tip = `${projMemberships.length - 4} more projects`;
+        projEl.appendChild(more);
+      }
+      infoEl.appendChild(projEl);
+    }
+
+    const badge = el("span", `device-pill-badge ${badgeCls}`, statusTxt);
+    badge.dataset.tip = online_ ? "Seen within 2 minutes"
+                      : d.paired ? `Last seen ${timeAgo(d.last_seen)}`
+                      : "Not paired — click Pair to register";
+
+    const actionsEl = el("div", "device-pill-actions");
+    if (!d.paired) {
+      const pairBtn = el("button", "btn btn-secondary btn-sm", "Pair");
+      pairBtn.dataset.tip = "Pair this device with the hub to enable OTA and trusted commands";
+      pairBtn.onclick = () => pairDevice(d.id);
+      actionsEl.appendChild(pairBtn);
+    } else {
+      const flashBtn = el("button", "btn btn-secondary btn-sm", "⬆ Flash");
+      flashBtn.dataset.tip = "Push firmware to this device";
+      flashBtn.onclick = (e) => { e.stopPropagation(); _openFlashDeviceModal(d); };
+      actionsEl.appendChild(flashBtn);
+    }
+    if (d.ip) {
+      const portalBtn = el("button", "btn btn-secondary btn-sm", "🌐");
+      portalBtn.dataset.tip = `Open device web interface at http://${d.ip}/`;
+      portalBtn.onclick = (e) => { e.stopPropagation(); window.open(`http://${d.ip}/`, "_blank"); };
+      actionsEl.appendChild(portalBtn);
+    }
+    const delBtn = el("button", "btn btn-danger btn-sm", "✕");
+    delBtn.dataset.tip = "Remove this device from the hub";
+    delBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Remove "${d.name || d.id}"?`)) return;
+      await api.devices.delete(d.id).catch(() => {});
+      if (onRefresh) onRefresh();
+    };
+    actionsEl.appendChild(delBtn);
+
+    pill.appendChild(glyphEl);
+    pill.appendChild(infoEl);
+    pill.appendChild(badge);
+    pill.appendChild(actionsEl);
+    listEl.appendChild(pill);
+  }
+}
 
 // ── Shared device card renderer — used by Home dashboard (and legacy Fleet if needed)
 function _renderDeviceCards(listEl, devices, onRefresh) {
@@ -1350,100 +1482,193 @@ async function openProject(p) {
   _loadProjectApprovalMode(p.id);
 }
 
+const _NODE_ROLES = ["coordinator","sensor","actuator","gateway","observer","hub-agent","relay","node"];
+const _TOPOLOGIES = ["standalone","star","mesh","hub-spoke","pipeline","custom"];
+const _APP_TYPES  = ["firmware","hub","hybrid"];
+
+const _TOPOLOGY_ICONS = {
+  standalone:"◎", star:"✦", mesh:"⬡", "hub-spoke":"⊙", pipeline:"→", custom:"◈"
+};
+const _APP_TYPE_LABELS = { firmware:"Firmware", hub:"Hub App", hybrid:"Hybrid" };
+
 async function renderProjectDevices(project, linkedIds) {
+  // Delegate to the new node-aware renderer
+  await renderProjectNodes(project);
+}
+
+async function renderProjectNodes(project) {
   const devList = document.getElementById("projDeviceList");
-  let allDevs;
-  try { allDevs = await api.devices.list(); } catch (_) { allDevs = []; }
+  devList.innerHTML = '<div class="empty-state" style="font-size:12px">Loading nodes…</div>';
+
+  const [allDevs, nodes, topoData] = await Promise.all([
+    api.devices.list().catch(() => []),
+    api.projects.nodes(project.id).catch(() => []),
+    api.projects.topology(project.id).catch(() => ({ topology:"standalone", app_type:"firmware" })),
+  ]);
   const devMap = new Map(allDevs.map(d => [d.id, d]));
+  const linkedIds = nodes.map(n => n.device_id);
 
   devList.innerHTML = "";
 
-  if (linkedIds.length) {
-    for (const did of linkedIds) {
-      const dev = devMap.get(did);
+  // ── Topology + app-type header ──────────────────────────────────────────
+  const topoBar = el("div", "");
+  topoBar.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap";
+
+  const topoSel = document.createElement("select");
+  topoSel.style.cssText = "background:var(--color-surface);border:1px solid var(--color-card-border);border-radius:5px;padding:3px 8px;font-size:11px;color:var(--color-text);font-family:monospace";
+  topoSel.dataset.tip = "Network topology — how nodes in this project communicate with each other";
+  _TOPOLOGIES.forEach(t => {
+    const opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = `${_TOPOLOGY_ICONS[t] || "◈"} ${t}`;
+    if (t === topoData.topology) opt.selected = true;
+    topoSel.appendChild(opt);
+  });
+
+  const appSel = document.createElement("select");
+  appSel.style.cssText = topoSel.style.cssText;
+  appSel.dataset.tip = "Where the primary app logic runs — firmware on ESP32, hub-side, or both";
+  _APP_TYPES.forEach(t => {
+    const opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = _APP_TYPE_LABELS[t];
+    if (t === topoData.app_type) opt.selected = true;
+    appSel.appendChild(opt);
+  });
+
+  const saveTopoBtn = el("button", "btn btn-secondary btn-sm", "Save");
+  saveTopoBtn.dataset.tip = "Save topology and app type settings";
+  saveTopoBtn.onclick = async () => {
+    await api.projects.setTopology(project.id, {
+      topology: topoSel.value,
+      app_type: appSel.value,
+    }).catch(e => alert(e.message));
+    saveTopoBtn.textContent = "Saved ✓";
+    setTimeout(() => { saveTopoBtn.textContent = "Save"; }, 1200);
+  };
+
+  topoBar.appendChild(el("span", "", "Topology:"));
+  topoBar.appendChild(topoSel);
+  topoBar.appendChild(el("span", "", "App:"));
+  topoBar.appendChild(appSel);
+  topoBar.appendChild(saveTopoBtn);
+  devList.appendChild(topoBar);
+
+  // ── Node rows ────────────────────────────────────────────────────────────
+  const nodesEl = el("div", "");
+  nodesEl.id = "projNodeRows";
+
+  if (nodes.length) {
+    for (const node of nodes) {
+      const did  = node.device_id;
+      const dev  = devMap.get(did);
       const online = dev && isOnline(dev.last_seen);
-      const dotColor = online ? "var(--color-success)" : "var(--color-text-muted)";
-      const dotTip   = online ? "Online — seen within 2 min" : `Last seen: ${dev?.last_seen ? timeAgo(dev.last_seen) : "never"}`;
-      const fwTag    = dev?.fw_version ? `<span class="tag" style="font-size:10px;padding:1px 5px" data-tip="Firmware version on device">fw ${dev.fw_version}</span>` : "";
-      const pairedTag = dev && !dev.paired ? `<span class="tag" style="font-size:10px;padding:1px 5px;color:var(--color-warning)" data-tip="Not yet paired — OTA and commands disabled">unpaired</span>` : "";
-      const row = el("div", "file-row");
-      row.innerHTML = `
-        <span style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;display:inline-block;margin-right:4px" data-tip="${dotTip}"></span>
-        <span class="file-path" style="flex:1">${dev ? (dev.name || did) : did} ${fwTag}${pairedTag}</span>
-        <span class="file-size">${dev ? (dev.board || "?") : "not in fleet"}</span>
-      `;
+      const pillColor = online ? "var(--color-success)" : dev?.paired ? "var(--color-text-muted)" : "#546e7a";
+      const roleCls = `node-role node-role-${node.role || "node"}`;
+
+      const row = el("div", "node-row");
+      row.style.setProperty("--pill-color", pillColor);
+
+      // Status glyph
+      const glyph = el("span", "");
+      glyph.style.cssText = `width:8px;height:8px;border-radius:50%;background:${pillColor};box-shadow:0 0 5px ${pillColor};flex-shrink:0`;
+      glyph.dataset.tip = online ? "Online" : `Last seen: ${dev?.last_seen ? timeAgo(dev.last_seen) : "never"}`;
+
+      // Info
+      const info = el("div", "node-row-info");
+      const nameEl = el("div", "node-row-name");
+      nameEl.textContent = node.label || dev?.name || did;
+      const metaEl = el("div", "node-row-meta");
+      metaEl.textContent = [dev?.ip || "no IP", dev?.board || "?", dev?.fw_version ? `fw ${dev.fw_version}` : ""].filter(Boolean).join(" · ");
+      info.appendChild(nameEl);
+      info.appendChild(metaEl);
+
+      const roleBadge = el("span", roleCls, node.role || "node");
+      roleBadge.dataset.tip = `Node role: ${node.role || "node"}`;
+
+      const actions = el("div", "node-row-actions");
+
+      // Set role button
+      const roleBtn = el("button", "btn btn-secondary btn-sm", "⚙ Role");
+      roleBtn.dataset.tip = "Change this node's role in the project";
+      roleBtn.onclick = () => _openNodeRoleModal(project, node, dev, () => renderProjectNodes(project));
+      actions.appendChild(roleBtn);
+
       if (dev?.ip) {
         const portalBtn = el("button", "btn btn-secondary btn-sm", "🌐");
         portalBtn.dataset.tip = `Open device portal at http://${dev.ip}/`;
         portalBtn.onclick = () => window.open(`http://${dev.ip}/`, "_blank");
-        row.appendChild(portalBtn);
+        actions.appendChild(portalBtn);
       }
-      const unlinkBtn = el("button", "btn btn-danger btn-sm", "Unlink");
-      unlinkBtn.dataset.tip = "Remove this device from the project — the device stays in Fleet";
-      unlinkBtn.onclick = async () => {
-        const newIds = linkedIds.filter(id => id !== did);
-        await api.projects.update(project.id, { devices: newIds }).catch(() => {});
-        project.devices = newIds;
-        renderProjectDevices(project, newIds);
+      const removeBtn = el("button", "btn btn-danger btn-sm", "✕");
+      removeBtn.dataset.tip = "Remove this node from the project — the device stays in Fleet";
+      removeBtn.onclick = async () => {
+        await api.projects.removeNode(project.id, did).catch(() => {});
+        project.devices = (project.devices || []).filter(id => id !== did);
+        renderProjectNodes(project);
       };
-      row.appendChild(unlinkBtn);
-      devList.appendChild(row);
+      actions.appendChild(removeBtn);
+
+      row.appendChild(glyph);
+      row.appendChild(info);
+      row.appendChild(roleBadge);
+      row.appendChild(actions);
+      nodesEl.appendChild(row);
     }
   } else {
-    devList.appendChild(el("div", "empty-state", "No devices linked yet. Click Find Device or + Link."));
+    nodesEl.appendChild(el("div", "empty-state", "No nodes linked yet. Click Find Node or + Link."));
   }
+  devList.appendChild(nodesEl);
 
   const btnRow = el("div", "");
   btnRow.style.cssText = "display:flex;gap:6px;margin-top:10px;flex-wrap:wrap";
 
-  // Find Device — scans LAN for unpaired/unlinkable ESPAI nodes
-  const findBtn = el("button", "btn btn-primary btn-sm", "📡 Find Device");
-  findBtn.dataset.tip = "Scan the LAN for ESPAI nodes, pair and link them to this project in one flow";
+  // Find Node — scans LAN + allows role assignment
+  const findBtn = el("button", "btn btn-primary btn-sm", "📡 Find Node");
+  findBtn.dataset.tip = "Scan the LAN for ESPAI nodes and add them to this project with a role";
   findBtn.onclick = async () => {
     findBtn.textContent = "Scanning…";
     findBtn.disabled = true;
-    let found;
-    try { found = (await api.devices.scan()).devices || []; }
-    catch (_) { found = []; }
-    finally { findBtn.textContent = "📡 Find Device"; findBtn.disabled = false; }
+    try { await api.devices.scan(); } catch (_) {}
+    let freshDevs;
+    try { freshDevs = await api.devices.list(); } catch (_) { freshDevs = []; }
+    findBtn.textContent = "📡 Find Node";
+    findBtn.disabled = false;
 
-    // Refresh device map
-    try { allDevs = await api.devices.list(); } catch (_) {}
-    const freshMap = new Map(allDevs.map(d => [d.id, d]));
-    const candidates = allDevs.filter(d => !linkedIds.includes(d.id));
-
+    const candidates = freshDevs.filter(d => !linkedIds.includes(d.id));
     if (!candidates.length) {
-      openModal("No Devices Found", '<div class="empty-state">No additional ESPAI nodes found. Make sure the device is powered and on the same network.</div>',
+      openModal("No New Nodes", '<div class="empty-state">No additional ESPAI nodes found. Make sure the device is powered and on the same network.</div>',
         [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
       return;
     }
-    const rows = candidates.map(d => `
+    const roleOpts = _NODE_ROLES.map(r => `<option value="${r}">${r}</option>`).join("");
+    const devRows = candidates.map(d => `
       <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--color-card-border);cursor:pointer">
-        <input type="checkbox" value="${d.id}" ${linkedIds.includes(d.id) ? "checked disabled" : ""}>
-        <div>
+        <input type="checkbox" value="${d.id}">
+        <div style="flex:1">
           <div style="font-weight:600">${d.name || d.id}</div>
           <div style="font-size:11px;color:var(--color-text-muted)">${d.ip || "no IP"} · ${d.board || "?"} · ${d.paired ? "✓ paired" : "⚠ unpaired"}</div>
         </div>
+        <select class="link-role-sel" style="font-size:10px;background:var(--color-surface);border:1px solid var(--color-card-border);border-radius:4px;padding:2px 6px;color:var(--color-text)">${roleOpts}</select>
       </label>`).join("");
-    openModal("Find & Link Device", `
-      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px">Select devices to link to this project. Unpaired devices will be paired automatically.</p>
-      <div>${rows}</div>
+    openModal("Find & Link Nodes", `
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px">Select nodes to add. Assign a role to each. Unpaired devices will be paired automatically.</p>
+      <div>${devRows}</div>
     `, [
-      { label: "Link Selected", cls: "btn btn-primary", action: async () => {
-        const checked = [...document.querySelectorAll("#modalBody input[type=checkbox]:checked")].map(cb => cb.value);
-        if (!checked.length) { closeModal(); return; }
-        // Pair any unpaired
-        for (const did of checked) {
+      { label: "Add Selected", cls: "btn btn-primary", action: async () => {
+        const checkboxes = [...document.querySelectorAll("#modalBody input[type=checkbox]:checked")];
+        if (!checkboxes.length) { closeModal(); return; }
+        for (const cb of checkboxes) {
+          const did = cb.value;
+          const roleEl = cb.closest("label")?.querySelector(".link-role-sel");
+          const role = roleEl?.value || "node";
+          const freshMap = new Map(freshDevs.map(d => [d.id, d]));
           const d = freshMap.get(did);
-          if (d && !d.paired) {
-            await api.devices.initiatePair(did).catch(() => {});
-          }
+          if (d && !d.paired) await api.devices.initiatePair(did).catch(() => {});
+          await api.projects.upsertNode(project.id, did, { role, node_index: linkedIds.length }).catch(() => {});
         }
-        const newIds = [...new Set([...linkedIds, ...checked])];
-        await api.projects.update(project.id, { devices: newIds }).catch(() => {});
-        project.devices = newIds;
         closeModal();
-        renderProjectDevices(project, newIds);
+        renderProjectNodes(project);
       }},
       { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
     ]);
@@ -1451,7 +1676,7 @@ async function renderProjectDevices(project, linkedIds) {
   btnRow.appendChild(findBtn);
 
   const linkBtn = el("button", "btn btn-secondary btn-sm", "+ Link Existing");
-  linkBtn.dataset.tip = "Link a device already in the fleet to this project";
+  linkBtn.dataset.tip = "Link a fleet device to this project and assign its role";
   linkBtn.onclick = () => {
     const available = allDevs.filter(d => !linkedIds.includes(d.id));
     if (!available.length) {
@@ -1459,28 +1684,69 @@ async function renderProjectDevices(project, linkedIds) {
         [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
       return;
     }
-    const opts = available.map(d =>
-      `<option value="${d.id}">${d.name || d.id} · ${d.board || "?"} ${d.paired ? "✓ paired" : "(unpaired)"}</option>`
+    const devOpts = available.map(d =>
+      `<option value="${d.id}">${d.name || d.id} · ${d.board || "?"}</option>`
     ).join("");
-    openModal("Link Device to Project", `
+    const roleOpts = _NODE_ROLES.map(r => `<option value="${r}">${r}</option>`).join("");
+    openModal("Link Node to Project", `
       <div class="form-field">
-        <label data-tip="Only devices already in your fleet are shown here — use 'Find Device' to discover new ones">Device</label>
-        <select id="linkDevSel">${opts}</select>
+        <label data-tip="Fleet device to add as a node">Device</label>
+        <select id="linkDevSel">${devOpts}</select>
+      </div>
+      <div class="form-field" style="margin-top:10px">
+        <label data-tip="Role this node plays in the project">Role</label>
+        <select id="linkRoleSel">${roleOpts}</select>
+      </div>
+      <div class="form-field" style="margin-top:10px">
+        <label data-tip="Optional human-readable label for this node instance">Label (optional)</label>
+        <input type="text" id="linkLabelInp" placeholder="e.g. North Gateway, Bedroom Sensor" style="width:100%">
       </div>
     `, [
       { label: "Link", cls: "btn btn-primary", action: async () => {
-        const did = document.getElementById("linkDevSel").value;
-        const newIds = [...linkedIds, did];
-        await api.projects.update(project.id, { devices: newIds }).catch(() => {});
-        project.devices = newIds;
+        const did   = document.getElementById("linkDevSel")?.value;
+        const role  = document.getElementById("linkRoleSel")?.value || "node";
+        const label = document.getElementById("linkLabelInp")?.value?.trim() || null;
+        await api.projects.upsertNode(project.id, did, { role, label, node_index: linkedIds.length }).catch(() => {});
         closeModal();
-        renderProjectDevices(project, newIds);
+        renderProjectNodes(project);
       }},
       { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
     ]);
   };
   btnRow.appendChild(linkBtn);
   devList.appendChild(btnRow);
+}
+
+function _openNodeRoleModal(project, node, dev, onSave) {
+  const roleOpts = _NODE_ROLES.map(r =>
+    `<option value="${r}" ${r === node.role ? "selected" : ""}>${r}</option>`
+  ).join("");
+  const devName = node.label || dev?.name || node.device_id;
+  openModal(`Node Role — ${devName}`, `
+    <div class="form-field">
+      <label data-tip="Role this node plays in the project — affects how the hub routes events and which firmware build flags to apply">Role</label>
+      <select id="nodeRoleSel">${roleOpts}</select>
+    </div>
+    <div class="form-field" style="margin-top:10px">
+      <label data-tip="Optional friendly label for this specific node instance">Label</label>
+      <input type="text" id="nodeLabelInp" value="${node.label || ""}" placeholder="e.g. North Gateway, Living Room Sensor" style="width:100%">
+    </div>
+    <p style="font-size:11px;color:var(--color-text-muted);margin-top:10px;line-height:1.5">
+      Roles: <strong>coordinator</strong> (mesh hub) · <strong>sensor</strong> (data collection) ·
+      <strong>actuator</strong> (output/control) · <strong>gateway</strong> (bridges other networks) ·
+      <strong>observer</strong> (passive monitoring) · <strong>hub-agent</strong> (hub-side process) ·
+      <strong>relay</strong> (packet forwarding) · <strong>node</strong> (generic)
+    </p>
+  `, [
+    { label: "Save", cls: "btn btn-primary", action: async () => {
+      const role  = document.getElementById("nodeRoleSel")?.value || "node";
+      const label = document.getElementById("nodeLabelInp")?.value?.trim() || null;
+      await api.projects.upsertNode(project.id, node.device_id, { role, label, node_index: node.node_index || 0 }).catch(e => alert(e.message));
+      closeModal();
+      if (onSave) onSave();
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
 }
 
 async function renderProjectFirmware(project, linkedIds) {
@@ -1638,6 +1904,29 @@ document.getElementById("btnProjGitLog").onclick = async () => {
   } catch (err) { alert("Error: " + err.message); }
 };
 
+document.getElementById("btnProjApplyTheme").onclick = async () => {
+  if (!_currentProject) return;
+  try {
+    const result = await api.projects.applyHubTheme(_currentProject.id);
+    openModal("Hub Theme Applied", `
+      <p style="font-size:13px;line-height:1.6;margin-bottom:10px">
+        Generated <code>web/hub-theme.css</code> with <strong>${result.token_count}</strong>
+        design tokens from the <strong>${result.theme}</strong> theme.
+      </p>
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px">
+        Add this line to your project's <code>web/index.html</code> to activate it:
+      </p>
+      <pre style="font-size:11px;background:var(--color-surface);border:1px solid var(--color-card-border);border-radius:6px;padding:10px;overflow:auto">${result.link_tag}</pre>
+    `, [
+      { label: "Copy Link Tag", cls: "btn btn-primary", action: () => {
+        navigator.clipboard?.writeText(result.link_tag).catch(() => {});
+        closeModal();
+      }},
+      { label: "Close", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  } catch (err) { alert("Apply theme failed: " + err.message); }
+};
+
 document.getElementById("btnProjRegenCtx").onclick = async () => {
   if (!_currentProject) return;
   try {
@@ -1655,36 +1944,81 @@ document.getElementById("btnProjRegenCtx").onclick = async () => {
 
 document.getElementById("btnProjTheme").onclick = async () => {
   if (!_currentProject) return;
-  const current = await api.projects.theme(_currentProject.id).catch(() => ({ project_overrides: {} }));
-  const existing = JSON.stringify(current.project_overrides || {}, null, 2);
+  const [current, themes] = await Promise.all([
+    api.projects.theme(_currentProject.id).catch(() => ({ project_overrides: {} })),
+    api.design.themes().catch(() => []),
+  ]);
+  const active = current.project_overrides || {};
+  const hasOverrides = Object.keys(active).length > 0;
+
+  const SWATCH_KEYS = ["color.background","color.surface","color.card","color.accent","color.accent2","color.warning","color.success","color.text"];
+
+  const themeCards = themes.map(t => {
+    const tokens = t.tokens || {};
+    const swatches = SWATCH_KEYS.filter(k => tokens[k])
+      .map(k => `<div style="flex:1;height:32px;background:${tokens[k]}"></div>`).join("");
+    const isActive = hasOverrides && JSON.stringify(active) === JSON.stringify(tokens);
+    return `
+      <div class="theme-card${isActive ? " active" : ""}" style="cursor:pointer" data-theme="${t.name}" data-tip="Apply ${t.display_name || t.name} tokens to this project">
+        <div class="theme-palette" style="height:32px">${swatches}</div>
+        <div class="theme-card-body" style="padding:8px 10px">
+          <div class="theme-card-name">${t.display_name || t.name}</div>
+          ${isActive ? '<div style="margin-top:4px"><span class="theme-active-badge">ACTIVE ON PROJECT</span></div>' : ""}
+        </div>
+      </div>`;
+  }).join("");
+
   openModal(`Project Theme — ${_currentProject.name}`, `
-    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px">
-      CSS custom property overrides applied while this project is active.<br>
-      Example: <code>{"--color-accent":"#ff6600"}</code>
+    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;line-height:1.6">
+      Apply a hub theme as project-specific overrides — active only while this project is open.
+      Or enter custom token overrides in the JSON editor below.
     </p>
-    <div class="form-field">
-      <textarea id="projThemeJson" rows="8" style="font-family:monospace;font-size:12px">${existing}</textarea>
+    <div class="home-band-hd" style="margin-bottom:10px">
+      <span class="home-band-label">Hub Themes</span>
     </div>
-    <p id="projThemeStatus" style="font-size:12px;min-height:14px;margin-top:6px"></p>
+    <div class="theme-mgr-grid" id="projThemeGrid" style="margin-bottom:16px">${themeCards}</div>
+    <details style="margin-bottom:8px">
+      <summary style="font-size:11px;color:var(--color-accent);cursor:pointer;font-family:monospace;letter-spacing:.06em;text-transform:uppercase">Custom Token Overrides (JSON)</summary>
+      <div class="form-field" style="margin-top:8px">
+        <textarea id="projThemeJson" rows="5" style="font-family:monospace;font-size:11px">${JSON.stringify(active, null, 2)}</textarea>
+      </div>
+    </details>
+    <p id="projThemeStatus" style="font-size:12px;min-height:14px;color:var(--color-success)"></p>
   `, [
     { label: "Save & Apply", cls: "btn btn-primary", action: async () => {
       const raw = document.getElementById("projThemeJson")?.value || "{}";
       let overrides;
       try { overrides = JSON.parse(raw); } catch (_) {
-        const s = document.getElementById("projThemeStatus");
-        if (s) s.textContent = "Invalid JSON"; return;
+        document.getElementById("projThemeStatus").textContent = "Invalid JSON"; return;
       }
       await api.projects.setTheme(_currentProject.id, { theme_overrides: overrides }).catch(() => {});
       _applyProjectTheme(overrides);
       closeModal();
     }},
-    { label: "Clear Overrides", cls: "btn btn-secondary", action: async () => {
+    { label: "Clear", cls: "btn btn-secondary", action: async () => {
       await api.projects.setTheme(_currentProject.id, { theme_overrides: {} }).catch(() => {});
       _clearProjectTheme();
       closeModal();
     }},
     { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
-  ]);
+  ], { wide: true });
+
+  // Wire theme card clicks → populate JSON editor
+  setTimeout(() => {
+    document.querySelectorAll("#projThemeGrid .theme-card").forEach(card => {
+      card.onclick = async () => {
+        const name = card.dataset.theme;
+        const t    = themes.find(x => x.name === name);
+        if (!t) return;
+        const ta = document.getElementById("projThemeJson");
+        if (ta) ta.value = JSON.stringify(t.tokens || {}, null, 2);
+        document.querySelectorAll("#projThemeGrid .theme-card").forEach(c => c.classList.remove("active"));
+        card.classList.add("active");
+        const s = document.getElementById("projThemeStatus");
+        if (s) s.textContent = `${t.display_name || name} tokens loaded — click Save & Apply to activate`;
+      };
+    });
+  }, 50);
 };
 
 async function _projFirmwareRoot(projId) {
@@ -1935,7 +2269,48 @@ function renderRegistry(items, containerId, fields) {
 
 async function loadRecipes() {
   const items = await api.recipes.list().catch(() => []);
-  renderRegistry(items, "recipeList");
+  const el_ = document.getElementById("recipeList");
+  if (!items.length) { el_.innerHTML = '<div class="empty-state">Nothing found.</div>'; return; }
+  el_.innerHTML = "";
+  for (const item of items) {
+    const rname = item._folder || item.name;
+    const title = item.name || rname || "—";
+    const sub   = item.category || "";
+    const tags  = [
+      ...(item.compatibility?.compatible_boards || []).map(b => `<span class="tag">${b}</span>`),
+      ...(item.requires_workers || []).map(w => `<span class="tag accent">${w}</span>`),
+    ].slice(0, 5).join("");
+
+    const card = el("div", "reg-card");
+    card.innerHTML = `
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div class="reg-card-title">${title}</div>
+        ${_packBadge(item)}
+      </div>
+      ${sub ? `<div class="reg-card-sub">${sub}</div>` : ""}
+      ${item.summary ? `<div style="font-size:11px;color:var(--color-text-muted);margin-top:4px;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${item.summary}</div>` : ""}
+      <div class="tag-row">${tags}</div>`;
+
+    const btnRow = el("div", "");
+    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:10px";
+
+    const editBtn = el("button", "btn btn-secondary btn-sm", "📁 Edit");
+    editBtn.dataset.tip = "Browse and edit this recipe's YAML files in the hub editor";
+    editBtn.onclick = () => _openRegistryEditor("recipe", rname, title);
+    btnRow.appendChild(editBtn);
+
+    const delBtn = el("button", "btn btn-danger btn-sm", "✕");
+    delBtn.dataset.tip = "Permanently delete this recipe and all its files";
+    delBtn.onclick = async () => {
+      if (!confirm(`Delete recipe "${title}"? This cannot be undone.`)) return;
+      try { await api.recipes.delete(rname); loadRecipes(); }
+      catch (err) { alert("Delete failed: " + err.message); }
+    };
+    btnRow.appendChild(delBtn);
+
+    card.appendChild(btnRow);
+    el_.appendChild(card);
+  }
 }
 
 async function loadWorkers() {
@@ -1966,22 +2341,37 @@ async function loadWorkers() {
         ${item.quarantine ? '<span class="tag" data-tip="Imported or generated worker — runs sandboxed until reviewed" style="color:var(--color-warning)">quarantined</span>' : ""}
       </div>
     `;
+    const wname = item.name || item._folder;
+    const btnRow = el("div", "");
+    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:10px";
+
     const testBtn = el("button", "btn btn-secondary btn-sm", "▶ Test");
     testBtn.dataset.tip = "Run this worker with test inputs and see the output immediately";
-    testBtn.style.marginTop = "10px";
     testBtn.onclick = () => openWorkerTestModal(item);
-    card.appendChild(testBtn);
+    btnRow.appendChild(testBtn);
+
+    const editBtn = el("button", "btn btn-secondary btn-sm", "📁 Edit");
+    editBtn.dataset.tip = "Browse and edit this worker's files in the hub editor";
+    editBtn.onclick = () => _openRegistryEditor("worker", item._folder || wname, title);
+    btnRow.appendChild(editBtn);
 
     const taskBtn = el("button", "btn btn-secondary btn-sm", "⚡ Agent Task");
     taskBtn.dataset.tip = "Create an agent task scoped to this worker — modify, extend, or debug it";
-    taskBtn.style.marginTop = "10px";
-    taskBtn.style.marginLeft = "6px";
     taskBtn.onclick = () => _openAgentTaskModal({
-      context_type: "worker",
-      context_id:   wname,
-      context_label: item.display_name || wname,
+      context_type: "worker", context_id: wname, context_label: title,
     });
-    card.appendChild(taskBtn);
+    btnRow.appendChild(taskBtn);
+
+    const delBtn = el("button", "btn btn-danger btn-sm", "✕");
+    delBtn.dataset.tip = "Permanently delete this worker and all its files";
+    delBtn.onclick = async () => {
+      if (!confirm(`Delete worker "${title}"? This cannot be undone.`)) return;
+      try { await api.workers.delete(wname); loadWorkers(); }
+      catch (err) { alert("Delete failed: " + err.message); }
+    };
+    btnRow.appendChild(delBtn);
+
+    card.appendChild(btnRow);
     el_.appendChild(card);
   }
 }
@@ -2032,8 +2422,316 @@ function openWorkerTestModal(worker) {
 
 async function loadCards() {
   const items = await api.cards.list().catch(() => []);
-  renderRegistry(items, "cardList");
+  const el_ = document.getElementById("cardList");
+  if (!items.length) { el_.innerHTML = '<div class="empty-state">Nothing found.</div>'; return; }
+  el_.innerHTML = "";
+  for (const item of items) {
+    const cname = item.name || item._folder;
+    const title = item.display_name || cname || "—";
+    const sub   = item.category || "";
+    const src   = item.event_source?.type || "";
+    const tags  = [
+      ...(item.compatible_boards || []).map(b => `<span class="tag">${b}</span>`),
+      src ? `<span class="tag accent" data-tip="Data source type">${src}</span>` : "",
+    ].slice(0, 5).join("");
+
+    const card = el("div", "reg-card");
+    card.innerHTML = `
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div class="reg-card-title">${title}</div>
+        ${_packBadge(item)}
+      </div>
+      ${sub ? `<div class="reg-card-sub">${sub}</div>` : ""}
+      <div class="tag-row">${tags}</div>
+    `;
+
+    const btnRow = el("div", "");
+    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:10px";
+
+    const previewBtn = el("button", "btn btn-secondary btn-sm", "👁 Preview");
+    previewBtn.dataset.tip = `Preview ${title} with simulated data — no device required`;
+    previewBtn.onclick = () => _openCardPreview(cname, title);
+    btnRow.appendChild(previewBtn);
+
+    const editBtn = el("button", "btn btn-secondary btn-sm", "📁 Edit");
+    editBtn.dataset.tip = "Browse and edit this card's files in the hub editor";
+    editBtn.onclick = () => _openRegistryEditor("card", item._folder || cname, title);
+    btnRow.appendChild(editBtn);
+
+    const delBtn = el("button", "btn btn-danger btn-sm", "✕");
+    delBtn.dataset.tip = "Permanently delete this card and all its files";
+    delBtn.onclick = async () => {
+      if (!confirm(`Delete card "${title}"? This cannot be undone.`)) return;
+      try { await api.cards.delete(cname); loadCards(); }
+      catch (err) { alert("Delete failed: " + err.message); }
+    };
+    btnRow.appendChild(delBtn);
+
+    card.appendChild(btnRow);
+    el_.appendChild(card);
+  }
 }
+
+function _openCardPreview(name, title) {
+  const url = `/api/cards/${encodeURIComponent(name)}/preview`;
+  openModal(`Preview — ${title}`, `
+    <div style="border-radius:8px;overflow:hidden;background:#080c10">
+      <iframe src="${url}" style="width:100%;height:460px;border:none;display:block"
+              sandbox="allow-scripts allow-same-origin" title="Card preview"></iframe>
+    </div>
+  `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+}
+
+// ── Registry item editor (Workers / Cards / Recipes) ───────────────────────
+//
+// All three registry types share the same two-panel UX:
+//   List view  — shows file tree, "New File" button, back button
+//   Edit view  — CodeMirror, Save / Delete file / Back-to-list
+//
+// _openRegistryEditor(type, itemName, displayName)  → shows file list
+// _regEditorOpenFile(type, itemName, filePath)       → switches to editor
+// ──────────────────────────────────────────────────────────────────────────
+
+const _REG_API = {
+  worker: api.workers,
+  card:   api.cards,
+  recipe: api.recipes,
+};
+
+let _regEditorCtx = null;  // { type, itemName, displayName }
+
+function _regEditorListView(listViewId, detailViewId) {
+  document.getElementById(listViewId)?.classList.remove("hidden");
+  document.getElementById(detailViewId)?.classList.add("hidden");
+}
+function _regEditorDetailView(listViewId, detailViewId) {
+  document.getElementById(listViewId)?.classList.add("hidden");
+  document.getElementById(detailViewId)?.classList.remove("hidden");
+}
+
+async function _openRegistryEditor(type, itemName, displayName) {
+  const listViewId   = `${type}-list-view`;
+  const detailViewId = `${type}-detail-view`;
+  const detailEl     = document.getElementById(detailViewId);
+  if (!detailEl) return;
+
+  _regEditorCtx = { type, itemName, displayName };
+
+  // Fetch files
+  let files = [];
+  try {
+    const res = await _REG_API[type].files(itemName);
+    files = res.files || [];
+  } catch (err) {
+    alert("Could not load files: " + err.message);
+    return;
+  }
+
+  // Render detail panel
+  detailEl.innerHTML = "";
+
+  const hdr = el("header", "view-header");
+  hdr.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px">
+      <button class="btn btn-secondary btn-sm" id="btnRegBack" data-tip="Return to ${type} list">← Back</button>
+      <div>
+        <h1 style="margin:0">${displayName}</h1>
+        <div style="font-family:monospace;font-size:10px;color:var(--color-text-muted);margin-top:2px;letter-spacing:.06em">${type} · ${itemName}</div>
+      </div>
+    </div>
+    <button class="btn btn-secondary btn-sm" id="btnRegNewFile" data-tip="Create a new file in this ${type}'s folder">＋ New File</button>`;
+  detailEl.appendChild(hdr);
+
+  const fileListEl = el("div", "file-list");
+  fileListEl.id = "regEditorFileList";
+  fileListEl.style.cssText = "margin-top:8px";
+
+  if (!files.length) {
+    fileListEl.innerHTML = '<div class="empty-state">No files yet.</div>';
+  } else {
+    for (const f of files) {
+      const isBin = f.path.endsWith(".bin");
+      const editable = !isBin && f.size_bytes <= 512 * 1024;
+      const row = el("div", "file-row");
+      row.innerHTML = `
+        <span class="file-path" style="${editable ? "cursor:pointer" : ""}">${f.path}${isBin ? ' <span class="tag">BIN</span>' : ""}</span>
+        <span class="file-size">${formatBytes(f.size_bytes)}</span>`;
+      if (editable) {
+        row.dataset.tip = `Click to edit ${f.path}`;
+        row.onclick = () => _regEditorOpenFile(type, itemName, f.path);
+      }
+      fileListEl.appendChild(row);
+    }
+  }
+  detailEl.appendChild(fileListEl);
+
+  // Switch to detail
+  _regEditorDetailView(listViewId, detailViewId);
+
+  // Back button
+  detailEl.querySelector("#btnRegBack").onclick = () => {
+    _regEditorCtx = null;
+    _regEditorListView(listViewId, detailViewId);
+  };
+
+  // New file button
+  detailEl.querySelector("#btnRegNewFile").onclick = () => {
+    openModal("New File", `
+      <div class="form-field">
+        <label data-tip="Relative path within the ${type} folder — e.g. utils/helpers.py">File path</label>
+        <input type="text" id="regNewFilePath" placeholder="e.g. utils/helpers.py" style="width:100%">
+      </div>
+    `, [
+      { label: "Create", cls: "btn btn-primary", action: async () => {
+        const path = document.getElementById("regNewFilePath")?.value?.trim();
+        if (!path) return;
+        try {
+          await _REG_API[type].createFile(itemName, path, "");
+          closeModal();
+          await _openRegistryEditor(type, itemName, displayName);
+          _regEditorOpenFile(type, itemName, path);
+        } catch (err) { alert("Create failed: " + err.message); }
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+    setTimeout(() => document.getElementById("regNewFilePath")?.focus(), 100);
+  };
+}
+
+async function _regEditorOpenFile(type, itemName, filePath) {
+  let content = "";
+  try {
+    const res = await _REG_API[type].readFile(itemName, filePath);
+    content = res.content;
+  } catch (err) {
+    alert("Could not open file: " + err.message);
+    return;
+  }
+
+  const displayName = _regEditorCtx?.displayName || itemName;
+
+  openModal(`✎ ${filePath}`, `
+    <div style="font-family:monospace;font-size:10px;color:var(--color-text-muted);margin-bottom:8px">
+      ${type} / ${itemName} / ${filePath}
+    </div>
+    <div id="codeEditorHost" style="height:460px;border:1px solid var(--color-card-border);border-radius:6px;overflow:hidden;font-size:13px"></div>
+    <div id="editorStatus" style="font-size:11px;color:var(--color-text-muted);margin-top:6px;min-height:16px"></div>
+  `, [
+    { label: "Save", cls: "btn btn-primary", action: async () => {
+      if (!_activeEditor) return;
+      try {
+        await _REG_API[type].writeFile(itemName, filePath, _activeEditor.getValue());
+        document.getElementById("editorStatus").textContent = "Saved ✓";
+        setTimeout(async () => {
+          closeModal();
+          await _openRegistryEditor(type, itemName, displayName);
+        }, 400);
+      } catch (err) { alert("Save failed: " + err.message); }
+    }},
+    { label: "Delete File", cls: "btn btn-danger", action: async () => {
+      if (!confirm(`Delete ${filePath}?`)) return;
+      try {
+        await _REG_API[type].deleteFile(itemName, filePath);
+        closeModal();
+        await _openRegistryEditor(type, itemName, displayName);
+      } catch (err) { alert("Delete failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: () => { _activeEditor = null; closeModal(); } },
+  ], { wide: true });
+
+  const host = document.getElementById("codeEditorHost");
+  if (!host) return;
+  if (typeof CodeMirror === "undefined") {
+    host.innerHTML = `<textarea style="width:100%;height:100%;background:#111;color:#eee;font-family:monospace;font-size:13px;padding:10px;border:none;resize:none">${content.replace(/</g,"&lt;")}</textarea>`;
+    _activeEditor = { getValue: () => host.querySelector("textarea").value };
+    return;
+  }
+  _activeEditor = CodeMirror(host, {
+    value: content,
+    mode: _cmMode(filePath),
+    theme: "dracula",
+    lineNumbers: true,
+    lineWrapping: true,
+    indentUnit: 2,
+    tabSize: 2,
+    matchBrackets: true,
+    autoCloseBrackets: true,
+    extraKeys: { Tab: cm => cm.execCommand("insertSoftTab") },
+  });
+  _activeEditor.setSize("100%", "100%");
+  setTimeout(() => _activeEditor.refresh(), 50);
+}
+
+function _openNewRegistryItemModal(type, onCreated) {
+  const typeCap = type.charAt(0).toUpperCase() + type.slice(1);
+  const catPlaceholder = type === "worker" ? "media.vision" : type === "card" ? "sensing" : "sensing.environmental";
+  openModal(`New ${typeCap}`, `
+    <div class="form-field">
+      <label data-tip="Human-readable display name, e.g. 'My Sensor Worker'">Display Name</label>
+      <input type="text" id="regNewName" placeholder="e.g. My Sensor Worker" style="width:100%">
+    </div>
+    <div class="form-field" style="margin-top:10px">
+      <label data-tip="URL-safe identifier — lowercase letters, digits, hyphens. Becomes the folder name.">Slug / Folder Name</label>
+      <input type="text" id="regNewSlug" placeholder="e.g. my-sensor-worker" style="width:100%">
+      <div id="regSlugPreview" style="font-size:11px;color:var(--color-text-muted);margin-top:4px;font-family:monospace"></div>
+    </div>
+    <div class="form-field" style="margin-top:10px">
+      <label data-tip="Category for grouping in the registry, e.g. media.vision or sensing.environmental">Category</label>
+      <input type="text" id="regNewCategory" placeholder="${catPlaceholder}" style="width:100%">
+    </div>
+    <div class="form-field" style="margin-top:10px">
+      <label data-tip="One-line description shown in the registry grid">Description (optional)</label>
+      <input type="text" id="regNewDesc" placeholder="" style="width:100%">
+    </div>
+  `, [
+    { label: `Create ${typeCap}`, cls: "btn btn-primary", action: async () => {
+      const name = document.getElementById("regNewName")?.value?.trim();
+      const slug = document.getElementById("regNewSlug")?.value?.trim();
+      const cat  = document.getElementById("regNewCategory")?.value?.trim() || "general";
+      const desc = document.getElementById("regNewDesc")?.value?.trim() || "";
+      if (!name || !slug) { alert("Name and slug are required."); return; }
+      try {
+        await _REG_API[type].create({ name, slug, category: cat, description: desc });
+        closeModal();
+        if (onCreated) onCreated(slug, name);
+      } catch (err) { alert("Create failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+  // Auto-slug from name
+  setTimeout(() => {
+    const nameEl = document.getElementById("regNewName");
+    const slugEl = document.getElementById("regNewSlug");
+    const prev   = document.getElementById("regSlugPreview");
+    const toSlug = s => s.toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9\-]/g, "").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
+    nameEl?.addEventListener("input", () => {
+      const s = toSlug(nameEl.value);
+      slugEl.value = s;
+      if (prev) prev.textContent = s ? `→ folder: ${type}s/${s}/` : "";
+    });
+    slugEl?.addEventListener("input", () => {
+      if (prev) prev.textContent = slugEl.value ? `→ folder: ${type}s/${slugEl.value}/` : "";
+    });
+    nameEl?.focus();
+  }, 100);
+}
+
+// Wire New buttons
+document.getElementById("btnNewWorker").onclick = () =>
+  _openNewRegistryItemModal("worker", (slug, name) => {
+    loadWorkers();
+    setTimeout(() => _openRegistryEditor("worker", slug, name), 300);
+  });
+document.getElementById("btnNewCard").onclick = () =>
+  _openNewRegistryItemModal("card", (slug, name) => {
+    loadCards();
+    setTimeout(() => _openRegistryEditor("card", slug, name), 300);
+  });
+document.getElementById("btnNewRecipe").onclick = () =>
+  _openNewRegistryItemModal("recipe", (slug, name) => {
+    loadRecipes();
+    setTimeout(() => _openRegistryEditor("recipe", slug, name), 300);
+  });
 
 // ── Jobs view ──────────────────────────────────────────────────────────────
 
@@ -2441,8 +3139,97 @@ async function openRolloutModal(fw) {
 // ── Design view ────────────────────────────────────────────────────────────
 
 async function loadDesign() {
+  await Promise.all([_loadThemeManager(), _loadTokenGrid()]);
+}
+
+async function _loadThemeManager() {
+  const grid = document.getElementById("themeGrid");
+  if (!grid) return;
+  grid.innerHTML = '<div class="empty-state">Loading themes…</div>';
+
+  const themes = await api.design.themes().catch(() => []);
+  if (!themes.length) {
+    grid.innerHTML = '<div class="empty-state">No themes found.</div>';
+    return;
+  }
+
+  // Key color tokens to show as swatches — in palette order
+  const SWATCH_KEYS = [
+    "color.background", "color.surface", "color.card",
+    "color.accent", "color.accent2", "color.warning",
+    "color.success", "color.text",
+  ];
+
+  grid.innerHTML = "";
+  for (const t of themes) {
+    const tokens = t.tokens || {};
+    const swatches = SWATCH_KEYS
+      .filter(k => tokens[k])
+      .map(k => `<div class="theme-palette-swatch" style="background:${tokens[k]}" data-tip="${k}: ${tokens[k]}"></div>`)
+      .join("");
+
+    const card = el("div", `theme-card${t.is_active ? " active" : ""}`);
+    card.innerHTML = `
+      <div class="theme-palette">${swatches}</div>
+      <div class="theme-card-body">
+        <div class="theme-card-name" data-tip="${t.display_name || t.name}">${t.display_name || t.name}</div>
+        <div class="theme-card-meta">
+          ${t.is_active ? '<span class="theme-active-badge">ACTIVE</span>' : ""}
+          ${t._pack === "custom"
+            ? '<span class="theme-builtin-badge" style="color:var(--color-accent2)" data-tip="Custom theme — stored in design/themes/custom/, not tracked in git">custom</span>'
+            : '<span class="theme-builtin-badge" data-tip="Official theme — tracked in git">official</span>'}
+        </div>
+      </div>
+      <div class="theme-card-actions">
+        ${!t.is_active
+          ? `<button class="btn btn-primary btn-sm theme-activate-btn" data-name="${t.name}"
+               data-tip="Activate the ${t.display_name || t.name} theme for all hub views">Activate</button>`
+          : `<button class="btn btn-secondary btn-sm" disabled
+               data-tip="This theme is already active">Active ✓</button>`}
+        ${!t.builtin
+          ? `<button class="btn btn-danger btn-sm theme-delete-btn" data-name="${t.name}"
+               data-tip="Permanently delete this theme from disk">Delete</button>`
+          : ""}
+      </div>`;
+    grid.appendChild(card);
+  }
+
+  // Activate buttons
+  grid.querySelectorAll(".theme-activate-btn").forEach(btn => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = "Activating…";
+      try {
+        await api.design.setActive(btn.dataset.name);
+        // Reload tokens so the live inspector reflects the change
+        await _loadTokenGrid();
+        await _loadThemeManager();
+      } catch (err) {
+        alert("Could not activate theme: " + err.message);
+        btn.disabled = false;
+        btn.textContent = "Activate";
+      }
+    };
+  });
+
+  // Delete buttons
+  grid.querySelectorAll(".theme-delete-btn").forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm(`Delete theme "${btn.dataset.name}"? This cannot be undone.`)) return;
+      try {
+        await api.design.delete(btn.dataset.name);
+        await _loadThemeManager();
+      } catch (err) {
+        alert("Delete failed: " + err.message);
+      }
+    };
+  });
+}
+
+async function _loadTokenGrid() {
   const tokens = await api.design.tokens().catch(() => ({}));
   const grid = document.getElementById("tokenList");
+  if (!grid) return;
   grid.innerHTML = "";
   for (const [key, value] of Object.entries(tokens)) {
     const row = el("div", "token-row");
@@ -2458,6 +3245,100 @@ async function loadDesign() {
     grid.innerHTML = '<div class="empty-state">No tokens loaded.</div>';
   }
 }
+
+document.getElementById("btnThemeRefresh").onclick = loadDesign;
+
+document.getElementById("btnThemeCreate").onclick = async () => {
+  const baseTokens = await api.design.tokens().catch(() => ({}));
+
+  // All token keys — separate color from non-color
+  const colorKeys  = Object.keys(baseTokens).filter(k => k.startsWith("color."));
+  const otherKeys  = Object.keys(baseTokens).filter(k => !k.startsWith("color."));
+
+  // Build color picker rows
+  const colorRows = colorKeys.map(k => {
+    const v = baseTokens[k] || "#000000";
+    // Hex-only for <input type=color> — strip non-hex
+    const hex = /^#[0-9a-fA-F]{6}$/.test(v) ? v : "#1a1a2e";
+    return `
+      <div class="token-row" style="gap:8px">
+        <input type="color" id="tc_${k.replace(/\./g,'_')}" value="${hex}"
+               style="width:36px;height:28px;padding:2px;border-radius:4px;border:1px solid var(--color-card-border);background:none;cursor:pointer">
+        <span class="token-name" style="flex:1">${k}</span>
+        <input type="text" id="tcv_${k.replace(/\./g,'_')}" value="${v}"
+               style="width:90px;font-family:monospace;font-size:11px;background:var(--color-surface);border:1px solid var(--color-card-border);border-radius:4px;padding:2px 6px;color:var(--color-text)">
+      </div>`;
+  }).join("");
+
+  const otherRows = otherKeys.map(k => `
+    <div class="token-row" style="gap:8px">
+      <span style="width:36px;flex-shrink:0"></span>
+      <span class="token-name" style="flex:1">${k}</span>
+      <input type="text" id="tcv_${k.replace(/\./g,'_')}" value="${baseTokens[k] || ""}"
+             style="width:140px;font-family:monospace;font-size:11px;background:var(--color-surface);border:1px solid var(--color-card-border);border-radius:4px;padding:2px 6px;color:var(--color-text)">
+    </div>`).join("");
+
+  openModal("＋ Create Theme", `
+    <div style="display:flex;gap:12px;margin-bottom:14px">
+      <div class="form-field" style="flex:1">
+        <label data-tip="Human-readable name shown in the theme manager">Display Name</label>
+        <input type="text" id="tcDisplayName" placeholder="e.g. Midnight Forest" style="width:100%">
+      </div>
+      <div class="form-field" style="flex:1">
+        <label data-tip="URL-safe folder name — lowercase, hyphens">Slug</label>
+        <input type="text" id="tcSlug" placeholder="e.g. midnight-forest" style="width:100%">
+      </div>
+    </div>
+    <div class="home-band-hd" style="margin-bottom:8px">
+      <span class="home-band-label">Color Tokens</span>
+      <span style="font-family:monospace;font-size:9px;color:var(--color-text-muted)">pick from palette or type any CSS color</span>
+    </div>
+    <div class="token-grid" id="tcColorGrid" style="margin-bottom:12px">${colorRows}</div>
+    <details>
+      <summary style="font-size:11px;color:var(--color-accent);cursor:pointer;font-family:monospace;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Other Tokens</summary>
+      <div class="token-grid" style="margin-top:8px">${otherRows}</div>
+    </details>
+  `, [
+    { label: "Save Theme", cls: "btn btn-primary", action: async () => {
+      const displayName = document.getElementById("tcDisplayName")?.value?.trim();
+      const slug = document.getElementById("tcSlug")?.value?.trim();
+      if (!displayName || !slug) { alert("Display name and slug are required."); return; }
+      // Collect all token values
+      const tokens = {};
+      for (const k of [...colorKeys, ...otherKeys]) {
+        const valEl = document.getElementById(`tcv_${k.replace(/\./g,'_')}`);
+        if (valEl) tokens[k] = valEl.value.trim();
+      }
+      try {
+        await api.design.create({ slug, display_name: displayName, tokens });
+        closeModal();
+        loadDesign();
+      } catch (err) { alert("Create failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ], { wide: true });
+
+  // Sync color pickers ↔ text inputs
+  setTimeout(() => {
+    for (const k of colorKeys) {
+      const safe = k.replace(/\./g, "_");
+      const picker = document.getElementById(`tc_${safe}`);
+      const text   = document.getElementById(`tcv_${safe}`);
+      if (!picker || !text) continue;
+      picker.oninput = () => { text.value = picker.value; };
+      text.oninput   = () => {
+        const v = text.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) picker.value = v;
+      };
+    }
+    // Auto-slug from display name
+    const nameEl = document.getElementById("tcDisplayName");
+    const slugEl = document.getElementById("tcSlug");
+    const toSlug = s => s.toLowerCase().replace(/[\s_]+/g,"-").replace(/[^a-z0-9\-]/g,"").replace(/-{2,}/g,"-").replace(/^-+|-+$/g,"");
+    nameEl?.addEventListener("input", () => { if (!slugEl.value) slugEl.value = toSlug(nameEl.value); });
+    nameEl?.focus();
+  }, 60);
+};
 
 // ── Events view ────────────────────────────────────────────────────────────
 
@@ -3296,6 +4177,7 @@ function _abWireEvents() {
 
   document.getElementById("btnAbViewDiff").onclick = async () => {
     if (!_abCurrentTask) return;
+    const needsReview = _abCurrentTask.status === "awaiting_review";
     try {
       const { diffs, note } = await api.agentBench.getDiff(_abCurrentTask.id);
       if (!diffs.length) {
@@ -3305,24 +4187,67 @@ function _abWireEvents() {
         openModal("Diff", msg, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
         return;
       }
-      const html = diffs.map(d => {
+
+      // Build per-file diff blocks with Accept/Reject checkboxes
+      const html = diffs.map((d, i) => {
         const lines = d.diff.split("\n").map(line => {
           const cls = line.startsWith("+") && !line.startsWith("+++") ? "add"
                     : line.startsWith("-") && !line.startsWith("---") ? "del"
                     : line.startsWith("@@") ? "hdr" : "ctx";
-          return `<div class="ab-diff-line ${cls}">${line.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
+          return `<div class="ab-diff-line ${cls}">${line.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>`;
         }).join("");
-        return `<div class="ab-diff-file">
-          <div class="ab-diff-file-header">
+        const checkId = `diff_accept_${i}`;
+        return `<div class="ab-diff-file" id="diff_file_${i}" style="margin-bottom:10px">
+          <div class="ab-diff-file-header" style="display:flex;align-items:center;gap:10px">
+            ${needsReview ? `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex-shrink:0" data-tip="Check to keep this file change, uncheck to revert it">
+              <input type="checkbox" id="${checkId}" checked style="width:14px;height:14px;accent-color:var(--color-accent)">
+              <span style="font-family:monospace;font-size:9px;letter-spacing:.06em">KEEP</span>
+            </label>` : ""}
             <span class="ab-diff-status-${d.status}">${d.status.toUpperCase()}</span>
-            <span>${d.path}</span>
+            <span style="font-family:monospace;font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.path}</span>
           </div>
           <div class="ab-diff-content">${lines}</div>
         </div>`;
       }).join("");
+
+      const reviewButtons = needsReview ? [
+        { label: "✓ Apply Selected", cls: "btn btn-primary", action: async () => {
+          const rejectPaths = diffs
+            .filter((_, i) => !document.getElementById(`diff_accept_${i}`)?.checked)
+            .map(d => d.path);
+          const notes = document.getElementById("abReviewNotes")?.value?.trim() || null;
+          try {
+            await api.agentBench.review(_abCurrentTask.id, {
+              decision: "approved", notes, reject_paths: rejectPaths,
+            });
+            closeModal();
+            const task = await api.agentBench.getTask(_abCurrentTask.id).catch(() => _abCurrentTask);
+            _abCurrentTask = task;
+            const statusEl = document.getElementById("abDetailStatus");
+            if (statusEl) { statusEl.className = _abStatusClass(task.status); statusEl.textContent = _abStatusLabel(task.status); }
+            _abUpdateRunControls(task);
+          } catch (err) { alert("Review failed: " + err.message); }
+        }},
+        { label: "↩ Revert All", cls: "btn btn-secondary", action: async () => {
+          if (!confirm("Revert ALL file changes from this run?")) return;
+          const notes = document.getElementById("abReviewNotes")?.value?.trim() || null;
+          try {
+            await api.agentBench.review(_abCurrentTask.id, {
+              decision: "needs_changes", notes, reject_paths: diffs.map(d => d.path),
+            });
+            closeModal();
+            const task = await api.agentBench.getTask(_abCurrentTask.id).catch(() => _abCurrentTask);
+            _abCurrentTask = task;
+            _abUpdateRunControls(task);
+          } catch (err) { alert("Revert failed: " + err.message); }
+        }},
+      ] : [];
+
       openModal(`Diff — ${diffs.length} file(s) changed`,
-        `<div style="max-height:500px;overflow-y:auto">${html}</div>`,
-        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }],
+        `${needsReview ? '<p style="font-size:11px;color:var(--color-text-muted);margin-bottom:10px">Uncheck any file to revert that change. Click <strong>Apply Selected</strong> to approve the rest.</p>' : ""}
+        <div style="max-height:460px;overflow-y:auto">${html}</div>`,
+        [...reviewButtons, { label: "Close", cls: "btn btn-secondary", action: closeModal }],
+        { wide: true },
       );
     } catch (err) { alert("Error: " + err.message); }
   };
@@ -4054,9 +4979,17 @@ async function _toggleNotifications() {
   const sidebar   = document.getElementById("sidebar");
   const hamburger = document.getElementById("btnHamburger");
   const overlay_  = document.getElementById("sidebarOverlay");
-  function closeSidebar() { sidebar.classList.remove("open"); if (overlay_) overlay_.classList.remove("active"); }
-  function openSidebar()  { sidebar.classList.add("open");    if (overlay_) overlay_.classList.add("active"); }
-  hamburger?.addEventListener("click", () => sidebar.classList.contains("open") ? closeSidebar() : openSidebar());
+  function closeSidebar() {
+    sidebar.classList.remove("open");
+    if (overlay_) overlay_.classList.remove("active");
+    if (hamburger) hamburger.classList.remove("nav-open");
+  }
+  function openSidebar() {
+    sidebar.classList.add("open");
+    if (overlay_) overlay_.classList.add("active");
+    if (hamburger) hamburger.classList.add("nav-open");
+  }
+  hamburger?.addEventListener("click", openSidebar);
   overlay_?.addEventListener("click", closeSidebar);
   navItems.forEach(item => item.addEventListener("click", () => { if (window.innerWidth < 700) closeSidebar(); }));
 

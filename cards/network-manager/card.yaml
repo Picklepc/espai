@@ -1,0 +1,49 @@
+schema: ESPAI.card.v1
+name: network-manager
+display_name: Network Manager
+category: system.network
+description: >
+  WiFi and network configuration card for ESP32 devices. Shows current
+  connection (SSID, IP, RSSI, channel), lets users scan for nearby networks,
+  connect to a new SSID, toggle AP mode, and edit the device hostname — all
+  from the hub UI without serial access.
+
+event_source:
+  type: device_api             # calls device /api/status and /api/wifi endpoints
+  polling_interval_ms: 10000   # refresh every 10s
+
+config:
+  show_rssi: true
+  show_channel: true
+  show_mac: false              # hide raw MAC by default (privacy)
+  ap_mode_toggle: true         # show AP mode enable/disable button
+  hostname_editor: true        # allow hostname rename from the card
+
+firmware_notes: >
+  Required device endpoints:
+    GET  /api/status           → {ssid, ip, rssi, channel, mac_hash, hostname}
+    GET  /api/wifi/scan        → [{ssid, rssi, channel, auth_mode}]
+    POST /api/wifi/connect     → {ssid, password}
+    POST /api/wifi/ap          → {enabled: bool}
+    POST /api/wifi/hostname    → {hostname: str}
+  Use esp_wifi.h + ESP-IDF WiFi APIs. Hostname change requires esp_netif +
+  mdns_hostname_set(). AP mode toggle via esp_wifi_set_mode(WIFI_MODE_APSTA).
+
+security:
+  notes: >
+    WiFi credentials are POSTed over the hub proxy — never stored by the hub.
+    The hub forwards the request directly to the device. Consider using HTTPS
+    on the device if the LAN is untrusted.
+    MAC address is hashed (SHA-256) before display — raw MAC is never shown.
+
+compatible_boards:
+  - esp32
+  - esp32s3
+  - esp32c3
+  - esp32s2
+
+example_binding:
+  recipe: any-wifi-project
+
+share_policy:
+  export_public: true

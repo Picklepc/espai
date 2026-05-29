@@ -1,10 +1,56 @@
-﻿schema: ESPAI.worker.v1
+schema: ESPAI.worker.v1
 name: ffmpeg-compressor
 display_name: FFmpeg Compressor
+description: >
+  Compresses video files using FFmpeg with configurable codec (H.264/H.265/VP9),
+  quality, and resolution. Extracts a thumbnail. Returns file size comparison
+  and metadata. Requires ffmpeg and ffprobe on PATH.
 runtime: python
 category: media.video
 inputs:
-  - media.video
+  - name: path
+    type: string
+    required: true
+    description: Input video file path
+  - name: codec
+    type: string
+    required: false
+    default: h264
+    description: "Video codec: h264 | h265 | vp9 | copy"
+  - name: crf
+    type: integer
+    required: false
+    default: 23
+    description: Constant rate factor 0–51 (lower = better quality, larger file)
+  - name: preset
+    type: string
+    required: false
+    default: fast
+    description: "Encoding speed: ultrafast | superfast | veryfast | faster | fast | medium | slow"
+  - name: scale
+    type: string
+    required: false
+    default: original
+    description: "Output resolution: 1080p | 720p | 480p | 360p | original"
+  - name: audio
+    type: string
+    required: false
+    default: aac
+    description: "Audio codec: aac | mp3 | copy | none"
+  - name: thumbnail
+    type: boolean
+    required: false
+    default: true
+    description: Extract a thumbnail image from the compressed output
+  - name: thumb_time
+    type: number
+    required: false
+    default: 2.0
+    description: Seconds into video to capture the thumbnail frame
+  - name: output_dir
+    type: string
+    required: false
+    description: Directory for output files; defaults to same directory as input
 outputs:
   - media.video.compressed
   - media.thumbnail
@@ -15,8 +61,20 @@ permissions:
   secrets: none
 external_tools:
   - ffmpeg
+  - ffprobe
 resource_cost:
   cpu: high
   memory: medium
   disk: high
   realtime_safe: false
+sandbox:
+  preferred: docker
+  native_allowed: true
+entrypoint: main.py
+test_inputs:
+  path: "test/sample.mp4"
+  codec: h264
+  crf: 28
+  preset: fast
+  scale: 720p
+  thumbnail: true

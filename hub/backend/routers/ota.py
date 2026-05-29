@@ -18,8 +18,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, field_validator
 
-from ..config import FIRMWARE_CATALOG_DIR
+from ..config import FIRMWARE_CATALOG_DIR, PROJECTS_DIR
 from ..db import get_conn
+from .. import git_helper
 
 router = APIRouter()
 
@@ -308,11 +309,17 @@ def push_firmware(data: OTARequest):
             resp_body = exc_str
             push_result = "failed"
 
+    # Capture git HEAD SHA from the linked project (if any)
+    git_sha = None
+    proj_id = fw_meta.get("project_id") or ""
+    if proj_id:
+        git_sha = git_helper.get_head_sha(PROJECTS_DIR / proj_id)
+
     with get_conn() as conn:
         conn.execute(
-            """INSERT INTO ota_log (device_id, fw_version, action, result, operator, timestamp)
-               VALUES (?,?,?,?,?,?)""",
-            (data.device_id, data.firmware_id, "push_complete", push_result, data.operator, _now()),
+            """INSERT INTO ota_log (device_id, fw_version, action, result, operator, timestamp, git_sha)
+               VALUES (?,?,?,?,?,?,?)""",
+            (data.device_id, data.firmware_id, "push_complete", push_result, data.operator, _now(), git_sha),
         )
 
     return {

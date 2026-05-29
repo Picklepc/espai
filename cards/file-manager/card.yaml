@@ -1,0 +1,54 @@
+schema: ESPAI.card.v1
+name: file-manager
+display_name: File Manager
+category: system.storage
+description: >
+  Browse and manage files on an ESP32's on-device filesystem (LittleFS, SPIFFS,
+  or SD card) directly from the hub. Navigate directories, download files, delete
+  entries, and check storage usage — all over WiFi without serial access.
+
+event_source:
+  type: device_api             # calls device /api/files/* endpoints
+  polling_interval_ms: 0       # user-triggered refresh (no auto-poll)
+
+config:
+  filesystem: auto             # auto | littlefs | spiffs | sd
+  show_hidden: false           # show files starting with '.'
+  max_file_size_download: 4194304   # 4 MB download cap
+  confirm_delete: true
+
+firmware_notes: >
+  Required device endpoints:
+    GET  /api/files            → {filesystem, total_bytes, used_bytes, files:[{path,size,is_dir}]}
+    GET  /api/files/{path}     → raw file download (Content-Disposition: attachment)
+    DELETE /api/files/{path}   → delete a file
+    POST /api/files/{path}     → upload a file (multipart/form-data)
+
+  LittleFS example (Arduino):
+    server.on("/api/files", HTTP_GET, [](AsyncWebServerRequest* req){
+      String json = "{\"filesystem\":\"littlefs\",\"total_bytes\":";
+      json += LittleFS.totalBytes();
+      json += ",\"used_bytes\":";
+      json += LittleFS.usedBytes();
+      json += ",\"files\":[";
+      // iterate LittleFS and append {path, size, is_dir} entries
+      json += "]}";
+      req->send(200, "application/json", json);
+    });
+
+security:
+  notes: >
+    The hub proxies file download requests through /api/devices/{id}/proxy/{path}
+    rather than giving the card direct access to device IPs.
+    Only files under /data/ are accessible; system config files at root are blocked.
+    Delete confirmation is shown before any destructive action.
+
+compatible_boards:
+  - esp32
+  - esp32s3
+  - esp32c3
+  - esp32s2
+  - esp32cam
+
+share_policy:
+  export_public: true

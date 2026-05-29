@@ -40,7 +40,7 @@ _BLOCKED_PATH_PATTERNS = [
     ".env", "secrets/", ".private.yaml", ".private.json",
     "local.yaml", "secrets.yaml", "data/", "backups/",
     "captures/private/", "firmware/seed/secrets.ini",
-    # ESPai platform code — agents work *on* projects, not *on* the hub itself
+    # ESPAI platform code — agents work *on* projects, not *on* the hub itself
     # (hub-feature tasks that legitimately need hub access must list paths explicitly)
     "firmware/seed/",      # seed template protected — projects get their own copy
     "firmware/provision/", # provision firmware protected
@@ -466,6 +466,7 @@ class RunCreate(BaseModel):
 class ReviewCreate(BaseModel):
     decision: str
     notes: Optional[str] = None
+    reject_paths: list[str] = []  # file paths to revert to snapshot_before
 
     @field_validator("decision")
     @classmethod
@@ -1173,6 +1174,25 @@ def submit_review(task_id: str, data: ReviewCreate):
             "UPDATE agent_tasks SET status=?, updated=? WHERE id=?",
             (new_status, now, task_id),
         )
+    # Revert any explicitly rejected paths to their before-snapshot content
+    if data.reject_paths and data.decision in ("approved", "needs_changes"):
+        with get_conn() as conn:
+            run_row = conn.execute(
+                "SELECT snapshot_before FROM agent_runs WHERE task_id=? ORDER BY started DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        if run_row and run_row["snapshot_before"]:
+            before = json.loads(run_row["snapshot_before"])
+            for rel_path in data.reject_paths:
+                if rel_path in before:
+                    # Restore to before content
+                    abs_path = ROOT / rel_path
+                    abs_path.parent.mkdir(parents=True, exist_ok=True)
+                    abs_path.write_text(before[rel_path], encoding="utf-8")
+                elif (ROOT / rel_path).exists():
+                    # File didn't exist before — delete it
+                    (ROOT / rel_path).unlink()
+
     # Auto-commit project git history when task is approved
     if data.decision == "approved":
         proj_id = task.get("context_id") if task.get("context_type") == "project" else task.get("project_id")

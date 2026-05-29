@@ -1,0 +1,33 @@
+schema: ESPAI.task-template.v1
+id: emulate-project-theme
+name: "Emulate Project Theme"
+description: >
+  Analyse this project's existing web app (CSS files, color values, typography)
+  and generate a matching ESPAI hub theme. The agent reads the project's stylesheets,
+  extracts dominant colors and design tokens, maps them to ESPAI token names, and
+  creates a new custom hub theme (saved to design/themes/custom/{slug}/theme.yaml)
+  that visually matches the project's look.
+
+  When done, the new theme will appear in the hub Design view and can be applied
+  to this project or used hub-wide.
+default_allowed_paths:
+  - "projects/{project_id}/web/"
+  - "projects/{project_id}/firmware/data/"
+  - "design/themes/custom/"
+acceptance_criteria_template:
+  - "A new theme YAML exists at design/themes/custom/{project-slug}/theme.yaml"
+  - "Theme contains all required ESPAI token keys (color.background, color.accent, etc.)"
+  - "Colors are extracted from the project's actual CSS — not invented"
+  - "Theme passes hub API validation (GET /api/design/themes returns the new entry)"
+  - "No existing hub files modified except the new theme file"
+checks:
+  - espai_validate
+suggested_context_questions:
+  - "Which CSS file is the primary stylesheet for the project's web app?"
+  - "Should the theme use the project's accent color as color.accent or color.accent2?"
+  - "Is there a dark or light mode preference to target?"
+notes: >
+  The agent should look for CSS custom properties (--color-*, --bg-*, etc.) first,
+  then fall back to scanning hex color values and background-color / color declarations.
+  Map found colors to ESPAI semantic tokens by brightness and usage context.
+  Provide a short summary of the mapping decisions in the task notes.

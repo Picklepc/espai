@@ -1,4 +1,4 @@
-# ESPai — Codebase conventions
+# ESPAI — Codebase conventions
 
 ## Tooltip rule (mandatory for all UI work)
 

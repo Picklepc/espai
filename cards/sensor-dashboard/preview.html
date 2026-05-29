@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sensor Dashboard — Preview</title>
+<style>
+  :root {
+    --bg:#080c10; --surface:#0d1824; --card:#121f30; --border:#1c3650;
+    --text:#eeddc4; --muted:#7a9aaa; --accent:#1aafc4; --accent2:#e07828;
+    --success:#20bf96; --warning:#f0a820; --danger:#e03248;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,sans-serif;
+         padding:16px; display:flex; justify-content:center; min-height:100vh; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
+          overflow:hidden; width:340px; flex-shrink:0 }
+  .card-hd { padding:12px 16px 10px; border-bottom:1px solid var(--border);
+              display:flex; justify-content:space-between; align-items:center }
+  .card-title { font-weight:700; font-size:14px }
+  .status-dot { width:7px; height:7px; border-radius:50%; background:var(--success);
+                box-shadow:0 0 6px var(--success) }
+  .readings { padding:14px 16px; display:flex; flex-direction:column; gap:14px }
+  .reading { display:flex; flex-direction:column; gap:3px }
+  .r-meta { display:flex; justify-content:space-between; align-items:baseline }
+  .r-label { font-family:monospace; font-size:9px; letter-spacing:.1em;
+              text-transform:uppercase; color:var(--muted) }
+  .r-value { font-size:2rem; font-weight:900; font-family:monospace; line-height:1 }
+  .r-unit  { font-size:12px; font-weight:400; opacity:.7 }
+  .r-badge { font-family:monospace; font-size:9px; letter-spacing:.06em;
+              text-transform:uppercase; padding:2px 6px; border-radius:3px }
+  .r-badge.ok   { background:rgba(32,191,150,.12); color:var(--success) }
+  .r-badge.warn { background:rgba(240,168,32,.12);  color:var(--warning) }
+  svg.spark { width:100%; height:40px; display:block }
+  .card-ft { padding:8px 16px 12px; border-top:1px solid var(--border);
+              display:flex; justify-content:space-between; align-items:center;
+              font-family:monospace; font-size:9px; color:var(--muted) }
+  .preview-banner { font-family:monospace; font-size:9px; letter-spacing:.1em;
+                    text-transform:uppercase; color:var(--warning); text-align:center;
+                    padding:6px; background:rgba(240,168,32,.08); border-radius:6px;
+                    margin-bottom:14px; width:340px }
+</style>
+</head>
+<body>
+<div style="display:flex;flex-direction:column;gap:0;align-items:center">
+  <div class="preview-banner">◈ preview — simulated readings ◈</div>
+  <div class="card">
+    <div class="card-hd">
+      <span class="card-title">Sensor Dashboard</span>
+      <span class="status-dot" title="Simulated online"></span>
+    </div>
+    <div class="readings" id="readings"></div>
+    <div class="card-ft">
+      <span id="lastSeen">last seen just now</span>
+      <span style="color:var(--accent)">hub data store</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const FIELDS = [
+  { key:"temperature", label:"Temperature", unit:"°C",  min:0,  max:40,  base:22, amp:8  },
+  { key:"humidity",    label:"Humidity",    unit:"%",   min:10, max:90,  base:58, amp:20 },
+  { key:"battery_pct", label:"Battery",     unit:"%",   min:0,  max:100, base:78, amp:0  },
+];
+const SPARK_PTS = 40;
+let histories = {};
+let t = 0;
+
+function genVal(f) {
+  return Math.round((f.base + f.amp * Math.sin(t / 7 + f.key.length)) * 10) / 10;
+}
+
+function polyline(pts, color) {
+  const mn = Math.min(...pts), mx = Math.max(...pts), span = mx - mn || 1;
+  const coords = pts.map((v, i) => `${i * (300/(SPARK_PTS-1))},${38 - ((v-mn)/span)*32}`).join(" ");
+  return `<polyline points="${coords}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"/>`;
+}
+
+function render() {
+  t++;
+  const el = document.getElementById("readings");
+  el.innerHTML = "";
+  for (const f of FIELDS) {
+    if (!histories[f.key]) histories[f.key] = Array(SPARK_PTS).fill(f.base);
+    const val = genVal(f);
+    histories[f.key] = [...histories[f.key].slice(1), val];
+
+    const ok = val >= f.min && val <= f.max;
+    const color = ok ? "var(--success)" : "var(--danger)";
+
+    const div = document.createElement("div");
+    div.className = "reading";
+    div.innerHTML = `
+      <div class="r-meta">
+        <span class="r-label">${f.label}</span>
+        <span class="r-badge ${ok?"ok":"warn"}">${ok?"OK":"ALERT"}</span>
+      </div>
+      <div><span class="r-value" style="color:${color}">${val}</span><span class="r-unit"> ${f.unit}</span></div>
+      ${f.key !== "battery_pct" ? `<svg viewBox="0 0 300 40" class="spark">${polyline(histories[f.key], color)}</svg>` : ""}
+    `;
+    el.appendChild(div);
+  }
+  document.getElementById("lastSeen").textContent = `last seen ${new Date().toLocaleTimeString()}`;
+}
+
+render();
+setInterval(render, 2000);
+</script>
+</body>
+</html>

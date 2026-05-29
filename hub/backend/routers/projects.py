@@ -15,6 +15,7 @@ from pydantic import BaseModel, field_validator
 from ..config import ACTIVE_THEME, DESIGN_DIR, FIRMWARE_CATALOG_DIR, PROJECTS_DIR
 from ..db import get_conn, _to_hostname
 from .. import git_helper
+from ..discovery.mdns import mdns_manager as _mdns
 
 router = APIRouter()
 
@@ -48,6 +49,17 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     devices: list[str] | None = None
+
+
+class NodeUpsert(BaseModel):
+    role: str = "node"      # coordinator | sensor | actuator | gateway | observer | hub-agent | relay | node
+    label: str | None = None
+    node_index: int = 0
+
+
+class TopologyPatch(BaseModel):
+    topology: str = "standalone"   # standalone | star | mesh | hub-spoke | pipeline | custom
+    app_type: str = "firmware"     # firmware | hub | hybrid
 
 
 class ProjectThemePatch(BaseModel):
@@ -369,18 +381,46 @@ def _create_project_folder(project_id: str, name: str, description: str | None) 
     git_helper.git_init(proj_dir, f"init: {name} project scaffold")
 
 
-def _row_to_dict(row) -> dict:
+_NODE_ROLES = {"coordinator","sensor","actuator","gateway","observer","hub-agent","relay","node"}
+_TOPOLOGIES = {"standalone","star","mesh","hub-spoke","pipeline","custom"}
+_APP_TYPES  = {"firmware","hub","hybrid"}
+
+
+def _get_nodes(conn, project_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT device_id, role, label, node_index FROM project_nodes WHERE project_id=? ORDER BY node_index",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _sync_devices_col(conn, project_id: str) -> None:
+    """Keep projects.devices JSON in sync with project_nodes (backward compat)."""
+    rows = conn.execute(
+        "SELECT device_id FROM project_nodes WHERE project_id=? ORDER BY node_index",
+        (project_id,),
+    ).fetchall()
+    ids = json.dumps([r["device_id"] for r in rows])
+    conn.execute("UPDATE projects SET devices=? WHERE id=?", (ids, project_id))
+
+
+def _row_to_dict(row, conn=None) -> dict:
     d = dict(row)
     if d.get("devices"):
         try:
             d["devices"] = json.loads(d["devices"])
         except Exception:
             d["devices"] = []
+    else:
+        d["devices"] = []
     if d.get("meta"):
         try:
             d["meta"] = json.loads(d["meta"])
         except Exception:
             pass
+    # Attach structured nodes list
+    if conn is not None:
+        d["nodes"] = _get_nodes(conn, d["id"])
     return d
 
 
@@ -390,16 +430,16 @@ def _row_to_dict(row) -> dict:
 def list_projects():
     with get_conn() as conn:
         rows = conn.execute("SELECT * FROM projects ORDER BY created DESC").fetchall()
-    return [_row_to_dict(r) for r in rows]
+        return [_row_to_dict(r, conn) for r in rows]
 
 
 @router.get("/{project_id}")
 def get_project(project_id: str):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
-    if not row:
-        raise HTTPException(404, f"Project {project_id!r} not found")
-    return _row_to_dict(row)
+        if not row:
+            raise HTTPException(404, f"Project {project_id!r} not found")
+        return _row_to_dict(row, conn)
 
 
 @router.get("/{project_id}/app-url")
@@ -714,6 +754,7 @@ def create_project(data: ProjectCreate):
             (project_id, data.name, data.description, json.dumps(data.devices), slug, now),
         )
     _create_project_folder(project_id, data.name, data.description)
+    _mdns.register_project(slug, project_id)
     return {"id": project_id, "name": data.name, "slug": slug, "created": now}
 
 
@@ -721,14 +762,18 @@ def create_project(data: ProjectCreate):
 def rename_project(project_id: str, data: ProjectCreate):
     """Rename a project, automatically updating the slug/hostname."""
     with get_conn() as conn:
-        row = conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone()
+        row = conn.execute("SELECT id, slug, name FROM projects WHERE id=?", (project_id,)).fetchone()
         if not row:
             raise HTTPException(404, f"Project {project_id!r} not found")
+        old_slug = row["slug"] or _to_hostname(row["name"])
         new_slug = _to_hostname(data.name)
         conn.execute(
             "UPDATE projects SET name=?, slug=?, updated=? WHERE id=?",
             (data.name, new_slug, _now(), project_id),
         )
+    if old_slug != new_slug:
+        _mdns.unregister_project(old_slug)
+    _mdns.register_project(new_slug, project_id)
     return {"id": project_id, "name": data.name, "slug": new_slug}
 
 
@@ -740,7 +785,28 @@ def update_project(project_id: str, data: ProjectUpdate):
     if data.description is not None:
         updates.append("description=?"); vals.append(data.description)
     if data.devices is not None:
+        # Sync both the legacy JSON column AND project_nodes table
         updates.append("devices=?"); vals.append(json.dumps(data.devices))
+        if updates:
+            vals.append(project_id)
+            with get_conn() as conn:
+                if not conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone():
+                    raise HTTPException(404, f"Project {project_id!r} not found")
+                conn.execute(f"UPDATE projects SET {', '.join(updates)} WHERE id=?", vals)
+                # Sync nodes table: remove stale entries, add new ones with default role
+                existing = {r["device_id"] for r in conn.execute(
+                    "SELECT device_id FROM project_nodes WHERE project_id=?", (project_id,)
+                ).fetchall()}
+                new_set = set(data.devices)
+                for did in existing - new_set:
+                    conn.execute("DELETE FROM project_nodes WHERE project_id=? AND device_id=?", (project_id, did))
+                for idx, did in enumerate(data.devices):
+                    if did not in existing:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO project_nodes (project_id, device_id, role, node_index) VALUES (?,?,?,?)",
+                            (project_id, did, "node", idx),
+                        )
+            return {"status": "updated"}
     if not updates:
         return {"status": "no-op"}
     vals.append(project_id)
@@ -751,10 +817,77 @@ def update_project(project_id: str, data: ProjectUpdate):
     return {"status": "updated"}
 
 
+# ── Project node management ───────────────────────────────────────────────────
+
+@router.get("/{project_id}/nodes")
+def list_project_nodes(project_id: str):
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone():
+            raise HTTPException(404, f"Project {project_id!r} not found")
+        return _get_nodes(conn, project_id)
+
+
+@router.put("/{project_id}/nodes/{device_id}")
+def upsert_project_node(project_id: str, device_id: str, body: NodeUpsert):
+    if body.role not in _NODE_ROLES:
+        raise HTTPException(400, f"role must be one of: {', '.join(sorted(_NODE_ROLES))}")
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone():
+            raise HTTPException(404, f"Project {project_id!r} not found")
+        conn.execute(
+            """INSERT INTO project_nodes (project_id, device_id, role, label, node_index)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(project_id, device_id) DO UPDATE SET
+                 role=excluded.role, label=excluded.label, node_index=excluded.node_index""",
+            (project_id, device_id, body.role, body.label, body.node_index),
+        )
+        _sync_devices_col(conn, project_id)
+    return {"project_id": project_id, "device_id": device_id, "role": body.role}
+
+
+@router.delete("/{project_id}/nodes/{device_id}")
+def remove_project_node(project_id: str, device_id: str):
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM project_nodes WHERE project_id=? AND device_id=?",
+            (project_id, device_id),
+        )
+        _sync_devices_col(conn, project_id)
+    return {"project_id": project_id, "device_id": device_id, "removed": True}
+
+
+@router.get("/{project_id}/topology")
+def get_project_topology(project_id: str):
+    meta = _read_project_meta(project_id)
+    return {
+        "topology": meta.get("topology", "standalone"),
+        "app_type": meta.get("app_type", "firmware"),
+    }
+
+
+@router.put("/{project_id}/topology")
+def set_project_topology(project_id: str, body: TopologyPatch):
+    if body.topology not in _TOPOLOGIES:
+        raise HTTPException(400, f"topology must be one of: {', '.join(sorted(_TOPOLOGIES))}")
+    if body.app_type not in _APP_TYPES:
+        raise HTTPException(400, f"app_type must be one of: {', '.join(sorted(_APP_TYPES))}")
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone():
+            raise HTTPException(404, f"Project {project_id!r} not found")
+    meta = _read_project_meta(project_id)
+    meta["topology"] = body.topology
+    meta["app_type"] = body.app_type
+    _write_project_meta(project_id, meta)
+    return {"project_id": project_id, "topology": body.topology, "app_type": body.app_type}
+
+
 @router.delete("/{project_id}")
 def delete_project(project_id: str):
     with get_conn() as conn:
+        row = conn.execute("SELECT slug, name FROM projects WHERE id=?", (project_id,)).fetchone()
         conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+    if row:
+        _mdns.unregister_project(row["slug"] or _to_hostname(row["name"]))
     return {"status": "deleted"}
 
 
@@ -878,6 +1011,59 @@ def set_project_theme(project_id: str, data: ProjectThemePatch):
     meta["theme_overrides"] = data.theme_overrides
     _write_project_meta(project_id, meta)
     return {"status": "saved", "project_id": project_id, "theme_overrides": data.theme_overrides}
+
+
+@router.post("/{project_id}/apply-hub-theme")
+def apply_hub_theme_to_project(project_id: str):
+    """
+    Generate a hub-theme.css file in projects/{id}/web/ containing the active
+    hub theme tokens as CSS custom properties on :root.
+
+    Add <link rel="stylesheet" href="/app/{slug}/hub-theme.css"> to the project's
+    web/index.html to apply the hub palette to the project web app automatically.
+    """
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"Project {project_id!r} not found")
+
+    # Load active hub tokens (same source as /api/design/tokens)
+    from ..registry.loader import scan_folder as _scan
+    from ..config import DESIGN_DIR as _DESIGN_DIR
+    from .. import theme_scheduler as _ts
+    from ..db import get_setting as _gs
+
+    themes = _scan(_DESIGN_DIR / "themes", "theme")
+    dynamic_theme = _ts.get_dynamic_theme()
+    theme_name    = dynamic_theme or _gs("active_theme") or ACTIVE_THEME or "retro"
+    match = next((t for t in themes if t.get("name") == theme_name), None)
+    if not match and themes:
+        match = next((t for t in themes if t.get("name") == "retro"), themes[0])
+    tokens = {**(match.get("tokens", {}) if match else {}), **_ts.get_active_overrides()}
+
+    # Build CSS file
+    lines = [":root {"]
+    for key, value in tokens.items():
+        # Convert ESPAI token key to CSS custom property: color.accent → --color-accent
+        css_var = "--" + key.replace(".", "-")
+        lines.append(f"  {css_var}: {value};")
+    lines.append("}")
+    css = "\n".join(lines) + "\n"
+
+    web_dir = PROJECTS_DIR / project_id / "web"
+    web_dir.mkdir(parents=True, exist_ok=True)
+    css_path = web_dir / "hub-theme.css"
+    css_path.write_text(css, encoding="utf-8")
+    git_helper.git_commit(PROJECTS_DIR / project_id, "theme: apply hub theme tokens")
+
+    slug = row["slug"] or row["name"]
+    return {
+        "status": "ok",
+        "path": str(css_path),
+        "theme": theme_name,
+        "token_count": len(tokens),
+        "link_tag": f'<link rel="stylesheet" href="/app/{slug}/hub-theme.css">',
+    }
 
 
 # ── Project public page serving ───────────────────────────────────────────────

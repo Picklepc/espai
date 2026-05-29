@@ -1,15 +1,40 @@
-﻿schema: ESPAI.worker.v1
+schema: ESPAI.worker.v1
 name: opencv-motion-tagger
 display_name: OpenCV Motion Tagger
+description: >
+  Detects and tags motion in images, image sequences, or video files using
+  background subtraction and contour analysis. Emits motion_detected events.
+  Compatible with ESP32-CAM snapshots, MJPEG recordings, and frame directories.
 runtime: python
 category: media.vision
 inputs:
-  - media.image
-  - media.video
+  - name: path
+    type: string
+    required: true
+    description: Path to a single image, video file, or directory of frame images
+  - name: threshold
+    type: integer
+    required: false
+    default: 500
+    description: Minimum contour area in pixels to register as motion
+  - name: blur_kernel
+    type: integer
+    required: false
+    default: 21
+    description: Gaussian blur kernel size — higher values filter more noise (must be odd)
+  - name: max_frames
+    type: integer
+    required: false
+    default: 300
+    description: Maximum number of video frames to analyse
+  - name: output_dir
+    type: string
+    required: false
+    description: Directory to write motion-frame thumbnail JPEGs (omit to skip thumbnails)
 outputs:
   - media.tags
   - media.thumbnail
-  - event.motion_classified
+  - event.motion_detected
 permissions:
   filesystem: project-media-only
   network: none
@@ -24,3 +49,8 @@ sandbox:
   native_allowed: true
 entrypoint: main.py
 requirements: requirements.txt
+test_inputs:
+  path: "test/frames/"
+  threshold: 500
+  blur_kernel: 21
+  max_frames: 50

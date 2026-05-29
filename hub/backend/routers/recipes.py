@@ -7,6 +7,10 @@ from fastapi import APIRouter, HTTPException
 from ..config import RECIPES_DIR, SCHEMAS_DIR
 from ..db import get_conn
 from ..registry.loader import scan_folder
+from ..reg_files import (FileWrite, NewItemRequest,
+                          delete_item, list_files, read_file,
+                          scaffold_recipe, write_file,
+                          create_file, delete_file)
 
 router = APIRouter()
 
@@ -81,6 +85,11 @@ def _validate_against_schema(data: dict, schema: dict) -> list[str]:
         # Fallback: check required fields only
         required = schema.get("required", [])
         return [f"Missing required field: '{f}'" for f in required if f not in data]
+
+
+@router.post("/new")
+def create_recipe(body: NewItemRequest):
+    return scaffold_recipe(RECIPES_DIR, body)
 
 
 @router.get("/")
@@ -238,3 +247,44 @@ def recipe_compat(recipe_name: str):
         "issues":    issues,
         "satisfied": satisfied,
     }
+
+
+# ── Recipe item management ────────────────────────────────────────────────────
+
+def _recipe_folder(recipe_name: str) -> str:
+    all_recipes = scan_folder(RECIPES_DIR, "recipe")
+    r = next((r for r in all_recipes
+               if r.get("name") == recipe_name or r.get("_folder") == recipe_name), None)
+    if not r:
+        raise HTTPException(404, f"Recipe {recipe_name!r} not found")
+    return r["_folder"]
+
+
+@router.delete("/{recipe_name}")
+def delete_recipe(recipe_name: str):
+    return delete_item(RECIPES_DIR, _recipe_folder(recipe_name))
+
+
+@router.get("/{recipe_name}/files")
+def list_recipe_files(recipe_name: str):
+    return list_files(RECIPES_DIR, _recipe_folder(recipe_name))
+
+
+@router.get("/{recipe_name}/files/{file_path:path}")
+def read_recipe_file(recipe_name: str, file_path: str):
+    return read_file(RECIPES_DIR, _recipe_folder(recipe_name), file_path)
+
+
+@router.put("/{recipe_name}/files/{file_path:path}")
+def write_recipe_file(recipe_name: str, file_path: str, body: FileWrite):
+    return write_file(RECIPES_DIR, _recipe_folder(recipe_name), file_path, body)
+
+
+@router.post("/{recipe_name}/files/{file_path:path}")
+def create_recipe_file(recipe_name: str, file_path: str, body: FileWrite):
+    return create_file(RECIPES_DIR, _recipe_folder(recipe_name), file_path, body)
+
+
+@router.delete("/{recipe_name}/files/{file_path:path}")
+def delete_recipe_file(recipe_name: str, file_path: str):
+    return delete_file(RECIPES_DIR, _recipe_folder(recipe_name), file_path)

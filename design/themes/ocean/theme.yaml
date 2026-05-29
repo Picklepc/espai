@@ -1,0 +1,23 @@
+schema: ESPAI.theme.v1
+name: ocean
+display_name: ESPAI Ocean
+
+# Deep-sea palette: crushing darkness, bioluminescent accents, seafoam highlights.
+# Inspired by the abyssal zone — where the only light is what lives there.
+tokens:
+  color.background:  "#020d14"     # abyssal black-blue
+  color.surface:     "#071c2b"     # deep trench
+  color.card:        "#0b2438"     # midnight water
+  color.card.border: "#0f3a56"     # cold deep current
+  color.text:        "#c8e8f0"     # pale seafoam
+  color.text.muted:  "#4a8ca0"     # muted ocean grey-blue
+  color.accent:      "#00c8e8"     # bioluminescent cyan
+  color.accent2:     "#00e896"     # seafoam green (bioluminescence)
+  color.warning:     "#e8c800"     # deep-sea phosphorescence
+  color.danger:      "#e83248"     # danger red
+  color.success:     "#00e8b0"     # sea-glass green
+  color.sun:         "#0096c8"     # deep blue light
+  radius.card:       "10px"
+  radius.button:     "7px"
+  spacing.card:      "16px"
+  font.body:         "system-ui, -apple-system, sans-serif"

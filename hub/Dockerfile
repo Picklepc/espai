@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.title="ESPai Hub"
+LABEL org.opencontainers.image.title="ESPAI Hub"
 LABEL org.opencontainers.image.description="Local-first ESP32 fleet and edge-processing platform"
 
 WORKDIR /app

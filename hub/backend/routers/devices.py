@@ -96,6 +96,22 @@ def get_device(device_id: str):
     return _row_to_dict(row)
 
 
+@router.get("/{device_id}/projects")
+def device_projects(device_id: str):
+    """List all projects this device is enrolled in, including its role in each."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT pn.project_id, pn.role, pn.label, pn.node_index,
+                      p.name, p.slug, p.description
+               FROM project_nodes pn
+               JOIN projects p ON p.id = pn.project_id
+               WHERE pn.device_id = ?
+               ORDER BY p.name""",
+            (device_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 @router.post("/checkin")
 def checkin(data: DeviceCheckin):
     """Called by nodes on boot and periodically. Upserts device record."""

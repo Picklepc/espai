@@ -109,6 +109,18 @@ def git_commit(proj_dir: Path, message: str, paths: list[str] | None = None) -> 
         return False
 
 
+def get_head_sha(proj_dir: Path) -> str | None:
+    """Return the current HEAD commit SHA (full 40-char), or None if unavailable."""
+    git = _find_git()
+    if not git or not is_repo(proj_dir):
+        return None
+    try:
+        r = _run(git, proj_dir, "rev-parse", "HEAD")
+        return r.stdout.strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def git_log(proj_dir: Path, limit: int = 40) -> list[dict]:
     """Return last N commits as list of dicts."""
     git = _find_git()

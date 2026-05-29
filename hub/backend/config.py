@@ -1,21 +1,42 @@
 ﻿import os
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent.parent
+# Two-directory model (frozen / installed builds only):
+#
+#   INSTALL_DIR  — where the exe and bundled read-only assets live.
+#                  Overwritten on every update.  (~\AppData\Local\Programs\ESPAI)
+#
+#   USER_DIR     — where all mutable user data lives.
+#                  NEVER touched by the installer; survives updates and reinstalls.
+#                  (~\Documents\ESPAI  on Windows, ~/Documents/ESPAI on Linux/macOS)
+#
+# In source / dev mode both dirs collapse to the repo root so nothing changes.
 
-DATA_DIR = ROOT / "data"
-PROJECTS_DIR = ROOT / "projects"
-RECIPES_DIR = ROOT / "recipes"
-WORKERS_DIR = ROOT / "workers"
-CARDS_DIR = ROOT / "cards"
-DESIGN_DIR = ROOT / "design"
-FIRMWARE_CATALOG_DIR = ROOT / "firmware-catalog"
-POLICIES_DIR = ROOT / "policies"
-SCHEMAS_DIR = ROOT / "schemas"
-AGENTS_DIR = ROOT / "agents"
-AGENT_BENCH_DIR = ROOT / "agent-bench"
+if getattr(sys, "frozen", False):
+    INSTALL_DIR = Path(sys.executable).parent
+    USER_DIR    = Path.home() / "Documents" / "ESPAI"
+else:
+    INSTALL_DIR = Path(__file__).parent.parent.parent  # repo root
+    USER_DIR    = INSTALL_DIR
 
-DB_PATH = DATA_DIR / "ESPAI.db"
+# ROOT is kept as an alias for USER_DIR so that any router importing ROOT
+# (e.g. agent_bench.py) automatically resolves paths relative to user data.
+ROOT = USER_DIR
+
+DATA_DIR             = USER_DIR / "data"
+PROJECTS_DIR         = USER_DIR / "projects"
+RECIPES_DIR          = USER_DIR / "recipes"
+WORKERS_DIR          = USER_DIR / "workers"
+CARDS_DIR            = USER_DIR / "cards"
+DESIGN_DIR           = USER_DIR / "design"
+FIRMWARE_CATALOG_DIR = USER_DIR / "firmware-catalog"
+POLICIES_DIR         = USER_DIR / "policies"
+SCHEMAS_DIR          = USER_DIR / "schemas"
+AGENTS_DIR           = USER_DIR / "agents"
+AGENT_BENCH_DIR      = USER_DIR / "agent-bench"
+
+DB_PATH = DATA_DIR / "espai.db"
 
 HOST = os.environ.get("ESPAI_HOST", "0.0.0.0")
 PORT = int(os.environ.get("ESPAI_PORT", "7888"))

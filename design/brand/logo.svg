@@ -1,7 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
   <defs>
+    <!--
+      Pentagon badge shape — top 3/4 is diamond (two 45° diagonal sides meeting
+      at a top point), bottom 1/4 terminates in a flat horizontal edge instead
+      of a bottom point.  Two path sizes are used:
+        outer  — full border stroke
+        inner  — fill + cream ring + clip boundary
+    -->
     <clipPath id="badge-clip">
-      <rect x="39" y="39" width="122" height="122" rx="19" ry="19" transform="rotate(45 100 100)"/>
+      <path d="M 90.1,29.8 Q 100,20 109.9,29.8
+               L 171.1,91.2 Q 181,101 173.2,112.7
+               L 149.8,148.3 Q 142,160 128,160
+               L 72,160 Q 58,160 50.2,148.3
+               L 26.8,112.7 Q 19,101 28.9,91.2 Z"/>
     </clipPath>
     <radialGradient id="sun-grad" cx="50%" cy="100%" r="70%">
       <stop offset="0%"   stop-color="#f07020"/>
@@ -23,15 +34,21 @@
     </filter>
   </defs>
 
-  <!-- Outer teal border (rounded diamond) -->
-  <rect x="33" y="33" width="134" height="134" rx="22" ry="22"
-        transform="rotate(45 100 100)"
+  <!-- Outer teal border — rounded pentagon, teal glow -->
+  <path d="M 87.2,26.6 Q 100,14 112.8,26.6
+           L 174.2,87.4 Q 187,100 177.1,115.0
+           L 154.9,149.0 Q 145,164 127,164
+           L 73,164 Q 55,164 45.1,149.0
+           L 22.9,115.0 Q 13,100 25.8,87.4 Z"
         fill="none" stroke="#1aafc4" stroke-width="3"
         filter="url(#glow-teal)"/>
 
   <!-- Cream inner ring + dark background fill -->
-  <rect x="38" y="38" width="124" height="124" rx="20" ry="20"
-        transform="rotate(45 100 100)"
+  <path d="M 90.1,29.8 Q 100,20 109.9,29.8
+           L 171.1,91.2 Q 181,101 173.2,112.7
+           L 149.8,148.3 Q 142,160 128,160
+           L 72,160 Q 58,160 50.2,148.3
+           L 26.8,112.7 Q 19,101 28.9,91.2 Z"
         fill="url(#bg-grad)" stroke="#eeddc4" stroke-width="1.2" opacity="0.85"/>
 
   <!-- Star field -->
@@ -43,7 +60,7 @@
     <circle cx="48"  cy="138" r="0.7" fill="#eeddc4" opacity="0.35"/>
     <circle cx="155" cy="142" r="0.7" fill="#eeddc4" opacity="0.35"/>
     <circle cx="75"  cy="38"  r="0.7" fill="#eeddc4" opacity="0.5"/>
-    <circle cx="132" cy="160" r="0.6" fill="#eeddc4" opacity="0.3"/>
+    <circle cx="132" cy="155" r="0.6" fill="#eeddc4" opacity="0.3"/>
     <circle cx="168" cy="108" r="0.6" fill="#eeddc4" opacity="0.3"/>
     <circle cx="35"  cy="112" r="0.6" fill="#eeddc4" opacity="0.3"/>
   </g>
@@ -56,7 +73,6 @@
     <line x1="0" y1="138" x2="200" y2="138" stroke="#1aafc4" stroke-width="0.85" opacity="0.65"/>
     <line x1="0" y1="149" x2="200" y2="149" stroke="#1aafc4" stroke-width="0.65" opacity="0.5"/>
     <line x1="0" y1="162" x2="200" y2="162" stroke="#1aafc4" stroke-width="0.5"  opacity="0.4"/>
-    <line x1="0" y1="176" x2="200" y2="176" stroke="#1aafc4" stroke-width="0.4"  opacity="0.3"/>
     <!-- Perspective vanishing lines -->
     <line x1="100" y1="128" x2="0"   y2="200" stroke="#1aafc4" stroke-width="0.9" opacity="0.65"/>
     <line x1="100" y1="128" x2="200" y2="200" stroke="#1aafc4" stroke-width="0.9" opacity="0.65"/>
@@ -93,12 +109,4 @@
         fill="#eeddc4"
         letter-spacing="4">ESPAI</text>
 
-  <!-- Tagline -->
-  <text x="100" y="108"
-        text-anchor="middle"
-        font-family="system-ui,-apple-system,Arial,sans-serif"
-        font-weight="700"
-        font-size="9.5"
-        fill="#e07828"
-        letter-spacing="1.8">YOUR LAB. YOUR RULES.</text>
 </svg>

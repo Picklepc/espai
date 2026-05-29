@@ -1,0 +1,150 @@
+schema: ESPAI.recipe.v1
+name: BLE Peripheral Bridge
+category: connectivity.ble
+summary: >
+  Bridges a BLE peripheral (sensor, wearable, beacon, or audio sink) to the
+  ESPAI hub over WiFi. The ESP32 acts as a BLE Central scanning for target
+  peripherals by UUID or name prefix. On connection it reads/subscribes to
+  characteristic notifications and relays readings to the hub data store.
+  Supports BLE HID, GATT sensors, BLE beacons (iBeacon / Eddystone), and
+  ESP32-to-ESP32 BLE UART tunnels.
+
+compatibility:
+  compatible_boards:
+    - esp32          # original Xtensa with BT radio
+    - esp32s3        # newer Xtensa with BT5 support
+  not_compatible:
+    - esp32c3        # BLE Central (client) role is limited — use ESP32 or S3
+    - esp32s2        # no BT radio
+  tested:
+    - board: esp32
+      peripheral: BLE thermometer (UUID 181A)
+      status: working
+    - board: esp32s3
+      peripheral: BLE HID keyboard
+      status: working
+    - board: esp32
+      peripheral: BLE UART bridge (NordicUART service)
+      status: working
+  likely_works:
+    - board: esp32
+      peripheral: iBeacon / Eddystone beacon
+      reason: BLE scan uses standard GATT scan; UUID filter applied in scan callback.
+
+requires_workers: []   # hub side is pure data-store push; no worker needed by default
+
+pipeline:
+  - step: scan_and_connect
+    runs_on: device
+    description: >
+      On wake (deep-sleep interval or continuous loop): scan BLE for a peripheral
+      matching the configured target UUID or name prefix. Connect, then subscribe
+      to notify characteristics or perform a one-shot read. After reading,
+      optionally disconnect and sleep.
+    outputs:
+      - peripheral_name
+      - peripheral_addr
+      - rssi
+      - readings        # dict of {characteristic_uuid: value} pairs
+
+  - step: push_to_hub
+    runs_on: device
+    description: >
+      POST the reading payload to the hub data store. Include device_id, timestamp,
+      and all characteristic values. The hub rules engine can then trigger workers
+      or webhooks on any field.
+    inputs:
+      - readings
+    outputs:
+      - hub_ack
+
+  - step: alert_on_threshold
+    runs_on: hub
+    type: rules_engine
+    description: >
+      Optional: create a hub rule matching event_type=device.data and source=<device_id>.
+      Trigger a webhook, push notification, or worker when a characteristic value
+      crosses a threshold (e.g. heart rate > 150, battery < 20%).
+
+config:
+  target:
+    mode: uuid          # uuid | name_prefix | mac
+    uuid: "0000181A-0000-1000-8000-00805f9b34fb"   # Environmental Sensing
+    name_prefix: ""     # e.g. "Thermometer" — leave blank when mode=uuid
+    mac: ""             # exact MAC (use for fixed peripherals only)
+  scan_window_ms: 3000  # BLE scan duration per wake cycle
+  connect_timeout_ms: 5000
+  characteristics:
+    - uuid: "00002A6E-0000-1000-8000-00805f9b34fb"   # Temperature
+      label: temperature_c
+      decode: int16_le   # little-endian int16, divide by 100
+    - uuid: "00002A6F-0000-1000-8000-00805f9b34fb"   # Humidity
+      label: humidity_pct
+      decode: uint16_le
+  sleep_after_read: true
+  sleep_interval_seconds: 60
+
+firmware:
+  build_flags:
+    - -D BLE_TARGET_UUID=\"0000181A-0000-1000-8000-00805f9b34fb\"
+    - -D BLE_SCAN_WINDOW_MS=3000
+    - -D HUB_PROJECT_ID=\"REPLACE_WITH_PROJECT_ID\"
+  libraries:
+    - NimBLE-Arduino     # lighter than the default BLE library; use for ESP32
+    # alternative: built-in BLEDevice (ESP32 Arduino) — higher RAM use
+  notes: >
+    Use NimBLE-Arduino for lower heap use (~40 KB vs ~100 KB for the default BLE
+    library). Enable CONFIG_BT_NIMBLE_ENABLED in menuconfig or via platformio.ini.
+    platformio.ini snippet:
+      lib_deps =
+        h2zero/NimBLE-Arduino@^1.4
+      build_flags =
+        -D CONFIG_BT_NIMBLE_ENABLED
+
+hub_web_app:
+  description: >
+    Live BLE peripheral readings dashboard. Shows RSSI signal strength,
+    characteristic values with human-readable labels, and a connect/disconnect
+    status indicator. Uses the hub data store as the source.
+
+variants:
+  ble_uart_tunnel:
+    description: >
+      Forward BLE UART (Nordic UART Service) traffic to the hub terminal.
+      Useful for debugging a BLE-only device over WiFi.
+    pipeline_override:
+      - step: tunnel_uart
+        runs_on: device
+        description: >
+          Subscribes to RX characteristic on NUS service. Forwards each received
+          frame to the hub terminal WebSocket endpoint. Sends hub → device
+          messages over the TX characteristic.
+        service_uuid: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+        rx_characteristic: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+        tx_characteristic: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+
+  ble_hid_forwarder:
+    description: >
+      Read BLE HID reports (keyboard / mouse / gamepad) and forward as hub events.
+      Lets ESPAI react to physical button presses on a BLE remote.
+    pipeline_override:
+      - step: hid_to_event
+        runs_on: device
+        description: >
+          Subscribe to HID Input report characteristic. On each report decode the
+          raw HID descriptor to identify button presses and publish
+          event_type=ble.hid.keypress with the decoded key/button data.
+
+security:
+  notes: >
+    MAC addresses of scanned peripherals are hashed before storage. BLE pairing
+    keys (LTK) are stored in NVS — not exposed via the hub API. Characteristic
+    data containing PII (e.g. from wearables) should be handled with a private
+    overlay that strips sensitive fields before hub storage.
+
+share_policy:
+  export_public: true
+  exclude:
+    - "*.private.yaml"
+    - local.yaml
+    - secrets.yaml

@@ -53,7 +53,7 @@ independently when the hub is unreachable.
 ## 3. Repository Layout
 
 ```
-ESPai/
+ESPAI/
 ├── hub/
 │   ├── backend/              # FastAPI application
 │   │   ├── main.py           # App factory, lifespan, proxy, /app/* route
@@ -135,7 +135,9 @@ ESPai/
 | Prefix | Router file | Domain |
 |---|---|---|
 | `/api/devices` | `routers/devices.py` | Fleet registry, pairing tokens, scan trigger |
-| `/api/projects` | `routers/projects.py` | Project CRUD, file API, theme overrides |
+| `/api/projects` | `routers/projects.py` | Project CRUD, file API, theme overrides, node management, topology |
+| `/api/projects/{id}/nodes` | `routers/projects.py` | Node role management (GET list, PUT upsert, DELETE remove) |
+| `/api/projects/{id}/topology` | `routers/projects.py` | Topology (standalone/star/mesh/hub-spoke/pipeline) + app_type (firmware/hub/hybrid) |
 | `/api/projects/{id}/data` | `routers/data.py` | Time-series data push/pull (see §7) |
 | `/api/recipes` | `routers/recipes.py` | Recipe registry, validation, export, compat |
 | `/api/workers` | `routers/workers.py` | Worker registry, job dispatch, test harness |
@@ -170,14 +172,16 @@ manager — always commits on clean exit, rolls back on exception.
 | Table | Purpose |
 |---|---|
 | `devices` | id, ip, name, board, fw_version, paired, last_seen, capabilities, meta |
-| `projects` | id, name, description, devices (JSON list), slug, created, meta |
-| `ota_log` | Audit trail: device_id, fw_version, action, result, checksum, operator, timestamp |
+| `projects` | id, name, description, devices (JSON list — kept in sync with project_nodes), slug, created, meta |
+| `project_nodes` | project_id, device_id, role, label, node_index — structured node membership with roles |
+| `ota_log` | Audit trail: device_id, fw_version, action, result, checksum, operator, timestamp, git_sha |
 | `jobs` | worker_name, status, inputs, outputs, error, created/started/finished |
 | `events` | source, event_type, payload, timestamp |
 | `pairing_tokens` | token, device_id, created, expires, used |
 | `rules` | name, enabled, event_type, source_filter, action_type, action_config |
 | `project_data` | project_id, device_id, payload (JSON), timestamp — rolling window, 10 000 rows max |
 | `project_data_cache` | Latest reading per (project_id, device_id) — instant load |
+| `hub_settings` | key, value — persistent hub config (active_theme, etc.) |
 
 **Agent Bench tables:**
 
@@ -695,30 +699,111 @@ filtered in the browser by `context_type`. "Standalone" matches tasks with no `c
 
 ---
 
-## 23. Current Build State (as of 2026-05-28)
+## 23. Multi-Node Project Model
 
-Milestones 0–16 substantially complete. Key shipped capabilities:
+Projects support any number of nodes (ESP32 devices) with explicit role assignments,
+topology declarations, and app-type metadata. The hub does not implement mesh
+protocols — it provides the data model and UI scaffolding so users can represent
+arbitrary multi-node architectures.
+
+### 23.1 Data Model
+
+**`project_nodes` table** — one row per (project, device) membership:
+
+| Column | Type | Description |
+|---|---|---|
+| project_id | TEXT | FK → projects.id |
+| device_id  | TEXT | FK → devices.id |
+| role       | TEXT | coordinator / sensor / actuator / gateway / observer / hub-agent / relay / node |
+| label      | TEXT | Optional human-readable instance name ("North Gateway", "Bedroom Sensor") |
+| node_index | INT  | Order within project (for mesh addressing, display order, etc.) |
+
+`projects.devices` (JSON array) is kept in sync on all writes for backward compatibility.
+On startup, `_migrate()` backfills `project_nodes` from any existing `projects.devices` data.
+
+**Project metadata (in `.ESPAI-project.json`):**
+- `topology`: `standalone` | `star` | `mesh` | `hub-spoke` | `pipeline` | `custom`
+- `app_type`: `firmware` (primary logic on ESP32) | `hub` (primary logic in hub worker/web app) | `hybrid`
+
+### 23.2 Node Roles
+
+| Role | Color | Meaning |
+|---|---|---|
+| coordinator | teal/cyan | Mesh coordinator or gateway to the hub |
+| sensor | green | Data collection only |
+| actuator | amber | Output / control (LEDs, motors, relays) |
+| gateway | blue | Bridges other networks (BLE, Zigbee, CAN bus) |
+| observer | muted | Passive monitoring, no state mutation |
+| hub-agent | purple | Hub-side logical node (worker or web app, not a physical device) |
+| relay | yellow | Packet forwarding in a mesh |
+| node | muted | Generic / unassigned |
+
+### 23.3 API Endpoints
+
+```
+GET    /api/projects/{id}/nodes                  → list [{device_id, role, label, node_index}]
+PUT    /api/projects/{id}/nodes/{device_id}      → upsert role/label/node_index
+DELETE /api/projects/{id}/nodes/{device_id}      → remove node from project
+GET    /api/projects/{id}/topology               → {topology, app_type}
+PUT    /api/projects/{id}/topology               → set topology + app_type
+GET    /api/devices/{id}/projects                → [{project_id, name, slug, role, label}]
+```
+
+All write endpoints sync `projects.devices` JSON for backward compat.
+
+### 23.4 Use Cases
+
+**Mesh sensor network (5 nodes):**
+- topology: `mesh`
+- app_type: `firmware` (all logic runs distributed on nodes)
+- 1 × coordinator role, 4 × sensor role
+- Hub aggregates data via project data store; workers run anomaly detection
+
+**BLE presence detection (hub-side app + multiple static endpoints):**
+- topology: `star`
+- app_type: `hub` (hub app processes BLE scan data from multiple static nodes)
+- Each ESP32 node at a static location has role `observer` or `gateway`
+- Hub worker subscribes to BLE beacon events and calculates room presence
+
+**Hybrid door + BLE tracker:**
+- topology: `hub-spoke`
+- app_type: `hybrid` (ESP32 does local sensing; hub app shows presence map)
+- Primary door sensor node: role `sensor`
+- Hub dashboard app: role `hub-agent`
+
+---
+
+## 24. Current Build State (as of 2026-05-29)
+
+Milestones 0–19 (partial) complete. Key shipped capabilities:
 
 - Full fleet registry with mDNS auto-discovery, subnet scan, pairing token flow
-- Project workspace: firmware, web app, files, hub data store, theme overrides
+- **Multi-node project model** — `project_nodes` table, per-node roles, topology, app_type, reverse device→projects lookup
+- Project workspace: firmware, web app, files, hub data store, theme overrides, apply-hub-theme CSS generation
 - **Per-project `ESPAI.md`** auto-generated on create; auto-injected into agent prompts
 - **`agents/rules.md`** injected into every agent prompt
-- OTA: catalog with `label`/`project_id`, push, staged rollout, known-good tracking, rollback
+- OTA: catalog, push, staged rollout, known-good tracking, rollback, **git SHA recorded** at push time
 - **Project-centric OTA UX**: project firmware section, one-click flash from project and fleet
 - Worker pipeline: quarantine, permission enforcement, job queue, test harness
+- **Registry management** — workers/cards/recipes: file browser (CodeMirror), + New scaffold, ✕ Delete
 - **Worker quarantine auto-lift prompt** after agent task approval
 - **Agent Bench context filter** — filter tasks by project/worker/standalone scope
+- **Agent diff view with per-file Accept/Reject** — checkboxes per file, partial revert to snapshot_before
 - Event bus: WebSocket, SSE, MQTT output, rules engine with theme/webhook/worker actions
-- Design system: themes, skins, nav, time/event-based theme scheduling
+- **Design system** — 6 themes (retro, default-dark, light, ocean, warm-amber + user custom); theme manager UI with color picker; official/custom pack distinction; project theme selector with palette preview
 - Agent Bench v2: contextual tasks, thread follow-ups, diff review, claude-code + manual adapters
 - PTY terminal (browser-based, WebSocket)
 - Project data store: push/pull API for ESP32 sensor readings
 - Simulators for all major node types
-- Starter recipes: temperature-pipeline, battery-monitor, motion-alert-pipeline
+- **Registry content packs** — BLE recipe, temperature/battery/motion-alert starter recipes; opencv-motion-tagger + ffmpeg-compressor workers; 6 cards (sensor-dashboard, ota-status, network-manager, device-log, status, trailcam-gallery) with card preview system
+- **In-hub code editor** (CodeMirror 5) — project files + registry items
+- Per-project Git version control with auto-commit on save
+- **Standalone packaging** — PyInstaller spec, frozen path detection, requirements-bundle.txt
 
-**Open priorities (Milestones 14–19):**
-- Registry content packs — workers (hotdog, opencv-motion-tagger, ffmpeg-compressor), cards suite
-- In-hub code editor (Monaco/CodeMirror) — Milestone 15
-- Caddy integration for `{project}.local` routing — Milestone 17
-- Per-project Git version control — Milestone 18
-- Standalone installer + GitHub Releases (PyInstaller) — Milestone 19
+**Open priorities:**
+- Docker sidecar runner for workers
+- Caddy integration for `{project}.local` routing
+- Hotdog-or-not worker, file-manager card, theme color editor improvements
+- GitHub Actions release pipeline (windows + linux builds)
+- Diff view in agent review panel (per-file already done; show inline in review panel)
+- Secondary service advertisement (mDNS for project URLs)

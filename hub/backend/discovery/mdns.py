@@ -57,31 +57,96 @@ class MDNSManager:
         self._zc: "Zeroconf | None" = None
         self._browser = None
         self._hub_info = None
+        self._hub_port: int = 7888
+        self._local_ip: str = "127.0.0.1"
+        self._project_services: dict[str, "ServiceInfo"] = {}
 
     def start(self, hub_port: int, on_node_found: Callable[[dict], None]) -> None:
         if not _ZEROCONF_OK:
             return
         self._zc = Zeroconf()
-        # advertise hub
+        self._hub_port = hub_port
         hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
+        self._local_ip = socket.gethostbyname(hostname)
         self._hub_info = ServiceInfo(
             _HUB_SERVICE_TYPE,
             f"ESPAI Hub.{_HUB_SERVICE_TYPE}",
-            addresses=[socket.inet_aton(local_ip)],
+            addresses=[socket.inet_aton(self._local_ip)],
             port=hub_port,
             properties={"version": "0.1.0"},
         )
         self._zc.register_service(self._hub_info)
-        log.info("mDNS: hub advertised as %s:%d", local_ip, hub_port)
-        # browse for nodes
+        log.info("mDNS: hub advertised as %s:%d", self._local_ip, hub_port)
         self._browser = ServiceBrowser(
             self._zc, _NODE_SERVICE_TYPE,
             NodeDiscoveryListener(on_node_found, self._zc),
         )
 
+    def register_project(self, slug: str, project_id: str) -> None:
+        """
+        Advertise a project on mDNS as {slug}._http._tcp.local. with server={slug}.local.
+        This makes the project's hub URL discoverable on the LAN and allows
+        browsers/clients to find it at http://{slug}.local:{port}/app/{slug}/.
+        """
+        if not _ZEROCONF_OK or not self._zc:
+            return
+        # Unregister any previous advertisement for this slug
+        self.unregister_project(slug)
+        try:
+            info = ServiceInfo(
+                "_http._tcp.local.",
+                f"{slug}._http._tcp.local.",
+                addresses=[socket.inet_aton(self._local_ip)],
+                port=self._hub_port,
+                properties={
+                    b"path":       f"/app/{slug}/".encode(),
+                    b"espai":      b"1",
+                    b"project_id": project_id.encode(),
+                },
+                server=f"{slug}.local.",
+            )
+            self._zc.register_service(info)
+            self._project_services[slug] = info
+            log.info("mDNS: project '%s' advertised as %s.local:%d", slug, slug, self._hub_port)
+        except Exception as exc:
+            log.warning("mDNS: failed to advertise project '%s': %s", slug, exc)
+
+    def unregister_project(self, slug: str) -> None:
+        """Remove the mDNS advertisement for a project."""
+        if not _ZEROCONF_OK or not self._zc:
+            return
+        info = self._project_services.pop(slug, None)
+        if info:
+            try:
+                self._zc.unregister_service(info)
+                log.info("mDNS: project '%s' unregistered", slug)
+            except Exception:
+                pass
+
+    def register_all_projects(self) -> None:
+        """Register all current projects on startup. Called from main.py lifespan."""
+        if not _ZEROCONF_OK or not self._zc:
+            return
+        try:
+            from ..db import get_conn
+            with get_conn() as conn:
+                rows = conn.execute("SELECT id, slug, name FROM projects").fetchall()
+            from ..db import _to_hostname
+            for row in rows:
+                slug = row["slug"] or _to_hostname(row["name"])
+                if slug:
+                    self.register_project(slug, row["id"])
+        except Exception as exc:
+            log.warning("mDNS: register_all_projects failed: %s", exc)
+
     def stop(self) -> None:
         if self._zc:
+            for info in self._project_services.values():
+                try:
+                    self._zc.unregister_service(info)
+                except Exception:
+                    pass
+            self._project_services.clear()
             if self._hub_info:
                 self._zc.unregister_service(self._hub_info)
             self._zc.close()

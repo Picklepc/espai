@@ -1,0 +1,23 @@
+schema: ESPAI.theme.v1
+name: warm-amber
+display_name: ESPAI Warm Amber
+
+# Workshop palette: forge-lit darkness, hammered-copper accents, worn leather text.
+# Inspired by a machinist's bench at night — analog warmth meets digital precision.
+tokens:
+  color.background:  "#100a04"     # forge-darkened iron
+  color.surface:     "#1e1208"     # worn workbench
+  color.card:        "#281a0a"     # oiled walnut
+  color.card.border: "#3d2510"     # copper patina edge
+  color.text:        "#f0d8a8"     # aged parchment
+  color.text.muted:  "#907858"     # weathered brass
+  color.accent:      "#e07828"     # hammered copper (ESPAI orange)
+  color.accent2:     "#f0a820"     # molten gold
+  color.warning:     "#e8c060"     # hot metal glow
+  color.danger:      "#d03828"     # red-hot iron
+  color.success:     "#60b858"     # verdigris green
+  color.sun:         "#e05020"     # forge ember
+  radius.card:       "8px"
+  radius.button:     "5px"
+  spacing.card:      "16px"
+  font.body:         "system-ui, -apple-system, sans-serif"

@@ -97,8 +97,15 @@
 - [x] worker-triggered events (runner publishes events[] from worker stdout; rules engine evaluates them automatically)
 
 ## Milestone 10 — Multi-Node Apps and Shared Services
-- [ ] multi-node project model
-- [ ] secondary service advertisement
+- [x] Multi-node project model — `project_nodes` table `(project_id, device_id, role, label, node_index)`; backfill migration from `projects.devices` JSON on startup; node roles: coordinator/sensor/actuator/gateway/observer/hub-agent/relay/node; topology: standalone/star/mesh/hub-spoke/pipeline/custom; app_type: firmware/hub/hybrid; topology/app_type stored in `.ESPAI-project.json`; backward-compat: `projects.devices` JSON kept in sync on all writes
+  - `GET/PUT/DELETE /api/projects/{id}/nodes/{device_id}` — per-node role management
+  - `GET /api/projects/{id}/nodes` — list nodes with roles
+  - `GET/PUT /api/projects/{id}/topology` — topology and app_type
+  - `GET /api/devices/{id}/projects` — reverse lookup: which projects a device belongs to and with what role
+  - Project detail: Nodes section shows topology/app-type dropdowns, per-node role badges (color-coded by role), "⚙ Role" modal, role-aware Find Node + Link dialogs
+  - Dashboard project cards: topology badge in hero, node count, app-type indicator
+  - Fleet device pills: project membership chips (clickable, color matches role)
+- [x] secondary service advertisement — `MDNSManager.register_project(slug, project_id)` advertises `{slug}._http._tcp.local.` with `server={slug}.local.`; called on project create/rename/delete; `register_all_projects()` called at hub startup; `unregister_project(slug)` on delete/rename
 - [x] resource cost metadata (jobs view cross-references worker registry for resource_cost; cpu/memory/disk tags with color coding; not-rt-safe badge; click-to-expand job outputs/error)
 - [x] direct realtime broker (WebSocket — ws_broker.py ConnectionManager; /api/ws endpoint; broadcast_event_sync wired into events publish; frontend uses WebSocket replacing SSE with auto-reconnect)
 
@@ -113,7 +120,7 @@
 ## Milestone 12 — Packaging
 - [x] Docker appliance scaffold (docker-compose.yml)
 - [x] Hub Dockerfile (hub/Dockerfile — python:3.12-slim, healthcheck, uvicorn)
-- [x] Windows tray app scaffold (hub/tray/tray.py — pystray + PIL icon; Start/Stop/Open Dashboard/Exit menu; auto-starts hub; espai.py tray command)
+- [x] Windows tray app (hub/tray/tray.py — pystray + PIL icon; Start/Stop/Restart/Open Dashboard/Open Logs/Start at Login/Exit; dynamic enabled state; teal↔gray icon reflects hub state; hub stdout→data/espai-hub.log; Open Logs spawns live PowerShell tail console; winreg autostart toggle; frozen-exe auto-starts tray on double-click; console=False in spec so no terminal window appears)
 - [x] backup/restore (GET /api/admin/backup + download; POST /api/admin/restore with column allowlist guard; GET /api/admin/status; ⬇ Backup + ⬆ Restore buttons in OTA view)
 - [x] future VSCode extension API readiness (GET /api/meta — capabilities list, endpoint map, schema versions)
 
@@ -141,36 +148,39 @@
 ## Milestone 14 — Registry Content Packs
 
 ### Recipes
-- [ ] BLE integration recipe — Bluetooth speaker / BLE sink (common ESP32 + BLE peripheral, e.g. A2DP audio bridge or BLE sensor aggregator)
-- [ ] Additional starter recipes — temperature pipeline, motion-alert pipeline, battery monitor
+- [x] BLE integration recipe — `recipes/ble-peripheral-bridge/recipe.yaml`; BLE Central scan by UUID/name/MAC; characteristic decode (int16_le/uint16_le); NimBLE-Arduino notes; variants: BLE UART tunnel + BLE HID forwarder; security: MAC hashing
+- [x] Additional starter recipes — `recipes/temperature-pipeline/recipe.yaml`, `recipes/motion-alert-pipeline/recipe.yaml`, `recipes/battery-monitor/recipe.yaml`
 
 ### Workers
-- [ ] Hotdog-or-not worker — OpenCV + image classifier; accepts image input (JPEG bytes or path), returns `{is_hotdog: bool, confidence: float, label: str}`; designed for ESP32-CAM integration; fully fleshed out with manifest, entrypoint, test data, and card binding
-- [ ] Flesh out existing opencv-motion-tagger scaffold with complete implementation, test fixture, and example card binding
-- [ ] ffmpeg-compressor — complete the existing scaffold
+- [x] Flesh out existing opencv-motion-tagger scaffold — full implementation: video (MOG2), image sequence (frame diff), single image (Canny edge proxy); bounding-box regions, motion scores, thumbnail generation, ESPAI event emission; updated worker.yaml with typed inputs and test_inputs
+- [x] ffmpeg-compressor — `workers/ffmpeg-compressor/main.py`; H.264/H.265/VP9 via subprocess ffmpeg; configurable CRF/preset/scale/audio; thumbnail extraction; ffprobe metadata; compression ratio; emits media.compressed event
 
 ### Cards
-- [ ] Card preview system — in-hub HTML preview pane using dummy data so cards render without a live device
+- [x] Card preview system — `GET /api/cards/{name}/preview`; serves hand-authored `preview.html` if present, else generates retro-styled preview from card YAML; sensor-dashboard has animated live preview with sparklines + dummy readings; Cards view has "👁 Preview" button per card opening an iframe modal
 - [ ] Theme selector card — lets users switch the hub theme, create/delete themes, and pick per-project themes
-- [ ] Network manager card — WiFi STA (SSID scan + connect), AP mode toggle, hostname editor, IP display
-- [ ] File manager card — browse SD card or LittleFS/SPIFFS on-device file system; navigate, download, delete
+- [x] Network manager card — `cards/network-manager/card.yaml`; WiFi STA/AP, SSID scan, hostname editor; device endpoint spec included
+- [x] File manager card — `cards/file-manager/card.yaml`; browse LittleFS/SPIFFS/SD via device REST API; device endpoint spec included; interactive `preview.html` with directory navigation, storage bar, mock file tree (7 KB)
+- [x] Device log card — `cards/device-log/card.yaml`; WebSocket log stream + polling fallback; level filter; ring buffer; auto-scroll
 - [x] Sensor dashboard card — `cards/sensor-dashboard/card.yaml`; hub data store source; configurable field list with units and sparkline; alert thresholds; firmware push pattern documented
 - [x] OTA status card — `cards/ota-status/card.yaml`; reads device manifest and OTA log; one-click push from card; channel filter
-- [ ] Device log card — tail of serial/log output from a connected device
 
 ### Themes
-- [ ] Theme manager UI — hub-level theme switcher: list themes, select active, create new, delete (original default-dark is undeletable)
-- [ ] Theme color editor — pick colors per token with live preview, save as new theme or overwrite existing
-- [ ] Project-level theme selector — apply any hub theme to one or more projects from the project detail view
+- [x] Theme manager UI — Design view has theme grid with palette swatches, Activate/Delete buttons; GET/PUT `/api/design/theme/active`; DELETE `/api/design/themes/{name}`; `hub_settings` DB table persists active theme; built-in themes undeletable
+- [x] Theme color editor — "＋ Create Theme" in Design view; color pickers for all `color.*` tokens; text fields for radii/fonts; auto-slug from name; `POST /api/design/themes` creates YAML in `design/themes/custom/`; `design/themes/.gitignore` excludes custom/ from git
+- [x] Project-level theme selector — 🎨 Theme button replaced: shows hub theme cards with palette swatches (same style as Design view); click card to load tokens into JSON editor; "Save & Apply" applies them as project overrides
+- [x] Theme official/custom pack flags — `_pack: official` for `design/themes/*/`, `_pack: custom` for `design/themes/custom/*/`; theme manager cards show "official" (teal) vs "custom" (amber) badge; new themes from color editor always go to custom/
 - [x] Light theme — `design/themes/light/theme.yaml`; clean light palette for bright environments
+- [x] Ocean theme — `design/themes/ocean/theme.yaml`; abyssal dark blues, bioluminescent cyan/seafoam accents
+- [x] Warm Amber theme — `design/themes/warm-amber/theme.yaml`; forge-lit darks, hammered-copper and molten-gold accents
 
 ## Milestone 15 — In-Hub Code Editor
 
 - [x] File click → in-hub text editor modal — CodeMirror 5 (dracula theme) via CDN; supports JS, C/C++, Python, YAML, Markdown, HTML, CSS, INI; mode auto-detected by extension; `.bin` and files >512 KB are non-clickable; modal-wide layout (860px)
 - [x] Save, delete operations from editor — PUT/DELETE `/api/projects/{id}/files/{path}`; path-traversal and private-file guards; protected files (platformio.ini, ESPAI.md, .ESPAI-project.json) blocked from delete
 - [x] New file creation — "+ New File" button; enter relative path; POST `/api/projects/{id}/files/{path}`; opens editor immediately after create
-- [ ] Project / card / worker name rename from the hub portal (PATCH name in-place)
-- [ ] Diff view for staged agent changes with Accept / Reject per-file
+- [x] Project rename from hub portal — `PATCH /api/projects/{id}/rename`; ✎ Rename button in project detail header; live hostname preview
+- [x] Card / worker / recipe management from hub portal — `POST /new` scaffold + `DELETE /{name}` + full file CRUD (`GET/PUT/POST/DELETE /{name}/files/{path}`); shared `reg_files.py` helper; "📁 Edit" opens file browser subview with CodeMirror; "＋ New" modal with auto-slug; "✕ Delete" with confirmation; path-traversal guard; bad-slug guard
+- [x] Diff view per-file Accept/Reject — diff modal has per-file checkboxes (default: all checked = accept); "✓ Apply Selected" approves task with unchecked paths as `reject_paths` (reverted to snapshot_before); "↩ Revert All" sends all paths as reject_paths; `ReviewCreate.reject_paths` field; `submit_review` restores rejected files from snapshot
 
 ## Milestone 16 — ESPAI Context Files
 
@@ -182,7 +192,7 @@
 ## Milestone 17 — Local Project Access (Caddy / mDNS routing)
 
 - [ ] Caddy integration — auto-generate a Caddyfile mapping project names to hub-hosted project pages (e.g. `motion-sensor.local → hub:8080/projects/{id}`)
-- [ ] Project page nav — "Open" button on project detail that launches the device's own web UI or the hub proxy URL in a new tab
+- [x] Project page nav — "🌐 Open App" button in project detail calls `GET /api/projects/{id}/app-url`; priority: hub-hosted web/index.html → linked device IP → mDNS slug.local; opens in new tab
 - [x] LAN device browser — `POST /api/devices/browse` probes all 254 subnet hosts on port 80; returns ESPAI nodes (is_espai=True) + any other HTTP device (title from `<title>`, server header); "🔍 Browse LAN" button in Fleet; results modal shows both groups with direct "Open ↗" links
 - [x] Device link from fleet — paired and unpaired devices with known IPs show a "🌐" button that opens `http://{ip}/` in a new tab
 
@@ -191,27 +201,26 @@
 - [x] Per-project Git init on project create — `git_helper.git_init(proj_dir)` called at end of `_create_project_folder`; uses local `.git` check (not parent repo detection); silent when git unavailable
 - [x] Auto-commit on file save — `write_project_file` calls `git_helper.git_commit` with message `edit: {path}` after each save; also on agent task approval via `submit_review` with message `agent: {title} (approved)`
 - [x] Version history view in project detail — `GET /api/projects/{id}/git/log`; "📋 History" button shows last 40 commits with hash, message, author, timestamp; shows "no git repo" message for projects without own .git
-- [ ] OTA firmware version pinned to git tag — firmware push records the commit SHA in the audit log
+- [x] OTA firmware version pinned to git SHA — `ota_log.git_sha` column (additive migration); `git_helper.get_head_sha()` captures project HEAD SHA at push time; stored in `push_complete` audit log entry; linked to the firmware's `project_id`
 - [ ] Rollback to prior firmware tied to git branch / tag
 
 ## Milestone 19 — Standalone Installer and GitHub Releases
 
 ### Core packaging
-- [ ] **Frozen path detection in `config.py` and `espai.py`** — detect `sys.frozen` (PyInstaller) and set `ROOT = Path(sys.executable).parent` so data dirs (`data/`, `projects/`, `firmware-catalog/`) resolve relative to the exe, not the bundle internals
-- [ ] **`espai.spec`** — PyInstaller one-dir spec: entry point `espai.py`, bundles `hub/frontend/`, `recipes/`, `workers/`, `cards/`, `design/`, `agents/`, `agent-bench/` as data files; excludes `.venv`, `__pycache__`, `.git`
-- [ ] **`requirements-bundle.txt`** — locked/pinned requirements for reproducible builds; includes `pyinstaller`, `pystray`, `pillow`, `pywinpty` (Windows) or `ptyprocess` (Linux)
+- [x] **Frozen path detection in `config.py`** — `sys.frozen` check; `ROOT = Path(sys.executable).parent` for bundled exe, `Path(__file__).parent.parent.parent` for source
+- [x] **`espai.spec`** — PyInstaller one-dir spec; bundles hub/frontend/, recipes/, workers/, cards/, design/, agents/, policies/, schemas/; hidden imports for uvicorn, FastAPI, pydantic, zeroconf, pystray, PIL, winpty; excludes dev tools
+- [x] **`requirements-bundle.txt`** — locked requirements including pyinstaller, pystray, pillow, pywinpty (Windows) / ptyprocess (Linux), optional paho-mqtt; opencv commented out (large)
 
 ### GitHub Actions release pipeline
-- [ ] **`.github/workflows/release.yml`** — triggered on tag push `v*.*.*`; two parallel jobs: `build-windows` (runs-on `windows-latest`) and `build-linux` (runs-on `ubuntu-latest`); each installs Python 3.12, runs PyInstaller, zips the dist folder, uploads artifact
-- [ ] **Release job** — creates a GitHub Release from the tag; attaches `ESPAI-windows.zip` and `ESPAI-linux.tar.gz` as downloadable assets; auto-generates release notes from commit messages since last tag
+- [x] **`.github/workflows/release.yml`** — triggered on tag push `v*.*.*`; parallel `build-windows` (windows-latest) and `build-linux` (ubuntu-latest) jobs; each installs Python 3.12, runs PyInstaller, zips/tars dist; `release` job creates GitHub Release with auto-generated notes from commits; attaches `ESPAI-windows.zip` and `ESPAI-linux.tar.gz`; pre-release flag for tags containing `-`
 
 ### Windows experience
-- [ ] **Windows: launch via `ESPAI.exe`** — entry point invokes `espai.py serve` and opens the dashboard in the default browser; optionally starts the tray icon so the hub runs in the background
-- [ ] **Windows: optional Inno Setup installer** — wraps the PyInstaller one-dir output in a proper installer wizard; installs to `%LOCALAPPDATA%\ESPAI`, creates Start Menu shortcut and optional autostart entry; uninstall support
+- [x] **Windows: launch via `ESPAI.exe`** — `espai.py serve --open` opens dashboard in default browser after 2s startup delay (via background thread); auto-open always on when `sys.frozen` (bundled exe); `--open` flag added to serve subparser
+- [x] **Windows: Inno Setup installer** — `installer/espai.iss`; single `ESPAI-Setup-{version}.exe`; installs to `%LOCALAPPDATA%\Programs\ESPAI` (no elevation); Start Menu + optional desktop shortcut; optional startup-at-login task; uninstall removes registry key; CI builds and attaches to GitHub Release
 
 ### Linux experience
-- [ ] **Linux: launch via `./espai`** — single binary entry; `espai serve` starts uvicorn; `espai doctor` checks deps as usual
-- [ ] **Linux: optional `.deb` package** — installs binary to `/usr/local/bin/espai`, data skeleton to `/etc/espai/` (read-only defaults) and `~/.local/share/espai/` (user data); systemd service unit included
+- [x] **Linux: AppImage** — CI assembles `AppDir` from PyInstaller one-dir output; generates teal-diamond icon via PIL; adds `AppRun` + `.desktop`; builds `ESPAI-{version}-x86_64.AppImage` using appimagetool (FUSE-free extract method for CI compatibility); attached to GitHub Release
+- [ ] **Linux: `.deb` package** — installs binary to `/usr/local/bin/espai`, data skeleton to `/etc/espai/` (read-only defaults) and `~/.local/share/espai/` (user data); systemd service unit included
 
 ### First-run experience
-- [ ] **First-run scaffold** — on first launch from a bundled exe, copy default `recipes/`, `workers/`, `cards/`, `design/` from the bundle into the user data directory alongside the exe (Windows) or `~/.local/share/espai/` (Linux); show a one-time welcome message with the dashboard URL
+- [x] **First-run scaffold** — `_first_run_scaffold()` in espai.py; when `sys.frozen` and `data/.espai-initialized` absent: copies content packs (recipes/workers/cards/design/agents/policies/schemas) from PyInstaller bundle (_MEIPASS) to exe dir; writes default .env; creates sentinel file; prints welcome message with paths

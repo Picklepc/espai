@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>File Manager — Preview</title>
+<style>
+  :root {
+    --bg:#080c10; --surface:#0d1824; --card:#121f30; --border:#1c3650;
+    --text:#eeddc4; --muted:#7a9aaa; --accent:#1aafc4; --accent2:#e07828;
+    --success:#20bf96; --warning:#f0a820; --danger:#e03248;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,sans-serif;
+         padding:16px; display:flex; justify-content:center; min-height:100vh }
+  .wrap { width:360px }
+  .preview-banner { font-family:monospace; font-size:9px; letter-spacing:.1em; text-transform:uppercase;
+                    color:var(--warning); text-align:center; padding:6px;
+                    background:rgba(240,168,32,.08); border-radius:6px; margin-bottom:12px }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden }
+  .card-hd { padding:10px 14px; border-bottom:1px solid var(--border); display:flex;
+              justify-content:space-between; align-items:center }
+  .card-title { font-weight:700; font-size:13px }
+  .storage-bar { height:4px; background:var(--border); border-radius:2px; margin:0 14px; }
+  .storage-fill { height:4px; border-radius:2px; background:var(--accent); transition:width .6s }
+  .storage-meta { font-family:monospace; font-size:9px; color:var(--muted); padding:4px 14px 8px;
+                  display:flex; justify-content:space-between }
+  .path-bar { padding:6px 14px; background:var(--surface); font-family:monospace; font-size:10px;
+              color:var(--accent); border-bottom:1px solid var(--border); display:flex; gap:4px;
+              align-items:center }
+  .file-list { max-height:260px; overflow-y:auto }
+  .file-row { display:flex; align-items:center; gap:8px; padding:7px 14px;
+              border-bottom:1px solid rgba(28,54,80,.5); cursor:pointer; transition:background .1s }
+  .file-row:hover { background:rgba(26,175,196,.06) }
+  .file-row.dir .file-name { color:var(--accent); }
+  .file-icon { width:14px; text-align:center; font-size:12px; flex-shrink:0 }
+  .file-name { font-family:monospace; font-size:11px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .file-size { font-family:monospace; font-size:9px; color:var(--muted); flex-shrink:0 }
+  .file-actions { display:flex; gap:4px; opacity:0; transition:opacity .15s }
+  .file-row:hover .file-actions { opacity:1 }
+  .btn-icon { background:none; border:1px solid var(--border); border-radius:4px; padding:2px 6px;
+              font-size:9px; cursor:pointer; color:var(--muted) }
+  .btn-icon:hover { border-color:var(--accent); color:var(--accent) }
+  .btn-del { border-color:transparent }
+  .btn-del:hover { border-color:var(--danger); color:var(--danger) }
+  .card-ft { padding:8px 14px; border-top:1px solid var(--border); display:flex; gap:6px; font-size:10px }
+  .btn-sm { padding:4px 10px; border-radius:5px; border:1px solid var(--border); background:none;
+            cursor:pointer; font-size:10px; color:var(--text) }
+  .btn-sm:hover { border-color:var(--accent); color:var(--accent) }
+  .chip { display:inline-block; font-family:monospace; font-size:8px; padding:2px 6px;
+          border-radius:3px; background:rgba(26,175,196,.1); color:var(--accent) }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="preview-banner">◈ preview — simulated filesystem ◈</div>
+  <div class="card">
+    <div class="card-hd">
+      <span class="card-title">File Manager</span>
+      <span class="chip" id="fsChip">LittleFS</span>
+    </div>
+    <div class="storage-bar"><div class="storage-fill" id="storageFill" style="width:0%"></div></div>
+    <div class="storage-meta">
+      <span id="storageUsed">— used</span>
+      <span id="storageTotal">— total</span>
+    </div>
+    <div class="path-bar">
+      <span>📁</span>
+      <span id="currentPath">/data/</span>
+      <span style="margin-left:auto;cursor:pointer;color:var(--muted)" id="btnUp" title="Up">↑</span>
+    </div>
+    <div class="file-list" id="fileList"></div>
+    <div class="card-ft">
+      <button class="btn-sm" id="btnRefresh">↻ Refresh</button>
+      <button class="btn-sm" style="margin-left:auto">⬆ Upload</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const FS = {
+  total: 2097152, used: 1243648,
+  tree: {
+    "/data/": [
+      { name: "config.json",   size: 512,    isDir: false },
+      { name: "readings/",     size: 0,      isDir: true  },
+      { name: "captures/",     size: 0,      isDir: true  },
+      { name: "firmware.bin",  size: 819200, isDir: false },
+      { name: "index.html",    size: 4096,   isDir: false },
+      { name: "app.css",       size: 8192,   isDir: false },
+    ],
+    "/data/readings/": [
+      { name: "2026-05-28.csv", size: 28672, isDir: false },
+      { name: "2026-05-29.csv", size: 14336, isDir: false },
+    ],
+    "/data/captures/": [
+      { name: "motion_001.jpg", size: 131072, isDir: false },
+      { name: "motion_002.jpg", size: 98304,  isDir: false },
+      { name: "motion_003.jpg", size: 114688, isDir: false },
+    ],
+  }
+};
+
+const FILE_ICONS = { json:"📋", csv:"📊", bin:"💾", jpg:"🖼", jpeg:"🖼", png:"🖼", html:"🌐", css:"🎨", js:"📜" };
+function getIcon(name, isDir) {
+  if (isDir) return "📁";
+  const ext = name.split(".").pop().toLowerCase();
+  return FILE_ICONS[ext] || "📄";
+}
+function formatBytes(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1024*1024) return (b/1024).toFixed(1) + " KB";
+  return (b/1024/1024).toFixed(2) + " MB";
+}
+
+let currentPath = "/data/";
+
+function render() {
+  const files = FS.tree[currentPath] || [];
+  const listEl = document.getElementById("fileList");
+  listEl.innerHTML = "";
+
+  // Update storage bar (simulate slight variation)
+  const used = FS.used + Math.round((Math.random() - 0.5) * 4096);
+  const pct = Math.round((used / FS.total) * 100);
+  document.getElementById("storageFill").style.width = pct + "%";
+  document.getElementById("storageUsed").textContent = formatBytes(used) + " used";
+  document.getElementById("storageTotal").textContent = formatBytes(FS.total) + " total";
+  document.getElementById("currentPath").textContent = currentPath;
+
+  files.forEach(f => {
+    const row = document.createElement("div");
+    row.className = "file-row" + (f.isDir ? " dir" : "");
+    row.innerHTML = `
+      <span class="file-icon">${getIcon(f.name, f.isDir)}</span>
+      <span class="file-name">${f.name}</span>
+      <span class="file-size">${f.isDir ? "" : formatBytes(f.size)}</span>
+      <div class="file-actions">
+        ${!f.isDir ? '<button class="btn-icon" title="Download">⬇</button>' : ""}
+        <button class="btn-icon btn-del" title="Delete">✕</button>
+      </div>`;
+    if (f.isDir) {
+      row.onclick = (e) => {
+        if (e.target.classList.contains("btn-icon")) return;
+        currentPath = currentPath + f.name;
+        render();
+      };
+    }
+    listEl.appendChild(row);
+  });
+
+  if (!files.length) {
+    listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px">Empty directory</div>';
+  }
+}
+
+document.getElementById("btnUp").onclick = () => {
+  if (currentPath === "/data/") return;
+  const parts = currentPath.replace(/\/$/, "").split("/");
+  parts.pop();
+  currentPath = parts.join("/") + "/";
+  render();
+};
+document.getElementById("btnRefresh").onclick = () => {
+  document.getElementById("storageFill").style.width = "0%";
+  setTimeout(render, 200);
+};
+
+render();
+</script>
+</body>
+</html>

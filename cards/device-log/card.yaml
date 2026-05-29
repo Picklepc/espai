@@ -1,0 +1,45 @@
+schema: ESPAI.card.v1
+name: device-log
+display_name: Device Log
+category: system.debug
+description: >
+  Real-time tail of a device's serial log output, forwarded to the hub over
+  WiFi. Shows the last N log lines with level-colored rows (ERROR/WARN/INFO/DEBUG).
+  Useful during firmware development or debugging a deployed device without
+  physical serial access.
+
+event_source:
+  type: websocket              # connects to device /api/log/stream WebSocket
+  fallback: polling            # falls back to GET /api/log if WebSocket unavailable
+  polling_interval_ms: 2000
+  max_lines: 200               # ring buffer shown in card
+
+config:
+  log_levels:
+    - ERROR
+    - WARN
+    - INFO
+    - DEBUG
+  default_level_filter: INFO   # show INFO and above by default
+  show_timestamps: true
+  word_wrap: false
+  font_size: 11                # px
+  auto_scroll: true            # pin to bottom on new entries
+
+firmware_notes: >
+  Required device endpoints (one of):
+    WS   /api/log/stream       → newline-delimited log entries (preferred)
+    GET  /api/log              → JSON {lines: [{level, timestamp, msg}]}
+  Log entry format:
+    {"level":"INFO","ts":1234567,"tag":"app","msg":"Device started"}
+  Recommended: use esp_log_set_vprintf() to hook into the ESP-IDF log system
+  and forward entries to the WiFi stream alongside UART output.
+
+compatible_boards:
+  - esp32
+  - esp32s3
+  - esp32c3
+  - esp32s2
+
+share_policy:
+  export_public: true

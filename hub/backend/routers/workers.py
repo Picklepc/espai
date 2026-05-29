@@ -12,6 +12,10 @@ from pydantic import BaseModel
 
 from ..config import POLICIES_DIR, WORKERS_DIR
 from ..registry.loader import scan_folder
+from ..reg_files import (FileWrite, NewItemRequest,
+                          delete_item, list_files, read_file,
+                          scaffold_worker, write_file,
+                          create_file, delete_file)
 from ..workers.permissions import build_sandbox_env, check_permissions
 from ..workers.runner import _load_policy
 
@@ -21,6 +25,12 @@ router = APIRouter()
 class WorkerTestRequest(BaseModel):
     inputs: dict = {}
     timeout: int = 30   # seconds; capped at 60 for test runs
+
+
+@router.post("/new")
+def create_worker(body: NewItemRequest):
+    """Scaffold a new worker folder with worker.yaml + main.py + requirements.txt."""
+    return scaffold_worker(WORKERS_DIR, body)
 
 
 @router.get("/")
@@ -229,3 +239,53 @@ def test_worker(worker_name: str, body: WorkerTestRequest):
         "parse_error":  parse_error,
         "inputs_used":  body.inputs,
     }
+
+
+# ── Worker item management ────────────────────────────────────────────────────
+
+def _worker_folder(worker_name: str) -> str:
+    all_workers = scan_folder(WORKERS_DIR, "worker")
+    w = next((w for w in all_workers
+               if w.get("name") == worker_name or w.get("_folder") == worker_name), None)
+    if not w:
+        raise HTTPException(404, f"Worker {worker_name!r} not found")
+    return w["_folder"]
+
+
+@router.delete("/{worker_name}")
+def delete_worker(worker_name: str):
+    from ..db import get_conn
+    with get_conn() as conn:
+        running = conn.execute(
+            "SELECT id FROM jobs WHERE worker_name=? AND status IN ('queued','running')",
+            (worker_name,),
+        ).fetchone()
+    if running:
+        raise HTTPException(409, f"Worker {worker_name!r} has active jobs — cancel them first")
+    folder = _worker_folder(worker_name)
+    return delete_item(WORKERS_DIR, folder)
+
+
+@router.get("/{worker_name}/files")
+def list_worker_files(worker_name: str):
+    return list_files(WORKERS_DIR, _worker_folder(worker_name))
+
+
+@router.get("/{worker_name}/files/{file_path:path}")
+def read_worker_file(worker_name: str, file_path: str):
+    return read_file(WORKERS_DIR, _worker_folder(worker_name), file_path)
+
+
+@router.put("/{worker_name}/files/{file_path:path}")
+def write_worker_file(worker_name: str, file_path: str, body: FileWrite):
+    return write_file(WORKERS_DIR, _worker_folder(worker_name), file_path, body)
+
+
+@router.post("/{worker_name}/files/{file_path:path}")
+def create_worker_file(worker_name: str, file_path: str, body: FileWrite):
+    return create_file(WORKERS_DIR, _worker_folder(worker_name), file_path, body)
+
+
+@router.delete("/{worker_name}/files/{file_path:path}")
+def delete_worker_file(worker_name: str, file_path: str):
+    return delete_file(WORKERS_DIR, _worker_folder(worker_name), file_path)

@@ -8,5 +8,8 @@ jsonschema>=4.22.0
 pywinpty>=2.0.10; sys_platform == "win32"
 ptyprocess>=0.7.0; sys_platform != "win32"
 
-# Optional — install for mDNS discovery
-# zeroconf>=0.131.0
+# mDNS discovery — required for {slug}.local project routing and node auto-discovery
+zeroconf>=0.131.0
+
+# Optional — firmware build toolchain (PlatformIO)
+# platformio>=6.1.0    # uncomment to install pio CLI via pip

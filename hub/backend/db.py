@@ -53,6 +53,35 @@ def _to_hostname(name: str) -> str:
 
 def _migrate(conn) -> None:
     """Additive column migrations — safe to run on any existing DB."""
+    # Add updated + slug columns to projects (additive)
+    proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    for col, ddl in [
+        ("updated", "ALTER TABLE projects ADD COLUMN updated TEXT"),
+        ("slug",    "ALTER TABLE projects ADD COLUMN slug    TEXT"),
+    ]:
+        if col not in proj_cols:
+            conn.execute(ddl)
+
+    # Add git_sha column to ota_log (records project HEAD at push time)
+    ota_cols = {row[1] for row in conn.execute("PRAGMA table_info(ota_log)").fetchall()}
+    if "git_sha" not in ota_cols:
+        conn.execute("ALTER TABLE ota_log ADD COLUMN git_sha TEXT")
+
+    # Backfill project_nodes from projects.devices JSON if the table is empty
+    node_count = conn.execute("SELECT COUNT(*) FROM project_nodes").fetchone()[0]
+    if node_count == 0:
+        import json as _json
+        for row in conn.execute("SELECT id, devices FROM projects WHERE devices IS NOT NULL").fetchall():
+            try:
+                ids = _json.loads(row["devices"] or "[]")
+            except Exception:
+                ids = []
+            for idx, did in enumerate(ids):
+                conn.execute(
+                    "INSERT OR IGNORE INTO project_nodes (project_id, device_id, role, node_index) VALUES (?,?,?,?)",
+                    (row["id"], did, "node", idx),
+                )
+
     existing = {row[1] for row in conn.execute("PRAGMA table_info(agent_tasks)").fetchall()}
     for col, ddl in [
         ("context_type",   "ALTER TABLE agent_tasks ADD COLUMN context_type   TEXT"),
@@ -96,6 +125,8 @@ def init_db() -> None:
             description TEXT,
             devices     TEXT,
             created     TEXT NOT NULL,
+            updated     TEXT,
+            slug        TEXT,
             meta        TEXT
         );
 
@@ -263,5 +294,43 @@ def init_db() -> None:
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_local_services_host_port
             ON local_services (host, port);
+
+        -- ── Hub-level persistent settings ─────────────────────────────────────
+        -- Simple key-value store for hub configuration (active theme, etc.).
+        CREATE TABLE IF NOT EXISTS hub_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        -- ── Project nodes ─────────────────────────────────────────────────────
+        -- Structured node membership with per-node roles and labels.
+        -- Replaces the flat projects.devices JSON array while staying backward-
+        -- compatible (devices column is kept in sync on all writes).
+        CREATE TABLE IF NOT EXISTS project_nodes (
+            project_id  TEXT    NOT NULL,
+            device_id   TEXT    NOT NULL,
+            role        TEXT    NOT NULL DEFAULT 'node',
+            label       TEXT,
+            node_index  INTEGER NOT NULL DEFAULT 0,
+            meta        TEXT,
+            PRIMARY KEY (project_id, device_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_nodes_dev
+            ON project_nodes (device_id);
         """)
         _migrate(conn)
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM hub_settings WHERE key=?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO hub_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )

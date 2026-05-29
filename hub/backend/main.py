@@ -10,6 +10,7 @@ Or via the CLI:
 import asyncio
 import json
 import logging
+import os
 import re
 import urllib.error
 import urllib.request
@@ -25,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import DEBUG, PORT
 from .config import PROJECTS_DIR
 from .db import get_conn, init_db
+from . import __version__ as HUB_VERSION
 from .discovery.mdns import mdns_manager
 from . import mqtt_publisher, theme_scheduler, ws_broker
 from .routers import admin, agent_bench, cards, data, design, devices, events, jobs, ota, projects, recipes, rules, services, terminal, workers
@@ -73,6 +75,9 @@ def _on_mdns_node_found(node: dict) -> None:
         log.exception("mDNS: error upserting node %s", raw_id)
 
 
+_startup_time = datetime.now(timezone.utc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -84,6 +89,7 @@ async def lifespan(app: FastAPI):
         conn.execute("UPDATE agent_runs  SET status='failed', finished=? WHERE status='running'", (now,))
     start_runner()
     mdns_manager.start(hub_port=PORT, on_node_found=_on_mdns_node_found)
+    mdns_manager.register_all_projects()   # advertise {slug}.local for each project
     mqtt_publisher.init()
     theme_scheduler.start()
     ws_broker.set_loop(asyncio.get_event_loop())
@@ -95,23 +101,24 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ESPAI Hub",
+    version=HUB_VERSION,
     description="Local-first ESP32 fleet and edge-processing platform",
-    version="0.1.0",
     lifespan=lifespan,
     # Only expose docs in debug mode — there is no authentication on these endpoints
-    docs_url="/docs" if DEBUG else "/docs",
+    docs_url="/docs" if DEBUG else None,
     redoc_url=None,
 )
 
-# CORS: ESPAI is local-first. Allow all origins so the dashboard can be opened
-# from any LAN host (e.g., phone browser pointing to the hub's LAN IP).
-# Credentials are never sent — this is not a cookie-auth API.
+# CORS: ESPAI is local-first — allow all LAN origins.
+# No cookie auth, no credentials. API keys / auth are NOT in scope for v0.1
+# (hub is assumed to run on a private LAN). Revisit before any cloud exposure.
+_cors_origins = os.environ.get("ESPAI_CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Firmware-SHA256", "X-ESPAI-Operator"],
 )
 
 # ── API routers ───────────────────────────────────────────────────────────────
@@ -150,7 +157,16 @@ async def ws_endpoint(websocket: WebSocket):
 
 @app.get("/api/status", tags=["meta"])
 def hub_status():
-    return {"status": "ok", "service": "ESPAI Hub", "version": "0.1.0"}
+    with get_conn() as conn:
+        device_count = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+    uptime = (datetime.now(timezone.utc) - _startup_time).total_seconds()
+    return {
+        "status":       "ok",
+        "service":      "ESPAI Hub",
+        "version":      HUB_VERSION,
+        "uptime":       round(uptime, 1),
+        "device_count": device_count,
+    }
 
 
 @app.get("/api/meta", tags=["meta"])

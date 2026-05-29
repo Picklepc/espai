@@ -16,9 +16,26 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+# When running as a PyInstaller bundle, ROOT is next to the .exe.
+# Two-directory model (mirrors hub/backend/config.py):
+#
+#   INSTALL_DIR  — exe + bundled read-only assets.  Overwritten on update.
+#   USER_DIR     — all mutable user data (projects, DB, content packs, .env).
+#                  NEVER touched by the installer; survives updates/reinstalls.
+#
+# In source / dev mode both collapse to the repo root.
+if getattr(sys, "frozen", False):
+    ROOT        = Path(sys.executable).parent          # install dir
+    INSTALL_DIR = ROOT
+    USER_DIR    = Path.home() / "Documents" / "ESPAI"
+else:
+    ROOT        = Path(__file__).parent                # repo root
+    INSTALL_DIR = ROOT
+    USER_DIR    = ROOT
 
 REQUIRED_DIRS = [
     "data",
@@ -26,13 +43,14 @@ REQUIRED_DIRS = [
     "firmware-catalog",
 ]
 
-HUB_REQUIREMENTS = ROOT / "hub" / "backend" / "requirements.txt"
+# Source-mode helpers (not used in frozen builds)
+HUB_REQUIREMENTS = INSTALL_DIR / "hub" / "backend" / "requirements.txt"
 HUB_MODULE       = "hub.backend.main:app"
 
 # Prefer the project venv if it exists — avoids global Python conflicts
-_VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"   # Windows
+_VENV_PYTHON = INSTALL_DIR / ".venv" / "Scripts" / "python.exe"   # Windows
 if not _VENV_PYTHON.exists():
-    _VENV_PYTHON = ROOT / ".venv" / "bin" / "python"        # Linux/macOS
+    _VENV_PYTHON = INSTALL_DIR / ".venv" / "bin" / "python"        # Linux/macOS
 VENV_PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
 
 
@@ -76,19 +94,20 @@ def check_python_pkg(pkg, import_name=None):
 
 def cmd_init(args):
     print("\nESPAI init\n")
+    info(f"Data directory: {USER_DIR}")
+    print()
     created = []
     for d in REQUIRED_DIRS:
-        path = ROOT / d
+        path = USER_DIR / d
         if not path.exists():
             path.mkdir(parents=True)
-            gitkeep = path / ".gitkeep"
-            gitkeep.touch()
-            created.append(str(path.relative_to(ROOT)))
-            ok(f"Created {d}/")
+            (path / ".gitkeep").touch()
+            created.append(d)
+            ok(f"Created {USER_DIR / d}")
         else:
             ok(f"{d}/ already exists")
 
-    config_env = ROOT / ".env"
+    config_env = USER_DIR / ".env"
     if not config_env.exists():
         config_env.write_text(
             "# ESPAI Hub configuration\n"
@@ -97,15 +116,15 @@ def cmd_init(args):
             "ESPAI_DEBUG=0\n",
             encoding="utf-8",
         )
-        ok("Created .env (edit to customize)")
+        ok(f"Created .env at {config_env}")
     else:
         ok(".env already exists")
 
     print()
     if created:
         info(f"Created: {', '.join(created)}")
-    info("Run 'python ESPAI.py doctor' to verify dependencies.")
-    info("Run 'python ESPAI.py serve' to start the hub.")
+    info("Run 'python espai.py doctor' to verify dependencies.")
+    info("Run 'python espai.py serve' to start the hub.")
     print()
 
 
@@ -132,7 +151,12 @@ def cmd_doctor(args):
 
     print()
     print("  External tools:")
-    check_cmd("pio",        "--version", label="PlatformIO")
+    pio_found = check_cmd("pio", "--version", label="PlatformIO CLI")
+    if not pio_found:
+        # PlatformIO can also be installed as a Python package
+        pio_pkg = check_python_pkg("platformio", "platformio")
+        if not pio_pkg:
+            info("Install PlatformIO: pip install platformio  (required for firmware builds)")
     check_cmd("git",        "--version", label="Git")
     check_cmd("docker",     "--version", label="Docker")
     check_cmd("ffmpeg",     "-version",  label="FFmpeg")
@@ -162,8 +186,9 @@ def cmd_doctor(args):
 
     print()
     print("  Workspace:")
+    info(f"Data dir: {USER_DIR}")
     for d in REQUIRED_DIRS:
-        path = ROOT / d
+        path = USER_DIR / d
         if path.exists():
             ok(f"{d}/")
         else:
@@ -171,13 +196,69 @@ def cmd_doctor(args):
     print()
 
 
+def _first_run_scaffold():
+    """
+    On first launch of a frozen build, populate USER_DIR (~/Documents/ESPAI)
+    with workspace dirs, default content packs, and a default .env.
+    Subsequent launches (and updates) skip this entirely — the sentinel guards it.
+    Content packs are copied from INSTALL_DIR so user customisations are never
+    overwritten by an update.
+    """
+    sentinel = USER_DIR / "data" / ".espai-initialized"
+    if sentinel.exists():
+        return
+
+    # Workspace dirs in USER_DIR
+    for d in REQUIRED_DIRS:
+        (USER_DIR / d).mkdir(parents=True, exist_ok=True)
+
+    # Copy starter content packs from the install dir into USER_DIR.
+    # _MEIPASS exists for onefile builds; one-dir builds use INSTALL_DIR directly.
+    bundle = Path(getattr(sys, "_MEIPASS", str(INSTALL_DIR)))
+    content_dirs = ["recipes", "workers", "cards", "design", "agents",
+                    "policies", "schemas", "agent-bench"]
+    copied = []
+    for d in content_dirs:
+        src = bundle / d
+        dst = USER_DIR / d
+        if src.exists() and not dst.exists():
+            shutil.copytree(str(src), str(dst))
+            copied.append(d)
+
+    # Default .env in USER_DIR
+    env_file = USER_DIR / ".env"
+    if not env_file.exists():
+        env_file.write_text(
+            "# ESPAI Hub configuration\n"
+            "ESPAI_HOST=0.0.0.0\n"
+            "ESPAI_PORT=7888\n"
+            "ESPAI_DEBUG=0\n",
+            encoding="utf-8",
+        )
+
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.touch()
+
+    if copied:
+        print(f"\n  ✦ First run — installed content packs: {', '.join(copied)}")
+    print(f"  ✦ ESPAI data directory: {USER_DIR}")
+
+
+def _open_browser_delayed(url: str, delay: float = 2.0):
+    """Open the dashboard in the default browser after a short startup delay."""
+    import webbrowser
+    time.sleep(delay)
+    webbrowser.open(url)
+
+
 def cmd_serve(args):
     host = args.host or os.environ.get("ESPAI_HOST", "0.0.0.0")
     port = args.port or int(os.environ.get("ESPAI_PORT", "7888"))
-    reload = args.reload
+    reload    = getattr(args, "reload",    False)
+    open_browser = getattr(args, "open", False) or getattr(sys, "frozen", False)
 
-    # Load .env if present
-    env_file = ROOT / ".env"
+    # Load .env from user data dir (~/Documents/ESPAI in frozen builds)
+    env_file = USER_DIR / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             line = line.strip()
@@ -185,23 +266,26 @@ def cmd_serve(args):
                 k, _, v = line.partition("=")
                 os.environ.setdefault(k.strip(), v.strip())
 
-    print(f"\n  ESPAI Hub starting on http://{host}:{port}\n")
-    print(f"  Dashboard : http://localhost:{port}/")
-    print(f"  API docs  : http://localhost:{port}/docs")
-    print(f"  Status    : http://localhost:{port}/api/status")
+    # First-run data scaffold (frozen / bundled installs only)
+    if getattr(sys, "frozen", False):
+        _first_run_scaffold()
+
+    dashboard_url = f"http://localhost:{port}/"
+    print(f"\n  ESPAI Hub  v{'(dev)' if not getattr(sys, 'frozen', False) else 'bundled'}\n")
+    print(f"  Dashboard  {dashboard_url}")
+    print(f"  Data dir   {USER_DIR}")
     if VENV_PYTHON != sys.executable:
-        print(f"  Python    : {VENV_PYTHON} (venv)")
+        print(f"  Python     {VENV_PYTHON} (venv)")
     print()
 
-    # If a venv exists and we're not already in it, re-launch using its Python.
-    # Use subprocess.run (not os.execv) — execv splits on spaces in the path
-    # on Windows, breaking paths like "C:\Users\Roto Router\...".
-    if VENV_PYTHON != sys.executable:
+    # Re-launch under venv Python if needed (source installs only)
+    if not getattr(sys, "frozen", False) and VENV_PYTHON != sys.executable:
         cmd = (
             [VENV_PYTHON, __file__, "serve", "--host", host, "--port", str(port)]
             + (["--reload"] if reload else [])
+            + (["--open"] if open_browser else [])
         )
-        result = subprocess.run(cmd, cwd=str(ROOT))
+        result = subprocess.run(cmd, cwd=str(INSTALL_DIR))
         sys.exit(result.returncode)
 
     try:
@@ -210,8 +294,12 @@ def cmd_serve(args):
         err("uvicorn not installed. Run: python ESPAI.py install-deps")
         sys.exit(1)
 
-    # Run from repo root so hub.backend.main:app resolves correctly
-    os.chdir(ROOT)
+    # Open browser in a background thread so it doesn't block uvicorn startup
+    if open_browser:
+        t = threading.Thread(target=_open_browser_delayed, args=(dashboard_url,), daemon=True)
+        t.start()
+
+    os.chdir(INSTALL_DIR)
     uvicorn.run(
         HUB_MODULE,
         host=host,
@@ -240,7 +328,7 @@ def cmd_install_deps(args):
         err(f"Requirements file not found: {HUB_REQUIREMENTS}")
         sys.exit(1)
 
-    venv_dir = ROOT / ".venv"
+    venv_dir = INSTALL_DIR / ".venv"
     if not venv_dir.exists():
         print("  Creating .venv …")
         subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
@@ -251,7 +339,7 @@ def cmd_install_deps(args):
     print(f"  Running: {pip} install -r {HUB_REQUIREMENTS}\n")
     result = subprocess.run(
         [pip, "install", "-r", str(HUB_REQUIREMENTS)],
-        cwd=ROOT,
+        cwd=INSTALL_DIR,
     )
     if result.returncode == 0:
         print()
@@ -265,6 +353,14 @@ def cmd_install_deps(args):
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 def main():
+    # Frozen exe with no arguments: auto-start tray so double-clicking the
+    # installed exe silently brings up the hub with a tray icon.
+    if getattr(sys, "frozen", False) and len(sys.argv) == 1:
+        if getattr(sys, "frozen", False):
+            _first_run_scaffold()
+        cmd_tray(argparse.Namespace(port=None))
+        return
+
     parser = argparse.ArgumentParser(
         prog="ESPAI",
         description="ESPAI Hub CLI — local-first ESP32 platform",
@@ -276,9 +372,10 @@ def main():
     sub.add_parser("doctor", help="Check dependencies and workspace")
 
     serve_p = sub.add_parser("serve", help="Start the hub server")
-    serve_p.add_argument("--host", default=None, help="Bind host (default: 0.0.0.0)")
-    serve_p.add_argument("--port", default=None, type=int, help="Bind port (default: 7888)")
+    serve_p.add_argument("--host",   default=None, help="Bind host (default: 0.0.0.0)")
+    serve_p.add_argument("--port",   default=None, type=int, help="Bind port (default: 7888)")
     serve_p.add_argument("--reload", action="store_true", help="Enable hot-reload (dev)")
+    serve_p.add_argument("--open",   action="store_true", help="Open dashboard in browser after startup (always on for bundled exe)")
 
     sub.add_parser("install-deps", help="Install Python dependencies")
 
