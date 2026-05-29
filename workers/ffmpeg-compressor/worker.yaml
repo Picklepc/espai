@@ -71,6 +71,17 @@ sandbox:
   preferred: docker
   native_allowed: true
 entrypoint: main.py
+system_deps:
+  - name: ffmpeg
+    command: ffmpeg
+    note: "Video encoding and transcoding"
+    shared_risk: high
+    install_hint: "apt install ffmpeg  |  brew install ffmpeg  |  choco install ffmpeg"
+  - name: ffprobe
+    command: ffprobe
+    note: "Media analysis — ships with ffmpeg"
+    shared_risk: high
+    install_hint: "Included with the ffmpeg package"
 test_inputs:
   path: "test/sample.mp4"
   codec: h264

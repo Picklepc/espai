@@ -4,6 +4,7 @@ hub_start.log
 
 # Runtime / secrets
 .env
+worker-requirements.txt
 *.private.yaml
 *.private.json
 local.yaml

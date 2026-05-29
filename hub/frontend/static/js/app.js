@@ -960,7 +960,7 @@ async function pairDevice(deviceId) {
     </p>
     <div id="pairTokenBox" style="font-size:26px;font-family:monospace;letter-spacing:4px;text-align:center;
          padding:18px 12px;background:var(--color-card);border:1px solid var(--color-card-border);
-         border-radius:8px;cursor:pointer;position:relative" title="Click to copy">
+         border-radius:8px;cursor:pointer;position:relative" data-tip="Click to copy">
       ${pairing.token}
       <span style="position:absolute;top:6px;right:8px;font-size:10px;opacity:0.5">CLICK TO COPY</span>
     </div>
@@ -2376,6 +2376,223 @@ async function loadWorkers() {
   }
 }
 
+// ── Package manager ────────────────────────────────────────────────────────
+
+async function loadPackages() {
+  const noticeEl  = document.getElementById("pkgBuildNotice");
+  const declaredEl = document.getElementById("pkgDeclaredList");
+  if (!noticeEl || !declaredEl) return;
+
+  let data;
+  try { data = await fetch("/api/packages/").then(r => r.json()); }
+  catch { declaredEl.innerHTML = '<div class="empty-state">Could not load package data.</div>'; return; }
+
+  // Build-type notice
+  const notices = {
+    frozen: `<div class="pkg-notice warning" data-tip="Bundled builds cannot install packages at runtime">
+               ⚠ Running as a bundled application — pip install is not available.
+               Use the <strong>Docker :workers</strong> image or run from source to manage packages.
+             </div>`,
+    docker: `<div class="pkg-notice info" data-tip="Packages installed here persist only in this container layer — rebuild the image to make them permanent">
+               ℹ Docker container — pip installs are ephemeral unless you rebuild the image.
+               Use the <strong>:workers</strong> image variant to pre-install worker dependencies.
+             </div>`,
+    source: "",
+  };
+  noticeEl.innerHTML = notices[data.build_type] || "";
+  noticeEl.classList.toggle("hidden", !notices[data.build_type]);
+
+  // Declared deps table
+  const rows = [...(data.python || []), ...(data.system || [])];
+  if (!rows.length) {
+    declaredEl.innerHTML = '<div class="empty-state">No dependencies declared in worker.yaml files yet.</div>';
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "pkg-table";
+  table.innerHTML = `<thead><tr>
+    <th data-tip="Package name">Package</th>
+    <th data-tip="Package type — python (pip) or system (OS binary)">Type</th>
+    <th data-tip="Minimum version required by the worker">Required</th>
+    <th data-tip="Currently installed version, or missing">Status</th>
+    <th data-tip="Workers that depend on this package">Used by</th>
+    <th data-tip="Notes and warnings about this dependency">Notes</th>
+    <th></th>
+  </tr></thead>`;
+  const tbody = document.createElement("tbody");
+
+  for (const dep of rows) {
+    const tr = document.createElement("tr");
+    const isPython = dep.type === "python";
+    const isSystem = dep.type === "system";
+    const ok = dep.installed;
+
+    let statusBadge = ok
+      ? `<span class="pkg-badge ok" data-tip="Installed: ${dep.version_installed || ""}">✓ ${dep.version_installed || "ok"}</span>`
+      : `<span class="pkg-badge missing" data-tip="Not installed">✗ missing</span>`;
+
+    let notesHtml = dep.note ? `<span style="font-size:11px;color:var(--color-text-muted)">${dep.note}</span>` : "";
+    if (isSystem && dep.shared_risk === "high") {
+      notesHtml += `<br><span class="pkg-badge warn" data-tip="This system binary may be used by other applications — ESPAI does not manage its removal">⚠ shared system dep</span>`;
+    }
+    if (isSystem && dep.install_hint) {
+      notesHtml += `<br><code style="font-size:10px;opacity:.7">${dep.install_hint}</code>`;
+    }
+
+    let actionHtml = "";
+    if (isPython && data.can_install) {
+      if (!ok) {
+        actionHtml = `<button class="btn btn-primary btn-sm pkg-install-btn"
+          data-name="${dep.name}" data-version="${dep.version || ""}"
+          data-tip="pip install ${dep.name}${dep.version || ""}">Install</button>`;
+      } else {
+        actionHtml = `<button class="btn btn-secondary btn-sm pkg-remove-btn"
+          data-name="${dep.name}"
+          data-tip="pip uninstall ${dep.name}">Remove</button>`;
+      }
+    } else if (isSystem) {
+      actionHtml = `<span style="font-size:11px;color:var(--color-text-muted)"
+        data-tip="System packages are managed by your OS package manager">OS-managed</span>`;
+    } else if (!data.can_install) {
+      actionHtml = `<span style="font-size:11px;color:var(--color-text-muted)"
+        data-tip="Not available in this build type">—</span>`;
+    }
+
+    tr.innerHTML = `
+      <td><strong>${dep.name}</strong></td>
+      <td><span class="pkg-type-badge ${dep.type}" data-tip="${isPython ? "Python pip package" : "System binary / external tool"}">${dep.type}</span></td>
+      <td style="font-size:11px;font-family:monospace">${dep.version || "any"}</td>
+      <td>${statusBadge}</td>
+      <td style="font-size:11px;color:var(--color-text-muted)">${(dep.workers || []).join(", ")}</td>
+      <td>${notesHtml}</td>
+      <td>${actionHtml}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  table.appendChild(tbody);
+  declaredEl.innerHTML = "";
+  declaredEl.appendChild(table);
+
+  // Wire install/remove buttons
+  declaredEl.querySelectorAll(".pkg-install-btn").forEach(btn => {
+    btn.onclick = () => _pkgInstall(btn.dataset.name, btn.dataset.version);
+  });
+  declaredEl.querySelectorAll(".pkg-remove-btn").forEach(btn => {
+    btn.onclick = () => _pkgRemove(btn.dataset.name);
+  });
+}
+
+async function _pkgInstall(name, version) {
+  const spec = `${name}${version || ""}`;
+  if (!confirm(`Install ${spec}?`)) return;
+  try {
+    const r = await fetch("/api/packages/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, version: version || "" }),
+    });
+    const d = await r.json();
+    if (!r.ok) { alert(`Install failed: ${d.detail || d.error}`); return; }
+    loadPackages();
+  } catch (e) { alert("Install failed: " + e.message); }
+}
+
+async function _pkgRemove(name) {
+  if (!confirm(`Remove ${name}? Workers that depend on it will fail until reinstalled.`)) return;
+  try {
+    const r = await fetch(`/api/packages/${encodeURIComponent(name)}`, { method: "DELETE" });
+    const d = await r.json();
+    if (!r.ok) { alert(`Remove failed: ${d.detail || d.error}`); return; }
+    loadPackages();
+  } catch (e) { alert("Remove failed: " + e.message); }
+}
+
+function _initPackageSearch() {
+  const input     = document.getElementById("pkgSearchInput");
+  const btn       = document.getElementById("btnPkgSearch");
+  const resultEl  = document.getElementById("pkgSearchResult");
+  if (!btn) return;
+
+  async function doSearch() {
+    const name = input.value.trim();
+    if (!name) return;
+    resultEl.innerHTML = '<span style="color:var(--color-text-muted);font-size:12px">Looking up…</span>';
+    try {
+      const r = await fetch("/api/packages/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const d = await r.json();
+      if (!d.found) {
+        resultEl.innerHTML = `<span style="color:var(--color-error);font-size:12px">Package "${name}" not found on PyPI.</span>`;
+        return;
+      }
+      resultEl.innerHTML = `
+        <div class="pkg-search-card">
+          <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+            <strong>${d.name}</strong>
+            <span style="font-size:11px;font-family:monospace;color:var(--color-accent)">${d.version}</span>
+            ${d.license ? `<span style="font-size:11px;color:var(--color-text-muted)">${d.license}</span>` : ""}
+          </div>
+          <p style="font-size:12px;color:var(--color-text-muted);margin:6px 0 8px">${d.summary || ""}</p>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="pkgVersionSelect" style="font-size:12px;padding:3px 6px">
+              ${(d.versions || []).map(v => `<option value="==${v}">${v}</option>`).join("")}
+            </select>
+            <button class="btn btn-primary btn-sm" id="btnPkgInstallSearch"
+                    data-name="${d.name}"
+                    data-tip="Install ${d.name} from PyPI">Install</button>
+            ${d.home_page ? `<a href="${d.home_page}" target="_blank" rel="noopener"
+              style="font-size:11px;color:var(--color-accent)" data-tip="Open package homepage">PyPI ↗</a>` : ""}
+          </div>
+          ${d.requires_python ? `<div style="font-size:10px;color:var(--color-text-muted);margin-top:6px">Requires Python ${d.requires_python}</div>` : ""}
+        </div>`;
+      document.getElementById("btnPkgInstallSearch").onclick = () => {
+        const ver = document.getElementById("pkgVersionSelect").value;
+        _pkgInstall(d.name, ver);
+      };
+    } catch (e) {
+      resultEl.innerHTML = `<span style="color:var(--color-error);font-size:12px">Search failed: ${e.message}</span>`;
+    }
+  }
+
+  btn.onclick = doSearch;
+  input.addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+}
+
+function _initShowInstalled() {
+  const btn = document.getElementById("btnShowInstalled");
+  const listEl = document.getElementById("pkgInstalledList");
+  if (!btn) return;
+  let shown = false;
+  btn.onclick = async () => {
+    if (shown) { listEl.classList.add("hidden"); listEl.innerHTML = ""; shown = false; btn.textContent = "Show all"; return; }
+    btn.textContent = "Loading…";
+    try {
+      const r = await fetch("/api/packages/installed");
+      const d = await r.json();
+      const pkgs = (d.packages || []).sort((a, b) => a.name.localeCompare(b.name));
+      listEl.innerHTML = `<div class="pkg-installed-grid">${
+        pkgs.map(p => `<div class="pkg-installed-item" data-tip="${p.name} ${p.version}">
+          <span style="font-weight:600;font-size:12px">${p.name}</span>
+          <span style="font-family:monospace;font-size:11px;color:var(--color-text-muted)">${p.version}</span>
+          <button class="btn btn-danger btn-sm pkg-remove-btn" data-name="${p.name}"
+            data-tip="pip uninstall ${p.name}" style="padding:1px 6px;font-size:10px">✕</button>
+        </div>`).join("")
+      }</div>`;
+      listEl.querySelectorAll(".pkg-remove-btn").forEach(b => {
+        b.onclick = () => _pkgRemove(b.dataset.name);
+      });
+      listEl.classList.remove("hidden");
+      shown = true;
+      btn.textContent = "Hide";
+    } catch (e) { btn.textContent = "Show all"; }
+  };
+}
+
 function openWorkerTestModal(worker) {
   const wname = worker.name || worker._folder;
   openModal(`Test Worker — ${worker.display_name || wname}`, `
@@ -2477,7 +2694,7 @@ function _openCardPreview(name, title) {
   openModal(`Preview — ${title}`, `
     <div style="border-radius:8px;overflow:hidden;background:#080c10">
       <iframe src="${url}" style="width:100%;height:460px;border:none;display:block"
-              sandbox="allow-scripts allow-same-origin" title="Card preview"></iframe>
+              sandbox="allow-scripts allow-same-origin" title="Card preview" data-tip="Live card preview rendered in a sandboxed frame"></iframe>
     </div>
   `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
 }
@@ -2722,6 +2939,11 @@ document.getElementById("btnNewWorker").onclick = () =>
     loadWorkers();
     setTimeout(() => _openRegistryEditor("worker", slug, name), 300);
   });
+
+// Wire package section controls (runs once on page load)
+document.getElementById("btnRefreshPackages")?.addEventListener("click", loadPackages);
+_initPackageSearch();
+_initShowInstalled();
 document.getElementById("btnNewCard").onclick = () =>
   _openNewRegistryItemModal("card", (slug, name) => {
     loadCards();
@@ -4840,7 +5062,7 @@ const viewLoaders = {
   fleet:         loadFleet,   // kept for any direct link refs; not in nav
   projects:      loadProjects,
   recipes:       loadRecipes,
-  workers:       loadWorkers,
+  workers:       () => { loadWorkers(); loadPackages(); },
   cards:         loadCards,
   jobs:          loadJobs,
   ota:           loadOTA,
@@ -4863,6 +5085,19 @@ const modalTitle = document.getElementById("modalTitle");
 const modalBody  = document.getElementById("modalBody");
 const modalFooter = document.getElementById("modalFooter");
 
+const _MODAL_BTN_TIPS = {
+  "close":          "Close this dialog",
+  "cancel":         "Cancel and close without saving",
+  "save":           "Save changes",
+  "confirm":        "Confirm this action",
+  "delete":         "Permanently delete — cannot be undone",
+  "ok":             "Confirm",
+  "copy link tag":  "Copy the HTML link tag to your clipboard",
+  "done":           "Mark complete and close",
+  "apply":          "Apply these settings",
+  "submit":         "Submit",
+};
+
 function openModal(title, bodyHTML, buttons = [], opts = {}) {
   modalTitle.textContent  = title;
   modalBody.innerHTML     = bodyHTML;
@@ -4870,6 +5105,8 @@ function openModal(title, bodyHTML, buttons = [], opts = {}) {
   for (const btn of buttons) {
     const b = el("button", btn.cls, btn.label);
     if (btn.dataset) Object.assign(b.dataset, btn.dataset);
+    if (!b.dataset.tip)
+      b.dataset.tip = btn.tip || _MODAL_BTN_TIPS[btn.label.toLowerCase()] || btn.label;
     b.onclick = btn.action;
     modalFooter.appendChild(b);
   }

@@ -118,8 +118,8 @@
 - [x] recipe decoder tests (tests/test_recipes.py — 14 tests: scan_folder, deep_merge, private overlays, export sanitization, schema validation; all passing)
 
 ## Milestone 12 — Packaging
-- [x] Docker appliance scaffold (docker-compose.yml)
-- [x] Hub Dockerfile (hub/Dockerfile — python:3.12-slim, healthcheck, uvicorn)
+- [x] Docker appliance — `docker-compose.yml` + `hub/Dockerfile` + `.dockerignore` + `.env.example`; headless service targeting FriendlyElec/OpenWrt ARM64; `network_mode: host` for mDNS; SSD bind-mounts via `ESPAI_SSD_PATH`; Node.js + Claude Code CLI pre-installed (`ARG INSTALL_CLAUDE=true`); fixed data path (`/app/data` not `/data`); `restart: unless-stopped`
+- [x] **Multi-arch Docker CI with worker variants** (v0.2.0) — matrix `build-docker` job; three variants built in parallel: `latest` (hub + Claude CLI), `workers` (+ OpenCV/FFmpeg/numpy/scipy/Pillow), `slim` (hub only); QEMU `linux/amd64` + `linux/arm64`; pushed to `ghcr.io/picklepc/espai:{version}{suffix}`; per-variant GHA cache scopes; `ESPAI_IMAGE` env var in docker-compose selects variant; `INSTALL_WORKER_DEPS` and `INSTALL_CLAUDE` build args in Dockerfile
 - [x] Windows tray app (hub/tray/tray.py — pystray + PIL icon; Start/Stop/Restart/Open Dashboard/Open Logs/Start at Login/Exit; dynamic enabled state; teal↔gray icon reflects hub state; hub stdout→data/espai-hub.log; Open Logs spawns live PowerShell tail console; winreg autostart toggle; frozen-exe auto-starts tray on double-click; console=False in spec so no terminal window appears)
 - [x] backup/restore (GET /api/admin/backup + download; POST /api/admin/restore with column allowlist guard; GET /api/admin/status; ⬇ Backup + ⬆ Restore buttons in OTA view)
 - [x] future VSCode extension API readiness (GET /api/meta — capabilities list, endpoint map, schema versions)

@@ -49,6 +49,15 @@ sandbox:
   native_allowed: true
 entrypoint: main.py
 requirements: requirements.txt
+python_deps:
+  - name: opencv-python-headless
+    import: cv2
+    version: ">=4.8.0"
+    note: "Computer vision — headless build, no display required"
+  - name: numpy
+    import: numpy
+    version: ">=1.24.0"
+    note: "Numerical arrays for image data"
 test_inputs:
   path: "test/frames/"
   threshold: 500

@@ -104,10 +104,8 @@ jobs:
 
       - name: Assemble AppDir
         run: |
-          # Lay the PyInstaller one-dir output into AppDir.
           cp -r dist/espai/. AppDir/
 
-          # AppRun — entry point executed by the AppImage runtime.
           cat > AppDir/AppRun << 'APPRUN'
           #!/bin/bash
           HERE="$(dirname "$(readlink -f "${0}")")"
@@ -115,7 +113,6 @@ jobs:
           APPRUN
           chmod +x AppDir/AppRun
 
-          # FreeDesktop .desktop file required by appimagetool.
           cat > AppDir/espai.desktop << 'DESKTOP'
           [Desktop Entry]
           Name=ESPAI
@@ -131,14 +128,11 @@ jobs:
         run: |
           VER="${{ github.ref_name }}"
           VER="${VER#v}"
-
-          # Download appimagetool and use the --appimage-extract method to
-          # avoid the FUSE dependency that GitHub Actions runners don't have.
           wget -q \
             https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
             -O appimagetool
           chmod +x appimagetool
-          ./appimagetool --appimage-extract          # → squashfs-root/
+          ./appimagetool --appimage-extract
           ARCH=x86_64 ./squashfs-root/AppRun AppDir "ESPAI-${VER}-x86_64.AppImage"
 
       - name: Upload artifact
@@ -148,16 +142,97 @@ jobs:
           path: ESPAI-*-x86_64.AppImage
           retention-days: 5
 
+  # ── Docker multi-arch images (amd64 + arm64, three variants) ────────────────
+  #
+  #   latest   — hub + Agent Bench (Claude CLI), no heavy worker deps  ~500 MB
+  #   workers  — hub + Agent Bench + OpenCV / FFmpeg / numpy           ~900 MB
+  #   slim     — hub only, smallest possible image                     ~350 MB
+  #
+  build-docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false   # build all variants even if one fails
+      matrix:
+        include:
+          - variant: latest
+            install_claude: "true"
+            install_worker_deps: "false"
+            tag_suffix: ""
+            floating_tag: "latest"
+          - variant: workers
+            install_claude: "true"
+            install_worker_deps: "true"
+            tag_suffix: "-workers"
+            floating_tag: "workers"
+          - variant: slim
+            install_claude: "false"
+            install_worker_deps: "false"
+            tag_suffix: "-slim"
+            floating_tag: "slim"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build tags for this variant:
+      #   v0.2.0{suffix}   0.2{suffix}   {floating_tag}  (non-pre-release only)
+      - name: Compute image tags
+        id: tags
+        run: |
+          VER="${{ github.ref_name }}"
+          VER="${VER#v}"
+          MINOR="${VER%.*}"
+          SUFFIX="${{ matrix.tag_suffix }}"
+          REPO="ghcr.io/${{ github.repository }}"
+          IS_PRE=$([[ "${{ github.ref_name }}" == *"-"* ]] && echo true || echo false)
+
+          TAGS="${REPO}:${VER}${SUFFIX},${REPO}:${MINOR}${SUFFIX}"
+          if [ "$IS_PRE" = "false" ]; then
+            TAGS="${TAGS},${REPO}:${{ matrix.floating_tag }}"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+
+      - name: Build and push — ${{ matrix.variant }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: hub/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            INSTALL_CLAUDE=${{ matrix.install_claude }}
+            INSTALL_WORKER_DEPS=${{ matrix.install_worker_deps }}
+          # Each variant gets its own GHA cache scope to avoid cross-variant
+          # cache pollution from differing build args.
+          cache-from: type=gha,scope=docker-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.variant }}
+
   # ── GitHub Release ────────────────────────────────────────────────────────
   release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # full history for release notes
+          fetch-depth: 0
 
       - name: Download Windows installer
         uses: actions/download-artifact@v4
@@ -197,15 +272,30 @@ jobs:
 
             | Platform | File | Notes |
             |---|---|---|
-            | **Windows** | `ESPAI-Setup-{version}.exe` | Run the installer — no admin required |
-            | **Linux** | `ESPAI-{version}-x86_64.AppImage` | `chmod +x` then run — no install needed |
+            | **Windows** | `ESPAI-Setup-{version}.exe` | Installer — no admin required |
+            | **Linux x86-64** | `ESPAI-{version}-x86_64.AppImage` | `chmod +x` then run |
+            | **Docker** (amd64 / arm64) | `ghcr.io/picklepc/espai:${{ github.ref_name }}` | All platforms |
 
             **Windows:** ESPAI starts silently in the system tray after install.
             Right-click the icon → Open Dashboard / Open Logs / Start at Login.
 
             **Linux:** Works on Ubuntu, Fedora, Arch, and most x86-64 distros.
-            System tray requires a compatible desktop environment (GNOME with AppIndicator, KDE Plasma, etc.).
-            Run `./ESPAI-*.AppImage serve` to start the hub directly from a terminal.
+            System tray requires a compatible desktop environment.
+
+            **Docker** — headless, amd64 + arm64, three variants:
+
+            | Tag | Includes | Size |
+            |---|---|---|
+            | `:${{ github.ref_name }}` / `:latest` | Hub + Agent Bench (Claude CLI) | ~500 MB |
+            | `:${{ github.ref_name }}-workers` / `:workers` | + OpenCV, FFmpeg, numpy, scipy | ~900 MB |
+            | `:${{ github.ref_name }}-slim` / `:slim` | Hub only | ~350 MB |
+
+            ```bash
+            # Docker auto-selects amd64 or arm64 — copy .env.example → .env first
+            docker pull ghcr.io/picklepc/espai:latest        # hub + agent bench
+            docker pull ghcr.io/picklepc/espai:workers       # + opencv / ffmpeg workers
+            docker compose up -d
+            ```
 
             ### Changes
             ${{ steps.notes.outputs.NOTES }}

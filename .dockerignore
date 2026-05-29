@@ -1,0 +1,50 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# Git
+.git/
+.gitignore
+
+# Build artifacts
+dist/
+build/
+installer-output/
+*.spec
+
+# Runtime data — never bake user data into the image
+data/
+projects/
+firmware-catalog/
+*.log
+*.db
+
+# Secrets
+.env
+*.private.yaml
+secrets/
+
+# User-specific worker deps file — always mount via docker-compose, never bake in
+worker-requirements.txt
+
+# Firmware build caches (large, not needed in hub image)
+firmware/.pio/
+firmware/provision/.pio/
+firmware/seed/.pio/
+projects/*/firmware/.pio/
+
+# Large design assets not needed at runtime
+design/brand/logo-1024*.png
+design/themes/custom/
+
+# Windows/macOS noise
+Thumbs.db
+.DS_Store
+
+# Node
+node_modules/

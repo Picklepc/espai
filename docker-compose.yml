@@ -1,0 +1,88 @@
+# ESPAI Hub — Docker Compose
+#
+# Designed for headless deployment on a FriendlyElec / OpenWrt router
+# with an SSD.  Runs entirely isolated from the host OS.
+#
+# ── Quick start ───────────────────────────────────────────────────────────────
+#   1. Copy .env.example to .env and set ESPAI_SSD_PATH to your SSD mount
+#      point (e.g. /mnt/sda1/espai or /mnt/nvme0n1p1/espai)
+#   2. Optionally set ANTHROPIC_API_KEY to enable Agent Bench
+#   3. docker compose up -d
+
+services:
+  espai:
+    # ── Image variants ────────────────────────────────────────────────────────
+    # Pull a pre-built image from the registry (recommended — Docker picks the
+    # right arch automatically):
+    #
+    #   ghcr.io/picklepc/espai:latest    hub + Agent Bench (Claude CLI)
+    #   ghcr.io/picklepc/espai:workers   + OpenCV, FFmpeg, numpy, scipy
+    #   ghcr.io/picklepc/espai:slim      hub only, smallest image
+    #
+    # Or build locally from source (useful during development):
+    #   build: { context: ., dockerfile: hub/Dockerfile }
+    #
+    # Set ESPAI_IMAGE in .env to override (default: latest).
+    image: ${ESPAI_IMAGE:-ghcr.io/picklepc/espai:latest}
+    container_name: espai
+    restart: unless-stopped
+
+    # host networking lets zeroconf/mDNS see ESP32 nodes on the LAN.
+    # If your OpenWrt Docker build doesn't support host networking, replace
+    # with:  ports: ["7888:7888"]
+    # and accept that mDNS auto-discovery won't work (manual IP add still will).
+    network_mode: host
+
+    environment:
+      ESPAI_HOST: "0.0.0.0"
+      ESPAI_PORT: "7888"
+      ESPAI_DEBUG: "0"
+
+      # ── Worker dependency preloading ────────────────────────────────────────
+      # Packages listed here are pip-installed on every container start before
+      # the hub launches.  Uncomment what your workers need.
+      #
+      # Tip: use the :workers image variant to bake these in permanently instead
+      # of reinstalling on every restart.
+      #
+      # ESPAI_PREINSTALL: >-
+      #   opencv-python-headless
+      #   numpy
+      #   scipy
+      #   Pillow
+      #   pandas
+      #   requests
+      #   paho-mqtt
+      #   pyserial
+      #   RPi.GPIO
+      #   adafruit-circuitpython-dht
+
+      # ── Agent Bench ─────────────────────────────────────────────────────────
+      # ANTHROPIC_API_KEY: ""
+      # ESPAI_AGENT_BENCH: "true"
+
+    volumes:
+      # User data is bind-mounted to the SSD so nothing important lives in
+      # the container layer.  Set ESPAI_SSD_PATH in .env or edit paths below.
+      - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/data:/app/data
+      - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/projects:/app/projects
+      - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/firmware-catalog:/app/firmware-catalog
+
+      # ── File-based preloading (alternative to ESPAI_PREINSTALL) ─────────────
+      # Create a worker-requirements.txt next to this file, list packages in
+      # standard pip format (with optional version pins), and mount it here.
+      # - ./worker-requirements.txt:/preload/requirements.txt
+
+      # ── Editable content packs ──────────────────────────────────────────────
+      # Bind-mount these to edit recipes/workers/cards without rebuilding:
+      # - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/recipes:/app/recipes
+      # - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/workers:/app/workers
+      # - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/cards:/app/cards
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:7888/api/status')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

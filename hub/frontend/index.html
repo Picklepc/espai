@@ -250,6 +250,46 @@
           <div class="registry-grid" id="workerList">
             <div class="empty-state">Loading…</div>
           </div>
+
+          <!-- ── Packages ───────────────────────────────────────────────── -->
+          <div class="packages-section">
+            <header class="view-header" style="margin-top:32px">
+              <h2 style="font-size:16px;margin:0" data-tip="Python packages and system tools required by installed workers">Packages</h2>
+              <button class="btn btn-secondary btn-sm" id="btnRefreshPackages" data-tip="Refresh package install status">↺ Refresh</button>
+            </header>
+
+            <!-- Build-type notice -->
+            <div id="pkgBuildNotice" class="hidden"></div>
+
+            <!-- Declared deps from worker YAMLs -->
+            <div id="pkgDeclaredSection">
+              <p class="view-desc" style="margin-bottom:8px">Required by installed workers:</p>
+              <div id="pkgDeclaredList"><div class="empty-state">Loading…</div></div>
+            </div>
+
+            <!-- Search PyPI -->
+            <div style="margin-top:24px">
+              <p class="view-desc" style="margin-bottom:8px">Search PyPI to install additional packages:</p>
+              <div style="display:flex;gap:8px;align-items:center">
+                <input type="text" id="pkgSearchInput" placeholder="Package name…"
+                       style="flex:1;max-width:300px"
+                       data-tip="Enter an exact PyPI package name to look it up">
+                <button class="btn btn-secondary btn-sm" id="btnPkgSearch"
+                        data-tip="Look up this package on PyPI">Search PyPI</button>
+              </div>
+              <div id="pkgSearchResult" style="margin-top:10px"></div>
+            </div>
+
+            <!-- Installed packages (full pip list) -->
+            <div style="margin-top:24px">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                <p class="view-desc" style="margin:0">All installed Python packages:</p>
+                <button class="btn btn-secondary btn-sm" id="btnShowInstalled"
+                        data-tip="Show the full list of pip-installed packages">Show all</button>
+              </div>
+              <div id="pkgInstalledList" class="hidden"></div>
+            </div>
+          </div>
         </div>
         <div id="worker-detail-view" class="hidden"></div>
       </section>
