@@ -768,35 +768,14 @@ code {
   box-shadow: 0 4px 20px rgba(0,0,0,.25);
 }
 .home-proj-thumb {
-  position: relative;
   width: 100%;
-  height: 180px;
+  height: 120px;
   overflow: hidden;
-  background: var(--color-surface);
-  border-bottom: 1px solid var(--color-card-border);
-}
-.home-proj-iframe {
-  width: 960px;
-  height: 600px;
-  transform: scale(0.3125);   /* 300/960 */
-  transform-origin: 0 0;
-  pointer-events: none;
-  border: none;
-}
-.home-proj-placeholder {
-  width: 100%;
-  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: repeating-linear-gradient(
-    45deg,
-    transparent,
-    transparent 8px,
-    rgba(255,255,255,.02) 8px,
-    rgba(255,255,255,.02) 16px
-  );
+  transition: opacity .15s;
 }
 .home-proj-body {
   padding: 14px 16px 6px;

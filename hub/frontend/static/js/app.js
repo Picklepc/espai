@@ -357,42 +357,49 @@ async function loadHome() {
     return;
   }
 
-  // Fetch app URLs in parallel
-  const appUrls = await Promise.all(
-    projects.map(p => api.projects.appUrl(p.id).catch(() => null))
-  );
-
+  // Render project cards — no iframes, no N+1 API calls, instant.
+  // "Open App" links to /app/{slug}/ directly; hub serves the web app or a 404 page.
   grid.innerHTML = "";
-  projects.forEach((p, i) => {
-    const appInfo   = appUrls[i];
-    const hasWebApp = appInfo && appInfo.host === "hub";
+  const devMap = new Map(devices.map(d => [d.id, d]));
+  projects.forEach(p => {
     const slug      = p.slug || p.name;
-    const appUrl    = hasWebApp ? appInfo.url : null;
-
-    // Count online devices linked to this project
+    const appUrl    = `/app/${encodeURIComponent(slug)}/`;
     const linkedIds = Array.isArray(p.devices) ? p.devices : [];
-    const onlineLinked = devices.filter(d => linkedIds.includes(d.id) && isOnline(d.last_seen)).length;
-    const deviceBadge  = linkedIds.length
-      ? `<span class="tag" data-tip="${onlineLinked} of ${linkedIds.length} linked device(s) online" style="${onlineLinked ? "color:var(--color-success)" : ""}">${onlineLinked}/${linkedIds.length} online</span>`
-      : `<span class="tag" style="opacity:.5">no devices</span>`;
+    const onlineLinked = linkedIds.filter(id => {
+      const d = devMap.get(id);
+      return d && isOnline(d.last_seen);
+    }).length;
+    const deviceBadge = linkedIds.length
+      ? `<span class="tag" data-tip="${onlineLinked}/${linkedIds.length} linked device(s) online"
+             style="${onlineLinked ? "color:var(--color-success)" : ""}">${onlineLinked}/${linkedIds.length} online</span>`
+      : `<span class="tag" style="opacity:.5" data-tip="No devices linked yet">no devices</span>`;
+
+    // Deterministic color from project name
+    let hash = 0;
+    for (const c of p.name) hash = (hash * 31 + c.charCodeAt(0)) & 0xffffffff;
+    const hue  = Math.abs(hash) % 360;
+    const bg   = `hsl(${hue},40%,22%)`;
+    const accent = `hsl(${hue},60%,50%)`;
 
     const card = el("div", "home-proj-card");
     card.innerHTML = `
-      <div class="home-proj-thumb" data-tip="${hasWebApp ? "Live preview of " + p.name + " web app" : "No web app — add web/index.html to this project"}">
-        ${hasWebApp
-          ? `<iframe src="${appUrl}" class="home-proj-iframe" sandbox="allow-scripts allow-same-origin" loading="lazy" title="${p.name} preview"></iframe>`
-          : `<div class="home-proj-placeholder"><span style="font-size:2rem;opacity:.4">${p.name.slice(0,2).toUpperCase()}</span><div style="font-size:11px;color:var(--color-text-muted);margin-top:8px">No web app</div></div>`}
+      <div class="home-proj-thumb" style="background:${bg};border-bottom:3px solid ${accent}"
+           data-tip="Click Project → to open project detail, or Open App to launch the web interface">
+        <div style="font-size:2.5rem;font-weight:900;color:${accent};letter-spacing:-.02em;line-height:1">
+          ${p.name.slice(0,2).toUpperCase()}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:8px;font-family:monospace">${slug}</div>
       </div>
       <div class="home-proj-body">
-        <div class="home-proj-name" data-tip="Open project detail">${p.name}</div>
+        <div class="home-proj-name">${p.name}</div>
         <div class="home-proj-desc">${p.description || ""}</div>
         <div class="tag-row" style="margin-top:6px">${deviceBadge}</div>
       </div>
       <div class="home-proj-actions">
-        ${appUrl ? `<a href="${appUrl}" target="_blank" class="btn btn-primary btn-sm" data-tip="Open ${p.name} web app in a new tab">Open App ↗</a>` : ""}
-        <button class="btn btn-secondary btn-sm home-goto-proj" data-id="${p.id}" data-tip="Open project detail — files, devices, firmware, agent tasks">Project →</button>
-      </div>
-    `;
+        <a href="${appUrl}" target="_blank" class="btn btn-primary btn-sm"
+           data-tip="Open ${p.name} web app">Open App ↗</a>
+        <button class="btn btn-secondary btn-sm home-goto-proj"
+                data-tip="Open project detail — files, devices, firmware, agent tasks">Project →</button>
+      </div>`;
     card.querySelector(".home-goto-proj").onclick = () => {
       showView("projects");
       setTimeout(async () => {
@@ -893,7 +900,7 @@ function _stopPairPoller() {
 
 // btnAddDevice wired below via _makeAddDeviceHandler
 
-document.getElementById("btnScan").onclick = _makeScanHandler(loadHome);
+document.getElementById("btnScan")?.addEventListener("click", _makeScanHandler(loadHome));
 
 // ── Home device action buttons (mirrors fleet — calls loadHome on refresh) ──
 
@@ -1001,10 +1008,10 @@ function _makeBrowseHandler(onDone) {
   };
 }
 
-document.getElementById("btnHomeBrowseLAN").onclick = _makeBrowseHandler(loadHome);
+// btnHomeBrowseLAN removed from HTML — no-op placeholder kept to avoid future confusion
 
-document.getElementById("btnBrowseLAN").onclick  = _makeBrowseHandler(loadHome);
-document.getElementById("btnAddDevice").onclick   = _makeAddDeviceHandler(loadHome);
+document.getElementById("btnBrowseLAN")?.addEventListener("click", _makeBrowseHandler(loadHome));
+document.getElementById("btnAddDevice")?.addEventListener("click",  _makeAddDeviceHandler(loadHome));
 
 // ── Backup / Restore ───────────────────────────────────────────────────────
 

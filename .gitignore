@@ -10,16 +10,24 @@ local.yaml
 secrets.yaml
 firmware/seed/secrets.ini
 
-# Workspace runtime dirs (tracked by .gitkeep)
-data/*.db
-data/*.log
+# Runtime data — never committed
+data/
 logs/
 runtime/
 backups/
+captures/
 captures/private/
 
 # User project data — created at runtime, not tracked in repo
 projects/
+
+# Dashboard / landing page runtime state
+# (local_services, discovered devices, and any cached screenshots)
+# These are stored in data/ESPAI.db (already covered by data/ above)
+
+# Firmware catalog binaries uploaded at runtime
+firmware-catalog/**/*.bin
+firmware-catalog/**/*.bin.gz
 
 # Custom (local-only) registry items — not published to GitHub.
 # Mark an item as custom by placing it in the custom/ subfolder:
