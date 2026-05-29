@@ -678,17 +678,24 @@ def import_build(project_id: str, channel: str = "dev"):
     entry_dir.mkdir(parents=True, exist_ok=True)
     (entry_dir / "firmware.bin").write_bytes(content)
 
+    # Use the project name as the human-readable firmware label
+    with get_conn() as conn:
+        proj_row = conn.execute("SELECT name FROM projects WHERE id=?", (project_id,)).fetchone()
+    proj_name = proj_row["name"] if proj_row else project_id
+    label = f"{proj_name} v{version}"
+
     meta = {
         "schema":     "ESPAI.firmware.v1",
         "board":      board,
         "version":    version,
         "channel":    channel,
+        "label":      label,
+        "project_id": project_id,
         "filename":   "firmware.bin",
         "size_bytes": len(content),
         "sha256":     sha256,
         "uploaded":   _now(),
         "known_good": False,
-        "project_id": project_id,
         "source_bin": str(latest),
     }
     (entry_dir / "firmware.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")

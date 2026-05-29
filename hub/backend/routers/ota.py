@@ -72,6 +72,7 @@ class CatalogPatch(BaseModel):
     known_good: bool | None = None
     rollback_target: str | None = None
     channel: str | None = None
+    label: str | None = None
 
 
 class RolloutRequest(BaseModel):
@@ -383,6 +384,11 @@ def patch_catalog_entry(firmware_id: str, data: CatalogPatch):
         if data.channel not in ("dev", "beta", "stable"):
             raise HTTPException(400, "channel must be dev, beta, or stable")
         meta["channel"] = data.channel
+    if data.label is not None:
+        label = data.label.strip()[:128]
+        if label and not _SAFE_LABEL.match(label):
+            raise HTTPException(400, "Label contains invalid characters")
+        meta["label"] = label
 
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta

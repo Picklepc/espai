@@ -300,7 +300,7 @@ def browse_lan(subnet: str | None = None):
         try:
             req = urllib.request.Request(f"http://{ip}/",
                                          headers={"User-Agent": "ESPAI-Hub/0.1"})
-            with urllib.request.urlopen(req, timeout=0.5) as resp:
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
                 ct   = resp.headers.get("Content-Type", "")
                 body = resp.read(2048).decode("utf-8", errors="replace")
                 m = _title_re.search(body)

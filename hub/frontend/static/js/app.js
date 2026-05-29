@@ -995,14 +995,25 @@ async function renderProjectDevices(project, linkedIds) {
   if (linkedIds.length) {
     for (const did of linkedIds) {
       const dev = devMap.get(did);
+      const online = dev && isOnline(dev.last_seen);
+      const dotColor = online ? "var(--color-success)" : "var(--color-text-muted)";
+      const dotTip   = online ? "Online — seen within 2 min" : `Last seen: ${dev?.last_seen ? timeAgo(dev.last_seen) : "never"}`;
+      const fwTag    = dev?.fw_version ? `<span class="tag" style="font-size:10px;padding:1px 5px" data-tip="Firmware version on device">fw ${dev.fw_version}</span>` : "";
+      const pairedTag = dev && !dev.paired ? `<span class="tag" style="font-size:10px;padding:1px 5px;color:var(--color-warning)" data-tip="Not yet paired — OTA and commands disabled">unpaired</span>` : "";
       const row = el("div", "file-row");
       row.innerHTML = `
-        <span class="file-path">${dev ? (dev.name || did) : did}</span>
+        <span style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;display:inline-block;margin-right:4px" data-tip="${dotTip}"></span>
+        <span class="file-path" style="flex:1">${dev ? (dev.name || did) : did} ${fwTag}${pairedTag}</span>
         <span class="file-size">${dev ? (dev.board || "?") : "not in fleet"}</span>
       `;
+      if (dev?.ip) {
+        const portalBtn = el("button", "btn btn-secondary btn-sm", "🌐");
+        portalBtn.dataset.tip = `Open device portal at http://${dev.ip}/`;
+        portalBtn.onclick = () => window.open(`http://${dev.ip}/`, "_blank");
+        row.appendChild(portalBtn);
+      }
       const unlinkBtn = el("button", "btn btn-danger btn-sm", "Unlink");
       unlinkBtn.dataset.tip = "Remove this device from the project — the device stays in Fleet";
-      unlinkBtn.style.marginLeft = "8px";
       unlinkBtn.onclick = async () => {
         const newIds = linkedIds.filter(id => id !== did);
         await api.projects.update(project.id, { devices: newIds }).catch(() => {});
@@ -1013,17 +1024,72 @@ async function renderProjectDevices(project, linkedIds) {
       devList.appendChild(row);
     }
   } else {
-    devList.appendChild(el("div", "empty-state", "No devices linked."));
+    devList.appendChild(el("div", "empty-state", "No devices linked yet. Click Find Device or + Link."));
   }
 
-  const linkBtn = el("button", "btn btn-secondary btn-sm", "+ Link Device");
-  linkBtn.dataset.tip = "Associate a fleet device with this project for OTA and agent targeting";
-  linkBtn.style.marginTop = "10px";
+  const btnRow = el("div", "");
+  btnRow.style.cssText = "display:flex;gap:6px;margin-top:10px;flex-wrap:wrap";
+
+  // Find Device — scans LAN for unpaired/unlinkable ESPAI nodes
+  const findBtn = el("button", "btn btn-primary btn-sm", "📡 Find Device");
+  findBtn.dataset.tip = "Scan the LAN for ESPAI nodes, pair and link them to this project in one flow";
+  findBtn.onclick = async () => {
+    findBtn.textContent = "Scanning…";
+    findBtn.disabled = true;
+    let found;
+    try { found = (await api.devices.scan()).devices || []; }
+    catch (_) { found = []; }
+    finally { findBtn.textContent = "📡 Find Device"; findBtn.disabled = false; }
+
+    // Refresh device map
+    try { allDevs = await api.devices.list(); } catch (_) {}
+    const freshMap = new Map(allDevs.map(d => [d.id, d]));
+    const candidates = allDevs.filter(d => !linkedIds.includes(d.id));
+
+    if (!candidates.length) {
+      openModal("No Devices Found", '<div class="empty-state">No additional ESPAI nodes found. Make sure the device is powered and on the same network.</div>',
+        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      return;
+    }
+    const rows = candidates.map(d => `
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--color-card-border);cursor:pointer">
+        <input type="checkbox" value="${d.id}" ${linkedIds.includes(d.id) ? "checked disabled" : ""}>
+        <div>
+          <div style="font-weight:600">${d.name || d.id}</div>
+          <div style="font-size:11px;color:var(--color-text-muted)">${d.ip || "no IP"} · ${d.board || "?"} · ${d.paired ? "✓ paired" : "⚠ unpaired"}</div>
+        </div>
+      </label>`).join("");
+    openModal("Find & Link Device", `
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px">Select devices to link to this project. Unpaired devices will be paired automatically.</p>
+      <div>${rows}</div>
+    `, [
+      { label: "Link Selected", cls: "btn btn-primary", action: async () => {
+        const checked = [...document.querySelectorAll("#modalBody input[type=checkbox]:checked")].map(cb => cb.value);
+        if (!checked.length) { closeModal(); return; }
+        // Pair any unpaired
+        for (const did of checked) {
+          const d = freshMap.get(did);
+          if (d && !d.paired) {
+            await api.devices.initiatePair(did).catch(() => {});
+          }
+        }
+        const newIds = [...new Set([...linkedIds, ...checked])];
+        await api.projects.update(project.id, { devices: newIds }).catch(() => {});
+        project.devices = newIds;
+        closeModal();
+        renderProjectDevices(project, newIds);
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+  };
+  btnRow.appendChild(findBtn);
+
+  const linkBtn = el("button", "btn btn-secondary btn-sm", "+ Link Existing");
+  linkBtn.dataset.tip = "Link a device already in the fleet to this project";
   linkBtn.onclick = () => {
     const available = allDevs.filter(d => !linkedIds.includes(d.id));
     if (!available.length) {
-      openModal("No Available Devices",
-        '<div class="empty-state">All fleet devices are already linked, or fleet is empty.</div>',
+      openModal("No Available Devices", '<div class="empty-state">All fleet devices are already linked, or fleet is empty.</div>',
         [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
       return;
     }
@@ -1032,7 +1098,7 @@ async function renderProjectDevices(project, linkedIds) {
     ).join("");
     openModal("Link Device to Project", `
       <div class="form-field">
-        <label>Device</label>
+        <label data-tip="Only devices already in your fleet are shown here — use 'Find Device' to discover new ones">Device</label>
         <select id="linkDevSel">${opts}</select>
       </div>
     `, [
@@ -1047,7 +1113,8 @@ async function renderProjectDevices(project, linkedIds) {
       { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
     ]);
   };
-  devList.appendChild(linkBtn);
+  btnRow.appendChild(linkBtn);
+  devList.appendChild(btnRow);
 }
 
 async function renderProjectFirmware(project, linkedIds) {
@@ -1331,19 +1398,13 @@ document.getElementById("btnProjImport").onclick = async () => {
   btn.disabled = true;
   try {
     const meta = await api.projects.importBuild(_currentProject.id, "dev");
-    openModal("Imported to OTA Catalog", `
-      <p style="font-size:13px;line-height:1.7;margin-bottom:12px">
-        <strong>${meta.board}</strong> v${meta.version} (${(meta.size_bytes / 1024).toFixed(0)} KB)
-        has been added to the firmware catalog on the <em>dev</em> channel.
-      </p>
-      <p style="font-size:13px;color:var(--color-text-muted)">
-        Go to <strong>OTA / Firmware</strong> and click <strong>Push to Device</strong>
-        to send it to a paired ESP32 over WiFi.
-      </p>
-    `, [
-      { label: "Go to OTA", cls: "btn btn-primary", action: () => { closeModal(); showView("ota"); } },
-      { label: "Done",      cls: "btn btn-secondary", action: closeModal },
-    ]);
+    const linkedIds = Array.isArray(_currentProject.devices) ? _currentProject.devices : [];
+    // Refresh the project Firmware section — stays in project, no navigation needed
+    await renderProjectFirmware(_currentProject, linkedIds);
+    // Brief inline confirmation on the button itself, no modal
+    btn.textContent = "✓ Imported";
+    btn.style.color = "var(--color-success)";
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ""; }, 2500);
   } catch (err) {
     alert("Import failed: " + err.message);
   } finally {
@@ -1685,22 +1746,52 @@ async function loadOTA() {
         : "";
       const rbBadge = fw.rollback_target
         ? `<span class="tag" style="font-size:10px">↩ rb: ${fw.rollback_target}</span>` : "";
+      const fwId = fw._folder || `${fw.board}-${fw.version}`;
       const displayTitle = fw.label || `${fw.board} — v${fw.version}`;
       const displaySub   = fw.label ? `${fw.board} — v${fw.version} · ${fw.channel} · ${formatBytes(fw.size_bytes)}`
                                     : `Channel: ${fw.channel} · ${formatBytes(fw.size_bytes)}`;
       card.innerHTML = `
-        <div class="reg-card-title">${displayTitle}</div>
-        <div class="reg-card-sub">${displaySub}</div>
+        <div class="reg-card-title" style="display:flex;align-items:center;gap:6px">
+          <span class="fw-label-text" data-tip="Click to rename this firmware entry">${displayTitle}</span>
+          <button class="fw-label-edit" data-tip="Rename this firmware entry" style="background:none;border:none;cursor:pointer;color:var(--color-text-muted);font-size:11px;padding:0 2px">✎</button>
+        </div>
+        <div class="reg-card-sub">${displaySub}${fw.project_id ? ` · <span style="color:var(--color-accent);font-size:10px">📁 ${fw.project_id.slice(0,8)}</span>` : ""}</div>
         <div class="tag-row">
           <span class="tag" ${fw.sha256 ? `data-tip="Full SHA-256: ${fw.sha256}"` : ""}>${fw.sha256 ? fw.sha256.slice(0,12) + "…" : "no checksum"}</span>
           <span class="tag">${timeAgo(fw.uploaded)}</span>
           ${goodBadge}${rbBadge}
         </div>
       `;
+      // Wire the rename (✎) button that's inside the card HTML
+      const editLabelBtn = card.querySelector(".fw-label-edit");
+      if (editLabelBtn) {
+        editLabelBtn.onclick = () => {
+          const current = fw.label || `${fw.board}-${fw.version}`;
+          openModal("Rename Firmware Entry", `
+            <div class="form-field">
+              <label data-tip="Display name shown in the catalog and project firmware sections">Label</label>
+              <input type="text" id="fwNewLabel" value="${current}" placeholder="e.g. Jingle Bells v1.2.0">
+            </div>
+          `, [
+            { label: "Save", cls: "btn btn-primary", action: async () => {
+              const label = document.getElementById("fwNewLabel").value.trim();
+              if (!label) return;
+              try {
+                await api.ota.patchEntry(fwId, { label });
+                closeModal();
+                loadOTA();
+              } catch (err) { alert("Error: " + err.message); }
+            }},
+            { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+          ]);
+          setTimeout(() => { const el = document.getElementById("fwNewLabel"); el?.focus(); el?.select(); }, 50);
+        };
+      }
+
       const btnRow = el("div", "");
       btnRow.style.cssText = "display:flex;gap:6px;margin-top:10px;flex-wrap:wrap";
 
-      const pushBtn = el("button", "btn btn-secondary btn-sm", "Push to Device");
+      const pushBtn = el("button", "btn btn-primary btn-sm", "⬆ Flash to Device");
       pushBtn.dataset.tip = "Send this firmware to a paired device over the air";
       pushBtn.onclick = () => openPushModal(fw);
       btnRow.appendChild(pushBtn);
@@ -1752,7 +1843,7 @@ async function loadOTA() {
 // ── OTA push modal ─────────────────────────────────────────────────────────
 
 // deviceFilter: optional array of device IDs to restrict the target selector to.
-// If provided but no matches exist among paired devices, falls back to all paired.
+// If exactly one device results, skips the selection step entirely.
 async function openPushModal(fw, deviceFilter = null) {
   const devices = await api.devices.list().catch(() => []);
   let paired = devices.filter(d => d.paired);
@@ -1763,14 +1854,41 @@ async function openPushModal(fw, deviceFilter = null) {
   }
   if (!paired.length) {
     openModal("No Paired Devices",
-      '<div class="empty-state">No paired devices available. Pair a device first from the Fleet view.</div>',
+      '<div class="empty-state">No paired devices available. Use 📡 Find Device in the project to pair one.</div>',
       [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
     return;
   }
+  const pushTitle = fw.label || `${fw.board} v${fw.version}`;
+
+  // One device → skip selection, go straight to confirm
+  if (paired.length === 1) {
+    const d = paired[0];
+    const boardMismatch = fw.board && d.board && fw.board !== d.board;
+    openModal(`Flash ${pushTitle} → ${d.name || d.id}`, `
+      <p style="font-size:13px;margin-bottom:12px">
+        Flash <strong>${pushTitle}</strong> to <strong>${d.name || d.id}</strong> (${d.board || "?"}) over WiFi?
+      </p>
+      ${boardMismatch ? `<p style="color:var(--color-warning);font-size:12px">⚠ Board mismatch: firmware targets <strong>${fw.board}</strong></p>` : ""}
+      <p style="font-size:11px;color:var(--color-text-muted)">${formatBytes(fw.size_bytes)} · SHA-256: ${fw.sha256 ? fw.sha256.slice(0,16) + "…" : "—"}</p>
+    `, [
+      { label: "⬆ Flash Now", cls: "btn btn-primary", action: async () => {
+        try {
+          const result = await api.ota.push({ device_id: d.id, firmware_id: fw._folder, operator: "local" });
+          closeModal();
+          openModal(result.status === "ok" ? "Flash Successful ✓" : "Flash Failed",
+            `<p>Status: <strong style="color:${result.status === "ok" ? "var(--color-success)" : "var(--color-danger)"}">${result.status}</strong></p>
+             ${result.response ? `<pre style="font-size:11px;margin-top:8px;overflow:auto;max-height:120px">${result.response}</pre>` : ""}`,
+            [{ label: "Close", cls: "btn btn-primary", action: closeModal }]);
+        } catch (err) { alert("Flash failed: " + err.message); }
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+    return;
+  }
+
   const opts = paired.map(d =>
     `<option value="${d.id}" data-board="${d.board || ''}">${d.name || d.id} (${d.board || "unknown board"})</option>`
   ).join("");
-  const pushTitle = fw.label || `${fw.board} v${fw.version}`;
   openModal(`Push Firmware — ${pushTitle}`, `
     <div class="form-field">
       <label data-tip="Only paired devices are eligible for OTA. Pair a device from the Fleet view if it does not appear here.">Target Device</label>
