@@ -198,7 +198,7 @@ jobs:
           VER="${VER#v}"
           MINOR="${VER%.*}"
           SUFFIX="${{ matrix.tag_suffix }}"
-          REPO="ghcr.io/${{ github.repository }}"
+          REPO="ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           IS_PRE=$([[ "${{ github.ref_name }}" == *"-"* ]] && echo true || echo false)
 
           TAGS="${REPO}:${VER}${SUFFIX},${REPO}:${MINOR}${SUFFIX}"
