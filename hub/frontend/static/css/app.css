@@ -736,6 +736,19 @@ code {
 .home-stat-value { font-size: 2rem; font-weight: 700; line-height: 1; }
 .home-stat-label { font-size: 11px; color: var(--color-text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .05em; }
 
+.home-section-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.home-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
 .home-proj-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

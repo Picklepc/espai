@@ -103,8 +103,7 @@
         <div class="logo-tagline">YOUR LAB. YOUR RULES.</div>
       </div>
       <ul class="nav-list">
-        <li><a href="#" class="nav-item active" data-view="home"         data-tip="Dashboard — your project apps, device status, and quick actions">Home</a></li>
-        <li><a href="#" class="nav-item" data-view="fleet"              data-tip="View and manage devices on your network">Fleet</a></li>
+        <li><a href="#" class="nav-item active" data-view="home"         data-tip="Dashboard — project apps, device management, and quick actions">Home</a></li>
         <li><a href="#" class="nav-item" data-view="projects"            data-tip="Organize devices into groups with shared files and themes">Projects</a></li>
         <li><a href="#" class="nav-item" data-view="recipes"             data-tip="YAML-defined data processing pipelines for device streams">Recipes</a></li>
         <li><a href="#" class="nav-item" data-view="workers"             data-tip="Code modules that process data — each has declared permissions">Workers</a></li>
@@ -130,31 +129,51 @@
       <section class="view active" id="view-home">
         <header class="view-header">
           <h1>Dashboard</h1>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-secondary" id="btnHomeRefresh" data-tip="Refresh project thumbnails and device status">↻ Refresh</button>
-            <button class="btn btn-primary" id="btnHomeNewProject" data-tip="Create a new ESPAI project — firmware, web app, and hub integration">+ New Project</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary" id="btnHomeBrowseLAN"  data-tip="Scan for ALL HTTP devices on your LAN — ESPAI and non-ESPAI (Tasmota, ESPHome, cameras, routers)">🔍 Browse LAN</button>
+            <button class="btn btn-secondary" id="btnHomeScanLAN"    data-tip="Scan your local subnet for ESPAI-compatible nodes and register them automatically">Scan LAN</button>
+            <button class="btn btn-secondary" id="btnHomeAddDevice"  data-tip="Manually add a device by entering its IP address">+ Add Device</button>
+            <button class="btn btn-secondary" id="btnHomeRefresh"    data-tip="Refresh project thumbnails and device status">↻ Refresh</button>
+            <button class="btn btn-primary"   id="btnHomeNewProject" data-tip="Create a new ESPAI project — firmware, web app, and hub integration">+ New Project</button>
           </div>
         </header>
         <div class="home-stats" id="homeStats">
-          <div class="home-stat" data-tip="ESPAI nodes currently online">
+          <div class="home-stat" data-tip="ESPAI nodes seen in the last 2 minutes">
             <span class="home-stat-value accent" id="hstatOnline">—</span>
             <span class="home-stat-label">Online</span>
           </div>
-          <div class="home-stat" data-tip="Total devices in fleet">
+          <div class="home-stat" data-tip="Paired devices — trusted for OTA and commands">
+            <span class="home-stat-value" id="hstatPaired">—</span>
+            <span class="home-stat-label">Paired</span>
+          </div>
+          <div class="home-stat" data-tip="Total devices discovered on the network">
             <span class="home-stat-value" id="hstatTotal">—</span>
             <span class="home-stat-label">Devices</span>
           </div>
-          <div class="home-stat" data-tip="Active projects">
+          <div class="home-stat" data-tip="Active projects on this hub">
             <span class="home-stat-value" id="hstatProjects">—</span>
             <span class="home-stat-label">Projects</span>
           </div>
-          <div class="home-stat" data-tip="Worker jobs running right now">
+          <div class="home-stat" data-tip="Worker jobs currently running">
             <span class="home-stat-value" id="hstatJobs">—</span>
             <span class="home-stat-label">Active Jobs</span>
           </div>
         </div>
+
+        <!-- Project app gallery -->
+        <div class="home-section-header">
+          <h2 class="home-section-title">Projects</h2>
+        </div>
         <div class="home-proj-grid" id="homeProjGrid">
           <div class="empty-state">Loading projects…</div>
+        </div>
+
+        <!-- Device list (formerly Fleet) -->
+        <div class="home-section-header" style="margin-top:32px">
+          <h2 class="home-section-title">Devices</h2>
+        </div>
+        <div class="device-list" id="homeDeviceList">
+          <div class="empty-state">Loading devices…</div>
         </div>
       </section>
 

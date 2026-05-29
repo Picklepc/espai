@@ -332,16 +332,22 @@ async function loadHome() {
   const [projects, devices, jobs] = await Promise.all([
     api.projects.list().catch(() => []),
     api.devices.list().catch(() => []),
-    api.jobs.list().catch(() => []),
+    api.jobs.list("running").catch(() => []),
   ]);
 
   // Stats
-  const online = devices.filter(d => isOnline(d.last_seen)).length;
-  const activeJobs = (jobs || []).filter(j => j.status === "running").length;
+  const online     = devices.filter(d => isOnline(d.last_seen)).length;
+  const paired     = devices.filter(d => d.paired).length;
+  const activeJobs = (jobs || []).length;
   document.getElementById("hstatOnline").textContent   = online;
+  document.getElementById("hstatPaired").textContent   = paired;
   document.getElementById("hstatTotal").textContent    = devices.length;
   document.getElementById("hstatProjects").textContent = projects.length;
   document.getElementById("hstatJobs").textContent     = activeJobs;
+
+  // Device list
+  const devListEl = document.getElementById("homeDeviceList");
+  if (devListEl) _renderDeviceCards(devListEl, devices, loadHome);
 
   if (!projects.length) {
     grid.innerHTML = '<div class="empty-state">No projects yet — click <strong>+ New Project</strong> to create your first one.</div>';
@@ -402,50 +408,37 @@ document.getElementById("btnHomeNewProject").onclick = () => {
   setTimeout(() => document.getElementById("btnNewProject")?.click(), 150);
 };
 
-async function loadFleet() {
-  const [devices, jobs] = await Promise.all([
-    api.devices.list().catch(() => []),
-    api.jobs.list("running").catch(() => []),
-  ]);
-
-  const online = devices.filter(d => isOnline(d.last_seen));
-  const paired = devices.filter(d => d.paired);
-
-  document.getElementById("statTotal").textContent  = devices.length;
-  document.getElementById("statOnline").textContent = online.length;
-  document.getElementById("statPaired").textContent = paired.length;
-  document.getElementById("statJobs").textContent   = jobs.length;
-
-  const listEl = document.getElementById("deviceList");
+// Shared device card renderer — used by Home dashboard (and legacy Fleet if needed)
+function _renderDeviceCards(listEl, devices, onRefresh) {
   if (!devices.length) {
-    listEl.innerHTML = '<div class="empty-state">No devices found. Scan LAN or add a device manually.</div>';
+    listEl.innerHTML = '<div class="empty-state">No devices found. Use Scan LAN or + Add Device to discover nodes.</div>';
     return;
   }
-
   listEl.innerHTML = "";
   for (const d of devices) {
     const online_ = isOnline(d.last_seen);
-    const card = el("div", "device-card");
+    const card    = el("div", "device-card");
     const dotClass = online_ ? "device-dot online" : (d.paired ? "device-dot paired" : "device-dot");
-    const dotTip   = online_ ? "Online — seen within 2 minutes" : (d.paired ? "Offline — paired but not recently seen" : "Unregistered — not yet paired");
+    const dotTip   = online_ ? "Online — seen within 2 minutes"
+                   : d.paired ? `Offline — last seen ${timeAgo(d.last_seen)}`
+                   : "Unregistered — not yet paired";
     card.innerHTML = `
       <span class="${dotClass}" data-tip="${dotTip}"></span>
       <div class="device-info">
         <div class="device-name">${d.name || d.id}</div>
         <div class="device-meta">${d.ip || "no IP"} · ${d.board || "unknown board"} · fw ${d.fw_version || "?"} · ${timeAgo(d.last_seen)}</div>
       </div>
-      <span class="device-badge ${d.paired ? "" : "unpaired"}" data-tip="${d.paired ? "Paired — trusted for OTA and commands" : "Not paired — click Pair to register this device"}">${d.paired ? "Paired" : "Unpaired"}</span>
+      <span class="device-badge ${d.paired ? "" : "unpaired"}" data-tip="${d.paired ? "Paired — trusted for OTA and commands" : "Not paired — click Pair to enable OTA and commands"}">${d.paired ? "Paired" : "Unpaired"}</span>
     `;
     const actions = el("div", "device-actions");
     if (!d.paired) {
-      const pairBtn = el("button", "btn btn-secondary btn-sm");
-      pairBtn.textContent = "Pair";
+      const pairBtn = el("button", "btn btn-secondary btn-sm", "Pair");
       pairBtn.dataset.tip = "Pair this device with the hub to enable OTA and trusted commands";
       pairBtn.onclick = () => pairDevice(d.id);
       actions.appendChild(pairBtn);
     } else {
       const flashBtn = el("button", "btn btn-secondary btn-sm", "⬆ Flash");
-      flashBtn.dataset.tip = "Push firmware to this device — shows board-compatible entries, newest first";
+      flashBtn.dataset.tip = "Push firmware to this device — board-compatible entries, newest first";
       flashBtn.onclick = (e) => { e.stopPropagation(); _openFlashDeviceModal(d); };
       actions.appendChild(flashBtn);
     }
@@ -455,19 +448,33 @@ async function loadFleet() {
       portalBtn.onclick = (e) => { e.stopPropagation(); window.open(`http://${d.ip}/`, "_blank"); };
       actions.appendChild(portalBtn);
     }
-    const delBtn = el("button", "btn btn-danger btn-sm");
-    delBtn.innerHTML = "&#x2715;";
-    delBtn.dataset.tip = "Remove this device from the fleet";
+    const delBtn = el("button", "btn btn-danger btn-sm", "✕");
+    delBtn.dataset.tip = "Remove this device from the hub";
     delBtn.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(`Remove "${d.name || d.id}" from fleet?`)) return;
+      if (!confirm(`Remove "${d.name || d.id}"?`)) return;
       await api.devices.delete(d.id).catch(() => {});
-      loadFleet();
+      if (onRefresh) onRefresh();
     };
     actions.appendChild(delBtn);
     card.appendChild(actions);
     listEl.appendChild(card);
   }
+}
+
+async function loadFleet() {
+  const [devices, jobs] = await Promise.all([
+    api.devices.list().catch(() => []),
+    api.jobs.list("running").catch(() => []),
+  ]);
+  const online = devices.filter(d => isOnline(d.last_seen));
+  const paired = devices.filter(d => d.paired);
+  document.getElementById("statTotal").textContent  = devices.length;
+  document.getElementById("statOnline").textContent = online.length;
+  document.getElementById("statPaired").textContent = paired.length;
+  document.getElementById("statJobs").textContent   = jobs.length;
+  const listEl = document.getElementById("deviceList");
+  if (listEl) _renderDeviceCards(listEl, devices, loadFleet);
 }
 
 async function _openFlashDeviceModal(device) {
@@ -618,114 +625,120 @@ function _stopPairPoller() {
 
 // ── Add Device modal ───────────────────────────────────────────────────────
 
-document.getElementById("btnAddDevice").onclick = () => {
-  openModal("Add Device Manually", `
-    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
-      Use this when your device doesn't respond to LAN scan — for example if it's on a
-      different subnet, has a static IP, or is connected via a serial-to-network bridge.
-    </p>
-    <div class="form-field">
-      <label data-tip="The device's current IP address on your local network — check your router's DHCP table or the device's serial output">IP Address</label>
-      <input type="text" id="newDeviceIP" placeholder="e.g. 192.168.1.45">
-    </div>
-    <div class="form-field">
-      <label data-tip="A human-readable name shown in Fleet, events, and rules — use something descriptive like the room or sensor type">Name (optional)</label>
-      <input type="text" id="newDeviceName" placeholder="e.g. kitchen-sensor">
-    </div>
-  `, [
-    { label: "Add", cls: "btn btn-primary", action: async () => {
-      const ip   = document.getElementById("newDeviceIP").value.trim();
-      const name = document.getElementById("newDeviceName").value.trim();
-      if (!ip) return;
-      await api.devices.addManual({ ip, name: name || null });
-      closeModal();
-      loadFleet();
-    }},
-    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
-  ]);
-};
+// btnAddDevice wired below via _makeAddDeviceHandler
 
-document.getElementById("btnScan").onclick = async () => {
-  openModal("Scanning LAN…", `
-    <div style="text-align:center;padding:24px 0">
-      <div style="font-size:32px;margin-bottom:12px">📡</div>
-      <p style="color:var(--color-text-muted)">Probing 254 addresses on local subnet…</p>
-    </div>
-  `, []);
-  try {
-    const result = await api.devices.scan();
-    if (!result.found) {
+document.getElementById("btnScan").onclick = _makeScanHandler(loadHome);
+
+// ── Home device action buttons (mirrors fleet — calls loadHome on refresh) ──
+
+function _makeScanHandler(onDone) {
+  return async () => {
+    openModal("Scanning LAN…", `
+      <div style="text-align:center;padding:24px 0">
+        <div style="font-size:32px;margin-bottom:12px">📡</div>
+        <p style="color:var(--color-text-muted)">Probing 254 addresses on local subnet…</p>
+      </div>
+    `, []);
+    try {
+      const result = await api.devices.scan();
+      const count  = result.found ?? 0;
       closeModal();
-      openModal("Scan Complete", `
-        <div class="empty-state">No ESPAI nodes found on <code>${result.subnet}.x</code>.</div>
-      `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
-    } else {
-      const rows = result.devices.map(d => `
-        <div class="device-card" style="margin-bottom:6px">
-          <span class="device-dot online"></span>
-          <div class="device-info">
-            <div class="device-name">${d.name || d.id || "Unknown"}</div>
-            <div class="device-meta">${d.ip} · ${d.board || "?"} · fw ${d.fw_version || "?"}</div>
-          </div>
-        </div>
-      `).join("");
-      closeModal();
-      openModal(`Found ${result.found} node${result.found !== 1 ? "s" : ""}`, `
+      openModal(`Scan Complete — ${count} node${count !== 1 ? "s" : ""} found`, `
         <p style="margin-bottom:14px;color:var(--color-text-muted);font-size:13px">
-          Scanned <code>${result.subnet}.x</code> — registered to fleet automatically.
+          Scanned <code>${result.subnet}.x</code>${count ? " — registered to fleet automatically." : " — no ESPAI nodes responded."}
         </p>
-        ${rows}
-      `, [{ label: "Done", cls: "btn btn-primary", action: () => { closeModal(); loadFleet(); } }]);
+        ${(result.devices || []).map(d => `
+          <div class="device-card" style="margin-bottom:6px">
+            <span class="device-dot online"></span>
+            <div class="device-info">
+              <div class="device-name">${d.name || d.id || "Unknown"}</div>
+              <div class="device-meta">${d.ip} · ${d.board || "?"} · fw ${d.fw_version || "?"}</div>
+            </div>
+          </div>`).join("")}
+      `, [{ label: "Done", cls: "btn btn-primary", action: () => { closeModal(); onDone(); } }]);
+    } catch (err) {
+      closeModal();
+      openModal("Scan Failed", `<p class="empty-state">${err.message}</p>`,
+        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
     }
-  } catch (err) {
-    closeModal();
-    openModal("Scan Failed", `<p class="empty-state">${err.message}</p>`,
-      [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
-  }
-};
+  };
+}
+
+function _makeAddDeviceHandler(onDone) {
+  return () => {
+    openModal("Add Device Manually", `
+      <div class="form-field">
+        <label data-tip="The device must be reachable on the local network and running ESPAI firmware">IP Address</label>
+        <input type="text" id="manualIP" placeholder="192.168.1.100" style="font-family:monospace">
+      </div>
+    `, [
+      { label: "Add", cls: "btn btn-primary", action: async () => {
+        const ip = document.getElementById("manualIP").value.trim();
+        if (!ip) return;
+        try {
+          await api.devices.addManual({ ip });
+          closeModal();
+          onDone();
+        } catch (err) { alert("Error: " + err.message); }
+      }},
+      { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+    ]);
+    setTimeout(() => document.getElementById("manualIP")?.focus(), 100);
+  };
+}
+
+document.getElementById("btnHomeScanLAN").onclick    = _makeScanHandler(loadHome);
+document.getElementById("btnHomeAddDevice").onclick  = _makeAddDeviceHandler(loadHome);
 
 // ── LAN browser (non-ESPAI devices) ────────────────────────────────────────
 
-document.getElementById("btnBrowseLAN").onclick = async () => {
-  openModal("Browsing LAN…", `
-    <div style="text-align:center;padding:24px 0">
-      <div style="font-size:32px;margin-bottom:12px">🔍</div>
-      <p style="color:var(--color-text-muted)">Probing all 254 addresses on port 80 — this finds ESPAI nodes, Tasmota, ESPHome, cameras, and any HTTP device…</p>
-    </div>
-  `, []);
-  try {
-    const result = await api.devices.browse();
-    const found  = result.found || [];
-    if (!found.length) {
+function _makeBrowseHandler(onDone) {
+  return async () => {
+    openModal("Browsing LAN…", `
+      <div style="text-align:center;padding:24px 0">
+        <div style="font-size:32px;margin-bottom:12px">🔍</div>
+        <p style="color:var(--color-text-muted)">Probing all 254 addresses on port 80…</p>
+      </div>
+    `, []);
+    try {
+      const result = await api.devices.browse();
+      const found  = result.found || [];
+      if (!found.length) {
+        closeModal();
+        openModal("Browse Complete", `<div class="empty-state">No HTTP devices found on <code>${result.subnet}.x</code>.</div>`,
+          [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+        return;
+      }
+      const espai  = found.filter(d => d.is_espai);
+      const others = found.filter(d => !d.is_espai);
+      const renderRow = d => `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--color-card-border)">
+          <span style="font-size:18px">${d.is_espai ? "📡" : "🌐"}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.title || d.ip}</div>
+            <div style="font-size:11px;color:var(--color-text-muted)">${d.ip}${d.server ? " · " + d.server : ""}</div>
+          </div>
+          <a href="http://${d.ip}/" target="_blank"
+             style="font-size:11px;color:var(--color-accent);white-space:nowrap;text-decoration:none"
+             data-tip="Open ${d.ip} in a new tab">Open ↗</a>
+        </div>`;
       closeModal();
-      openModal("Browse Complete", `<div class="empty-state">No HTTP devices found on <code>${result.subnet}.x</code>.</div>`,
+      openModal(`Found ${found.length} device${found.length !== 1 ? "s" : ""} on ${result.subnet}.x`, `
+        ${espai.length ? `<p class="section-heading" style="font-size:11px;margin-bottom:4px">ESPAI NODES (${espai.length})</p>${espai.map(renderRow).join("")}` : ""}
+        ${others.length ? `<p class="section-heading" style="font-size:11px;margin-top:14px;margin-bottom:4px">OTHER HTTP DEVICES (${others.length})</p>${others.map(renderRow).join("")}` : ""}
+      `, [{ label: "Done", cls: "btn btn-primary", action: closeModal }]);
+    } catch (err) {
+      closeModal();
+      openModal("Browse Failed", `<p class="empty-state">${err.message}</p>`,
         [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
-      return;
     }
-    const espai  = found.filter(d => d.is_espai);
-    const others = found.filter(d => !d.is_espai);
-    const renderRow = d => `
-      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--color-card-border)">
-        <span style="font-size:18px">${d.is_espai ? "📡" : "🌐"}</span>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.title || d.ip}</div>
-          <div style="font-size:11px;color:var(--color-text-muted)">${d.ip}${d.server ? " · " + d.server : ""}</div>
-        </div>
-        <a href="http://${d.ip}/" target="_blank"
-           style="font-size:11px;color:var(--color-accent);white-space:nowrap;text-decoration:none"
-           data-tip="Open ${d.ip} in a new tab">Open ↗</a>
-      </div>`;
-    closeModal();
-    openModal(`Found ${found.length} device${found.length !== 1 ? "s" : ""} on ${result.subnet}.x`, `
-      ${espai.length ? `<p class="section-heading" style="font-size:11px;margin-bottom:4px">ESPAI NODES (${espai.length})</p>${espai.map(renderRow).join("")}` : ""}
-      ${others.length ? `<p class="section-heading" style="font-size:11px;margin-top:14px;margin-bottom:4px">OTHER HTTP DEVICES (${others.length})</p>${others.map(renderRow).join("")}` : ""}
-    `, [{ label: "Done", cls: "btn btn-primary", action: closeModal }]);
-  } catch (err) {
-    closeModal();
-    openModal("Browse Failed", `<p class="empty-state">${err.message}</p>`,
-      [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
-  }
-};
+  };
+}
+
+document.getElementById("btnHomeBrowseLAN").onclick = _makeBrowseHandler(loadHome);
+
+document.getElementById("btnBrowseLAN").onclick  = _makeBrowseHandler(loadHome);
+document.getElementById("btnAddDevice").onclick   = _makeAddDeviceHandler(loadHome);
 
 // ── Backup / Restore ───────────────────────────────────────────────────────
 
@@ -3626,7 +3639,7 @@ function _termWireEvents() {
 
 const viewLoaders = {
   home:          loadHome,
-  fleet:         loadFleet,
+  fleet:         loadFleet,   // kept for any direct link refs; not in nav
   projects:      loadProjects,
   recipes:       loadRecipes,
   workers:       loadWorkers,
