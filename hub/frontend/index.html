@@ -130,6 +130,7 @@
         <header class="view-header">
           <h1>Fleet</h1>
           <div class="header-actions">
+            <button class="btn btn-secondary" id="btnBrowseLAN"  data-tip="Scan for ALL HTTP devices on your LAN — ESPAI and non-ESPAI (Tasmota, ESPHome, cameras, routers)">🔍 Browse LAN</button>
             <button class="btn btn-secondary" id="btnScan"      data-tip="Scan your local subnet for ESPAI-compatible nodes">Scan LAN</button>
             <button class="btn btn-primary"   id="btnAddDevice" data-tip="Manually add a device by entering its IP address">+ Add Device</button>
           </div>
@@ -181,7 +182,8 @@
               <button class="btn btn-secondary btn-sm" id="btnProjUploadFirmware" data-tip="Upload a .bin file and tag it to this project — then flash it to a linked device in one click from the Firmware section below">⬆ Upload Firmware</button>
               <button class="btn btn-secondary btn-sm" id="btnProjFlashUSB" data-tip="Flash firmware directly via USB cable (pio run -t upload) — use when device is not yet on WiFi">&#128299; Flash USB</button>
               <button class="btn btn-secondary btn-sm" id="btnProjTheme"    data-tip="Override CSS design tokens while this project is active">🎨 Theme</button>
-              <button class="btn btn-secondary btn-sm" id="btnProjRegenCtx" data-tip="Regenerate the project ESPAI.md context file — agents receive this before every task prompt">↺ Context</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjRegenCtx"  data-tip="Regenerate the project ESPAI.md context file — agents receive this before every task prompt">↺ Context</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjGitLog"   data-tip="View this project's git commit history — every file save and agent task approval is auto-committed">📋 History</button>
               <button class="btn btn-danger btn-sm"    id="btnProjDelete"   data-tip="Permanently delete this project (devices and files are not removed)">Delete Project</button>
             </div>
           </header>

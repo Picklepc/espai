@@ -27,8 +27,9 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
-from ..config import ROOT, AGENTS_DIR, AGENT_BENCH_DIR
+from ..config import ROOT, AGENTS_DIR, AGENT_BENCH_DIR, PROJECTS_DIR
 from ..db import get_conn
+from .. import git_helper
 
 router = APIRouter()
 
@@ -1172,6 +1173,14 @@ def submit_review(task_id: str, data: ReviewCreate):
             "UPDATE agent_tasks SET status=?, updated=? WHERE id=?",
             (new_status, now, task_id),
         )
+    # Auto-commit project git history when task is approved
+    if data.decision == "approved":
+        proj_id = task.get("context_id") if task.get("context_type") == "project" else task.get("project_id")
+        if proj_id:
+            proj_dir = PROJECTS_DIR / proj_id
+            title    = task.get("title", task_id)[:60]
+            git_helper.git_commit(proj_dir, f"agent: {title} (approved)")
+
     return {"review_id": review_id, "task_id": task_id, "decision": data.decision, "status": new_status}
 
 

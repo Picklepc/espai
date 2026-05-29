@@ -260,3 +260,62 @@ def scan_lan(subnet: str | None = None):
         "registered": registered,
         "devices": [{**r["manifest"], "ip": r["ip"]} for r in found],
     }
+
+
+@router.post("/browse")
+def browse_lan(subnet: str | None = None):
+    """
+    Scan the subnet for ANY HTTP device on port 80 — not just ESPAI nodes.
+    Returns ESPAI devices (is_espai=True) and generic HTTP devices (Tasmota,
+    ESPHome, routers, cameras, etc.). Non-ESPAI devices are never auto-registered.
+    """
+    if subnet is None:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            try:
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+            except Exception:
+                local_ip = "127.0.0.1"
+        subnet = ".".join(local_ip.split(".")[:3])
+
+    if not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}$", subnet):
+        raise HTTPException(400, "Invalid subnet format")
+
+    _title_re = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+    def _probe_all(n: int) -> dict | None:
+        ip = f"{subnet}.{n}"
+        # Try ESPAI manifest first
+        try:
+            req = urllib.request.Request(f"http://{ip}/api/manifest",
+                                         headers={"User-Agent": "ESPAI-Hub/0.1"})
+            with urllib.request.urlopen(req, timeout=0.5) as resp:
+                data = json.loads(resp.read(4096))
+                if isinstance(data, dict) and data.get("schema") == "ESPAI.device.v1":
+                    return {"ip": ip, "is_espai": True, "title": data.get("name", ip),
+                            "manifest": data}
+        except Exception:
+            pass
+        # Fall back to any HTTP response on port 80
+        try:
+            req = urllib.request.Request(f"http://{ip}/",
+                                         headers={"User-Agent": "ESPAI-Hub/0.1"})
+            with urllib.request.urlopen(req, timeout=0.5) as resp:
+                ct   = resp.headers.get("Content-Type", "")
+                body = resp.read(2048).decode("utf-8", errors="replace")
+                m = _title_re.search(body)
+                title = m.group(1).strip()[:64] if m else ip
+                server = resp.headers.get("Server", "")
+                return {"ip": ip, "is_espai": False, "title": title,
+                        "content_type": ct, "server": server}
+        except Exception:
+            pass
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
+        results = list(pool.map(_probe_all, range(1, 255)))
+
+    return {
+        "subnet": subnet,
+        "found": [r for r in results if r is not None],
+    }

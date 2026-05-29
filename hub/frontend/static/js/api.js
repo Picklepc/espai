@@ -28,10 +28,8 @@ const api = {
     initiatePair:   (id)        => apiFetch(`/api/devices/pair/initiate/${id}`, { method: "POST" }),
     confirmPair:    (body)      => apiFetch("/api/devices/pair/confirm", { method: "POST", body: JSON.stringify(body) }),
     delete:         (id)        => apiFetch(`/api/devices/${id}`,        { method: "DELETE" }),
-    scan:           (subnet)    => apiFetch(
-      "/api/devices/scan" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""),
-      { method: "POST" }
-    ),
+    scan:   (subnet) => apiFetch("/api/devices/scan" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""), { method: "POST" }),
+    browse: (subnet) => apiFetch("/api/devices/browse" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""), { method: "POST" }),
   },
 
   // Projects
@@ -49,6 +47,7 @@ const api = {
     importBuild: (id, ch) => apiFetch(`/api/projects/${id}/import-build${ch ? "?channel=" + ch : ""}`, { method: "POST" }),
     appUrl:           (id)     => apiFetch(`/api/projects/${id}/app-url`),
     regenerateContext: (id)      => apiFetch(`/api/projects/${id}/regenerate-context`, { method: "POST" }),
+    gitLog:            (id, n)   => apiFetch(`/api/projects/${id}/git/log${n ? "?limit=" + n : ""}`),
     approvalMode:      (id)      => apiFetch(`/api/projects/${id}/approval-mode`),
     setApprovalMode:   (id, mode)=> apiFetch(`/api/projects/${id}/approval-mode?mode=${encodeURIComponent(mode)}`, { method: "PUT" }),
     // File editor

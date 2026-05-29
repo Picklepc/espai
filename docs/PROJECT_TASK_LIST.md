@@ -133,7 +133,7 @@
 - [x] Thread follow-ups — `parent_task_id` links tasks; follow-up button on project task rows; thread note injected into agent prompt
 
 ### Pending / follow-on
-- [ ] Thread grouping in Agent Bench list — collapse parent + children to one expandable row with run count
+- [x] Thread grouping in Agent Bench list — root tasks with children show a "▶ N follow-ups" toggle button; children rendered indented under parent; orphaned children (parent filtered out) shown flat; works alongside context and status filters
 - [ ] Cross-domain path inheritance — when a project task needs to create/modify a shared worker, prompt user to grant `workers/` access inline
 - [x] Worker quarantine auto-lift — after agent task approved, `_checkQuarantineLift` checks allowed_paths for worker folders, finds quarantined workers, shows modal with "Lift Quarantine" (calls `PATCH /api/workers/{name}/quarantine?quarantine=false`) or "Keep Quarantined"
 - [x] Agent Bench filter by context_type in sidebar — second filter row (All contexts / Project / Worker / Standalone); client-side filter applied after status-filter fetch
@@ -183,14 +183,14 @@
 
 - [ ] Caddy integration — auto-generate a Caddyfile mapping project names to hub-hosted project pages (e.g. `motion-sensor.local → hub:8080/projects/{id}`)
 - [ ] Project page nav — "Open" button on project detail that launches the device's own web UI or the hub proxy URL in a new tab
-- [ ] LAN device browser — scan for non-ESPAI HTTP devices (Tasmota, ESPHome, etc.) and list them with a direct link; import option to bring them into the hub
-- [ ] Device link from fleet — any discovered device with an HTTP UI gets a "Open Portal" link in Fleet view
+- [x] LAN device browser — `POST /api/devices/browse` probes all 254 subnet hosts on port 80; returns ESPAI nodes (is_espai=True) + any other HTTP device (title from `<title>`, server header); "🔍 Browse LAN" button in Fleet; results modal shows both groups with direct "Open ↗" links
+- [x] Device link from fleet — paired and unpaired devices with known IPs show a "🌐" button that opens `http://{ip}/` in a new tab
 
 ## Milestone 18 — Git Version Control
 
-- [ ] Per-project Git init on project create / import (if git available)
-- [ ] Auto-commit on file save and agent task approval
-- [ ] Version history view in project detail — list commits, show diff, restore to a prior version
+- [x] Per-project Git init on project create — `git_helper.git_init(proj_dir)` called at end of `_create_project_folder`; uses local `.git` check (not parent repo detection); silent when git unavailable
+- [x] Auto-commit on file save — `write_project_file` calls `git_helper.git_commit` with message `edit: {path}` after each save; also on agent task approval via `submit_review` with message `agent: {title} (approved)`
+- [x] Version history view in project detail — `GET /api/projects/{id}/git/log`; "📋 History" button shows last 40 commits with hash, message, author, timestamp; shows "no git repo" message for projects without own .git
 - [ ] OTA firmware version pinned to git tag — firmware push records the commit SHA in the audit log
 - [ ] Rollback to prior firmware tied to git branch / tag
 

@@ -369,6 +369,12 @@ async function loadFleet() {
       flashBtn.onclick = (e) => { e.stopPropagation(); _openFlashDeviceModal(d); };
       actions.appendChild(flashBtn);
     }
+    if (d.ip) {
+      const portalBtn = el("button", "btn btn-secondary btn-sm", "🌐");
+      portalBtn.dataset.tip = `Open device web interface at http://${d.ip}/`;
+      portalBtn.onclick = (e) => { e.stopPropagation(); window.open(`http://${d.ip}/`, "_blank"); };
+      actions.appendChild(portalBtn);
+    }
     const delBtn = el("button", "btn btn-danger btn-sm");
     delBtn.innerHTML = "&#x2715;";
     delBtn.dataset.tip = "Remove this device from the fleet";
@@ -594,6 +600,49 @@ document.getElementById("btnScan").onclick = async () => {
   } catch (err) {
     closeModal();
     openModal("Scan Failed", `<p class="empty-state">${err.message}</p>`,
+      [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+  }
+};
+
+// ── LAN browser (non-ESPAI devices) ────────────────────────────────────────
+
+document.getElementById("btnBrowseLAN").onclick = async () => {
+  openModal("Browsing LAN…", `
+    <div style="text-align:center;padding:24px 0">
+      <div style="font-size:32px;margin-bottom:12px">🔍</div>
+      <p style="color:var(--color-text-muted)">Probing all 254 addresses on port 80 — this finds ESPAI nodes, Tasmota, ESPHome, cameras, and any HTTP device…</p>
+    </div>
+  `, []);
+  try {
+    const result = await api.devices.browse();
+    const found  = result.found || [];
+    if (!found.length) {
+      closeModal();
+      openModal("Browse Complete", `<div class="empty-state">No HTTP devices found on <code>${result.subnet}.x</code>.</div>`,
+        [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      return;
+    }
+    const espai  = found.filter(d => d.is_espai);
+    const others = found.filter(d => !d.is_espai);
+    const renderRow = d => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--color-card-border)">
+        <span style="font-size:18px">${d.is_espai ? "📡" : "🌐"}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.title || d.ip}</div>
+          <div style="font-size:11px;color:var(--color-text-muted)">${d.ip}${d.server ? " · " + d.server : ""}</div>
+        </div>
+        <a href="http://${d.ip}/" target="_blank"
+           style="font-size:11px;color:var(--color-accent);white-space:nowrap;text-decoration:none"
+           data-tip="Open ${d.ip} in a new tab">Open ↗</a>
+      </div>`;
+    closeModal();
+    openModal(`Found ${found.length} device${found.length !== 1 ? "s" : ""} on ${result.subnet}.x`, `
+      ${espai.length ? `<p class="section-heading" style="font-size:11px;margin-bottom:4px">ESPAI NODES (${espai.length})</p>${espai.map(renderRow).join("")}` : ""}
+      ${others.length ? `<p class="section-heading" style="font-size:11px;margin-top:14px;margin-bottom:4px">OTHER HTTP DEVICES (${others.length})</p>${others.map(renderRow).join("")}` : ""}
+    `, [{ label: "Done", cls: "btn btn-primary", action: closeModal }]);
+  } catch (err) {
+    closeModal();
+    openModal("Browse Failed", `<p class="empty-state">${err.message}</p>`,
       [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
   }
 };
@@ -1123,6 +1172,38 @@ document.getElementById("projModeSeg").addEventListener("click", async (e) => {
     _renderApprovalModeSeg(mode);
   } catch (err) { alert("Error: " + err.message); }
 });
+
+document.getElementById("btnProjGitLog").onclick = async () => {
+  if (!_currentProject) return;
+  try {
+    const { commits, is_repo } = await api.projects.gitLog(_currentProject.id, 40);
+    if (!is_repo) {
+      openModal("No Git History", `
+        <div class="empty-state">
+          This project does not have a git repository.<br>
+          <span style="font-size:12px">New projects auto-initialize git — existing projects can be initialized via the terminal.</span>
+        </div>
+      `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      return;
+    }
+    const rows = commits.length
+      ? commits.map(c => `
+          <div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--color-card-border)">
+            <code style="font-size:10px;color:var(--color-accent);white-space:nowrap;margin-top:2px">${c.hash}</code>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.message}</div>
+              <div style="font-size:11px;color:var(--color-text-muted)">${c.author} · ${timeAgo(c.timestamp)}</div>
+            </div>
+          </div>`).join("")
+      : '<div class="empty-state">No commits yet.</div>';
+    openModal(`Git History — ${_currentProject.name}`, `
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px">
+        Last ${commits.length} commit${commits.length !== 1 ? "s" : ""}. Every file save and approved agent task is auto-committed.
+      </p>
+      <div style="max-height:400px;overflow-y:auto">${rows}</div>
+    `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+  } catch (err) { alert("Error: " + err.message); }
+};
 
 document.getElementById("btnProjRegenCtx").onclick = async () => {
   if (!_currentProject) return;
@@ -2859,15 +2940,13 @@ function _abWireEvents() {
     await _abLoadTaskList();
   });
 
-  // Patch _abLoadTaskList to respect the context filter
-  const _origLoadTaskList = _abLoadTaskList;
+  // Patch _abLoadTaskList: context filter + thread grouping
   _abLoadTaskList = async function () {
     const listEl = document.getElementById("abTaskList");
     listEl.innerHTML = '<div class="empty-state">Loading…</div>';
     const params = _abStatusFilter ? { status: _abStatusFilter } : {};
     let tasks = await api.agentBench.listTasks(params).catch(() => []);
 
-    // Apply context filter client-side (no query param for context_type yet)
     if (_abCtxFilter === "project")      tasks = tasks.filter(t => t.context_type === "project");
     else if (_abCtxFilter === "worker")  tasks = tasks.filter(t => t.context_type === "worker");
     else if (_abCtxFilter === "none")    tasks = tasks.filter(t => !t.context_type);
@@ -2876,14 +2955,27 @@ function _abWireEvents() {
       listEl.innerHTML = '<div class="empty-state">No tasks match this filter.</div>';
       return;
     }
-    listEl.innerHTML = "";
+
+    // Thread grouping: separate roots from children
+    const childMap = new Map();   // parent_id → [child, ...]
+    const roots    = [];
     for (const t of tasks) {
-      const card = el("div", "ab-task-card");
+      if (t.parent_task_id) {
+        if (!childMap.has(t.parent_task_id)) childMap.set(t.parent_task_id, []);
+        childMap.get(t.parent_task_id).push(t);
+      } else {
+        roots.push(t);
+      }
+    }
+
+    listEl.innerHTML = "";
+
+    const _makeTaskCard = (t, isChild = false) => {
+      const card = el("div", "ab-task-card" + (isChild ? " ab-task-child" : ""));
       const ctxBadge = t.context_type
         ? `<span class="ab-context-badge" data-tip="Scoped to ${t.context_type}: ${t.context_id || ''}">${t.context_type === "project" ? "🗂" : "⚙"} ${(t.context_id || "").slice(0,10)}</span>`
         : (t.project_id ? `<span class="ab-context-badge" data-tip="Linked to project ${t.project_id.slice(0,8)}">🗂</span>` : "");
-      const threadBadge = t.parent_task_id
-        ? `<span class="ab-thread-badge" data-tip="Follow-up in a task thread">↩ thread</span>` : "";
+      const threadBadge = isChild ? `<span class="ab-thread-badge" data-tip="Follow-up in a task thread">↩ follow-up</span>` : "";
       const delBtn = el("button", "btn btn-danger btn-sm", "✕");
       delBtn.dataset.tip = "Delete this task permanently";
       delBtn.style.cssText = "flex-shrink:0;margin-left:8px;padding:2px 8px";
@@ -2896,14 +2988,54 @@ function _abWireEvents() {
       card.innerHTML = `
         <div class="ab-task-info">
           <div class="ab-task-title">${t.title}</div>
-          <div class="ab-task-meta">${_AB_TEMPLATE_LABELS[t.template] || t.template} · ${t.lane} lane · ${timeAgo(t.updated)}${ctxBadge}${threadBadge}</div>
+          <div class="ab-task-meta">${_AB_TEMPLATE_LABELS[t.template] || t.template} · ${t.lane} · ${timeAgo(t.updated)}${ctxBadge}${threadBadge}</div>
         </div>
         <span class="${_abStatusClass(t.status)}" data-tip="Task status: ${t.status}">${_abStatusLabel(t.status)}</span>
       `;
       card.style.cursor = "pointer";
       card.onclick = () => _abOpenTask(t.id);
       card.appendChild(delBtn);
-      listEl.appendChild(card);
+      return card;
+    };
+
+    for (const root of roots) {
+      const children = childMap.get(root.id) || [];
+
+      if (!children.length) {
+        listEl.appendChild(_makeTaskCard(root));
+        continue;
+      }
+
+      // Render as collapsible thread group
+      const group = el("div", "ab-thread-group");
+      const rootCard = _makeTaskCard(root);
+
+      // Toggle button for children
+      const toggleBtn = el("button", "ab-thread-toggle", `▶ ${children.length} follow-up${children.length !== 1 ? "s" : ""}`);
+      toggleBtn.dataset.tip = "Expand/collapse follow-up tasks in this thread";
+      const childrenEl = el("div", "ab-thread-children hidden");
+      for (const child of children) childrenEl.appendChild(_makeTaskCard(child, true));
+
+      toggleBtn.onclick = (e) => {
+        e.stopPropagation();
+        const open = !childrenEl.classList.contains("hidden");
+        childrenEl.classList.toggle("hidden", open);
+        toggleBtn.textContent = open
+          ? `▶ ${children.length} follow-up${children.length !== 1 ? "s" : ""}`
+          : `▼ ${children.length} follow-up${children.length !== 1 ? "s" : ""}`;
+      };
+
+      rootCard.querySelector(".ab-task-info").appendChild(toggleBtn);
+      group.appendChild(rootCard);
+      group.appendChild(childrenEl);
+      listEl.appendChild(group);
+    }
+
+    // Orphaned children (parent filtered out) shown flat
+    for (const [pid, children] of childMap) {
+      if (!roots.find(r => r.id === pid)) {
+        for (const child of children) listEl.appendChild(_makeTaskCard(child, true));
+      }
     }
   };
 }

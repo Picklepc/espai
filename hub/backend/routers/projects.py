@@ -14,6 +14,7 @@ from pydantic import BaseModel, field_validator
 
 from ..config import ACTIVE_THEME, DESIGN_DIR, FIRMWARE_CATALOG_DIR, PROJECTS_DIR
 from ..db import get_conn, _to_hostname
+from .. import git_helper
 
 router = APIRouter()
 
@@ -364,6 +365,9 @@ def _create_project_folder(project_id: str, name: str, description: str | None) 
         _generate_espai_md(project_id, name, description), encoding="utf-8"
     )
 
+    # Initialize git repo for version history (silent if git unavailable)
+    git_helper.git_init(proj_dir, f"init: {name} project scaffold")
+
 
 def _row_to_dict(row) -> dict:
     d = dict(row)
@@ -504,6 +508,8 @@ def write_project_file(project_id: str, file_path: str, body: FileWrite):
         raise HTTPException(413, "Content exceeds 1 MB write limit")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(body.content, encoding="utf-8")
+    # Auto-commit to project git history (silent if not a repo)
+    git_helper.git_commit(proj_dir, f"edit: {file_path}", [file_path])
     return {"path": file_path, "size_bytes": len(encoded), "saved": True}
 
 
@@ -773,6 +779,14 @@ def set_approval_mode(project_id: str, mode: str):
     meta["agent_approval_mode"] = mode
     _write_project_meta(project_id, meta)
     return {"mode": mode}
+
+
+@router.get("/{project_id}/git/log")
+def project_git_log(project_id: str, limit: int = 40):
+    """Return the git commit history for this project's directory."""
+    proj_dir = PROJECTS_DIR / project_id
+    commits = git_helper.git_log(proj_dir, limit=min(limit, 200))
+    return {"project_id": project_id, "commits": commits, "is_repo": git_helper.is_repo(proj_dir)}
 
 
 @router.post("/{project_id}/regenerate-context")

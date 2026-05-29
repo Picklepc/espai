@@ -887,6 +887,25 @@ code {
   vertical-align: middle;
 }
 
+/* ── Agent Bench thread grouping ────────────────────────────────────────── */
+
+.ab-thread-group { margin-bottom: 4px; }
+.ab-thread-children { padding-left: 20px; border-left: 2px solid var(--color-card-border); margin-left: 12px; }
+.ab-task-child { opacity: .92; }
+.ab-thread-toggle {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 10px;
+  color: var(--color-accent);
+  background: rgba(var(--color-accent-rgb, 100,160,255),.08);
+  border: 1px solid rgba(var(--color-accent-rgb, 100,160,255),.2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.ab-thread-toggle:hover { background: rgba(var(--color-accent-rgb, 100,160,255),.18); }
+
 /* ── Pack badges (official / custom) ─────────────────────────────────────── */
 
 .pack-badge {
