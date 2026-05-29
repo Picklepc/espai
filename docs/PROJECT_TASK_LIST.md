@@ -83,6 +83,13 @@
 - [x] staged rollout (POST /api/ota/rollout — device_ids/board_filter/pct targeting; openRolloutModal with device checkboxes, percentage, force flag; results summary)
 - [x] known-good tracking and rollback flow (mark-good endpoint + audit log; PATCH catalog; rollback endpoint follows rollback_target pointer; UI: ✓ Mark Known Good + ↩ Set Rollback buttons per catalog entry)
 
+### OTA UX — Project-Centric Flash Flow (follow-on)
+- [ ] **Project-scoped firmware upload** — add "Upload Firmware" button directly in the project detail view; pre-fills board from the linked device, pre-fills project name as the firmware label; removes the need to navigate to the OTA catalog view first
+- [ ] **Firmware label / display name** — add a `label` field to firmware catalog entries (stored in metadata.yaml + DB); shown instead of board name in the catalog list so "Jingle Bells v1.2" appears instead of "seeed_xiao_esp32s3-1.2.0"
+- [ ] **Project-linked firmware section in project detail** — below the linked devices list, show the firmware entries that have been uploaded for this project (filtered by label or explicit project_id tag); each entry gets a "Flash to Device" one-click button that skips the catalog browse entirely
+- [ ] **Firmware catalog `project_id` tag** — store optional `project_id` on upload (auto-filled when uploading from project detail); used to filter the project firmware section and scope the "Push" device selector to only that project's linked devices
+- [ ] **One-click flash from fleet card** — device cards in Fleet view get a "⬆ Flash" button that opens a minimal modal showing only firmware entries compatible with that device's board, sorted newest first; confirm + push in two clicks
+
 ## Milestone 9 — Notifications and Automations
 - [x] event rules engine (rules table, REST CRUD, evaluate on publish — actions: log_event, run_worker, webhook)
 - [x] local notifications (browser push) (SSE-connected EventSource; bell toggle in sidebar; Notification API; auto-reconnects; also live-refreshes events view)
