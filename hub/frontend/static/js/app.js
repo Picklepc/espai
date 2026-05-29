@@ -322,6 +322,86 @@ async function _loadProjectTasks(projectId) {
 
 // ── Fleet view ─────────────────────────────────────────────────────────────
 
+// ── Home / Dashboard view ──────────────────────────────────────────────────
+
+async function loadHome() {
+  const grid = document.getElementById("homeProjGrid");
+  if (!grid) return;
+  grid.innerHTML = '<div class="empty-state">Loading…</div>';
+
+  const [projects, devices, jobs] = await Promise.all([
+    api.projects.list().catch(() => []),
+    api.devices.list().catch(() => []),
+    api.jobs.list().catch(() => []),
+  ]);
+
+  // Stats
+  const online = devices.filter(d => isOnline(d.last_seen)).length;
+  const activeJobs = (jobs || []).filter(j => j.status === "running").length;
+  document.getElementById("hstatOnline").textContent   = online;
+  document.getElementById("hstatTotal").textContent    = devices.length;
+  document.getElementById("hstatProjects").textContent = projects.length;
+  document.getElementById("hstatJobs").textContent     = activeJobs;
+
+  if (!projects.length) {
+    grid.innerHTML = '<div class="empty-state">No projects yet — click <strong>+ New Project</strong> to create your first one.</div>';
+    return;
+  }
+
+  // Fetch app URLs in parallel
+  const appUrls = await Promise.all(
+    projects.map(p => api.projects.appUrl(p.id).catch(() => null))
+  );
+
+  grid.innerHTML = "";
+  projects.forEach((p, i) => {
+    const appInfo   = appUrls[i];
+    const hasWebApp = appInfo && appInfo.host === "hub";
+    const slug      = p.slug || p.name;
+    const appUrl    = hasWebApp ? appInfo.url : null;
+
+    // Count online devices linked to this project
+    const linkedIds = Array.isArray(p.devices) ? p.devices : [];
+    const onlineLinked = devices.filter(d => linkedIds.includes(d.id) && isOnline(d.last_seen)).length;
+    const deviceBadge  = linkedIds.length
+      ? `<span class="tag" data-tip="${onlineLinked} of ${linkedIds.length} linked device(s) online" style="${onlineLinked ? "color:var(--color-success)" : ""}">${onlineLinked}/${linkedIds.length} online</span>`
+      : `<span class="tag" style="opacity:.5">no devices</span>`;
+
+    const card = el("div", "home-proj-card");
+    card.innerHTML = `
+      <div class="home-proj-thumb" data-tip="${hasWebApp ? "Live preview of " + p.name + " web app" : "No web app — add web/index.html to this project"}">
+        ${hasWebApp
+          ? `<iframe src="${appUrl}" class="home-proj-iframe" sandbox="allow-scripts allow-same-origin" loading="lazy" title="${p.name} preview"></iframe>`
+          : `<div class="home-proj-placeholder"><span style="font-size:2rem;opacity:.4">${p.name.slice(0,2).toUpperCase()}</span><div style="font-size:11px;color:var(--color-text-muted);margin-top:8px">No web app</div></div>`}
+      </div>
+      <div class="home-proj-body">
+        <div class="home-proj-name" data-tip="Open project detail">${p.name}</div>
+        <div class="home-proj-desc">${p.description || ""}</div>
+        <div class="tag-row" style="margin-top:6px">${deviceBadge}</div>
+      </div>
+      <div class="home-proj-actions">
+        ${appUrl ? `<a href="${appUrl}" target="_blank" class="btn btn-primary btn-sm" data-tip="Open ${p.name} web app in a new tab">Open App ↗</a>` : ""}
+        <button class="btn btn-secondary btn-sm home-goto-proj" data-id="${p.id}" data-tip="Open project detail — files, devices, firmware, agent tasks">Project →</button>
+      </div>
+    `;
+    card.querySelector(".home-goto-proj").onclick = () => {
+      showView("projects");
+      setTimeout(async () => {
+        const proj = await api.projects.get(p.id).catch(() => p);
+        openProject(proj);
+      }, 100);
+    };
+    grid.appendChild(card);
+  });
+}
+
+// Wire Home buttons
+document.getElementById("btnHomeRefresh").onclick  = loadHome;
+document.getElementById("btnHomeNewProject").onclick = () => {
+  showView("projects");
+  setTimeout(() => document.getElementById("btnNewProject")?.click(), 150);
+};
+
 async function loadFleet() {
   const [devices, jobs] = await Promise.all([
     api.devices.list().catch(() => []),
@@ -3545,6 +3625,7 @@ function _termWireEvents() {
 // ── View router ────────────────────────────────────────────────────────────
 
 const viewLoaders = {
+  home:          loadHome,
   fleet:         loadFleet,
   projects:      loadProjects,
   recipes:       loadRecipes,
@@ -3693,10 +3774,11 @@ async function _toggleNotifications() {
   overlay_?.addEventListener("click", closeSidebar);
   navItems.forEach(item => item.addEventListener("click", () => { if (window.innerWidth < 700) closeSidebar(); }));
 
-  showView("fleet");
+  showView("home");
   setInterval(() => {
     const active = document.querySelector(".view.active");
-    if (active && active.id === "view-fleet") loadFleet();
+    if (active?.id === "view-home")  loadHome();
+    if (active?.id === "view-fleet") loadFleet();
   }, 60_000);
 
   // WebSocket is always connected (instant event fan-out + live events view refresh)
