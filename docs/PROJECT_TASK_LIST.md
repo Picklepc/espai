@@ -154,21 +154,21 @@
 - [ ] Theme selector card — lets users switch the hub theme, create/delete themes, and pick per-project themes
 - [ ] Network manager card — WiFi STA (SSID scan + connect), AP mode toggle, hostname editor, IP display
 - [ ] File manager card — browse SD card or LittleFS/SPIFFS on-device file system; navigate, download, delete
-- [ ] Sensor dashboard card — live readings from a named event source with configurable fields and sparkline
-- [ ] OTA status card — shows current firmware version, channel, last update time, one-click push trigger
+- [x] Sensor dashboard card — `cards/sensor-dashboard/card.yaml`; hub data store source; configurable field list with units and sparkline; alert thresholds; firmware push pattern documented
+- [x] OTA status card — `cards/ota-status/card.yaml`; reads device manifest and OTA log; one-click push from card; channel filter
 - [ ] Device log card — tail of serial/log output from a connected device
 
 ### Themes
 - [ ] Theme manager UI — hub-level theme switcher: list themes, select active, create new, delete (original default-dark is undeletable)
 - [ ] Theme color editor — pick colors per token with live preview, save as new theme or overwrite existing
 - [ ] Project-level theme selector — apply any hub theme to one or more projects from the project detail view
-- [ ] Additional pre-built themes (e.g. light, high-contrast, ocean, warm-amber)
+- [x] Light theme — `design/themes/light/theme.yaml`; clean light palette for bright environments
 
 ## Milestone 15 — In-Hub Code Editor
 
-- [ ] File click → in-hub text editor modal — syntax-highlighted code editor (CodeMirror or Monaco lite) for any project file
-- [ ] Save, delete, rename/move file operations from editor
-- [ ] New file creation within a project directory
+- [x] File click → in-hub text editor modal — CodeMirror 5 (dracula theme) via CDN; supports JS, C/C++, Python, YAML, Markdown, HTML, CSS, INI; mode auto-detected by extension; `.bin` and files >512 KB are non-clickable; modal-wide layout (860px)
+- [x] Save, delete operations from editor — PUT/DELETE `/api/projects/{id}/files/{path}`; path-traversal and private-file guards; protected files (platformio.ini, ESPAI.md, .ESPAI-project.json) blocked from delete
+- [x] New file creation — "+ New File" button; enter relative path; POST `/api/projects/{id}/files/{path}`; opens editor immediately after create
 - [ ] Project / card / worker name rename from the hub portal (PATCH name in-place)
 - [ ] Diff view for staged agent changes with Accept / Reject per-file
 

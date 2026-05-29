@@ -1,0 +1,36 @@
+schema: ESPAI.card.v1
+name: ota-status
+display_name: OTA Status
+category: management
+description: >
+  Shows the device's current firmware version, channel, last OTA update time,
+  and one-click push trigger. Queries the hub OTA log and device manifest.
+  Useful for fleet pages and project dashboards.
+
+event_source:
+  type: hub_api              # reads from /api/devices/{id} and /api/ota/log
+  endpoints:
+    - /api/devices/{device_id}
+    - /api/ota/log?device_id={device_id}
+  polling_interval_ms: 30000
+
+config:
+  show_version: true
+  show_channel: true
+  show_last_push: true
+  show_push_button: true     # one-click firmware push from card
+  push_to_channel: dev       # channel filter for available firmware
+
+firmware_notes: >
+  The card reads fw_version from the device manifest endpoint at /api/manifest.
+  The device must be paired and check-in must be active for the push button to
+  be enabled.
+
+compatible_boards:
+  - esp32
+  - esp32s3
+  - esp32c3
+  - esp32s2
+
+share_policy:
+  export_public: true

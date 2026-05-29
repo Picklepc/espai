@@ -1,0 +1,21 @@
+schema: ESPAI.theme.v1
+name: light
+display_name: Light
+description: Clean light theme — clear contrast, easy on the eyes in bright environments.
+
+tokens:
+  color-background: "#f0f4f8"
+  color-surface:    "#ffffff"
+  color-card:       "#ffffff"
+  color-card-border:"#dde3ea"
+  color-text:       "#1a2336"
+  color-text-muted: "#6c7a92"
+  color-accent:     "#1d6fe8"
+  color-accent2:    "#d94f0a"
+  color-warning:    "#c57c00"
+  color-danger:     "#c82030"
+  color-success:    "#168742"
+  color-hover:      "rgba(29,111,232,.07)"
+  radius-card:      "10px"
+  radius-button:    "7px"
+  font-body:        "system-ui, -apple-system, sans-serif"

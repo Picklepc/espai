@@ -770,6 +770,84 @@ function _pathToVSCodeUri(rootPath) {
   return encodeURI("vscode://file/" + fwd);
 }
 
+// ── In-hub code editor ─────────────────────────────────────────────────────
+
+function _cmMode(filePath) {
+  const ext = (filePath.split(".").pop() || "").toLowerCase();
+  const map = {
+    js: "javascript", json: "application/json",
+    cpp: "text/x-c++src", c: "text/x-csrc", h: "text/x-c++src", ino: "text/x-c++src",
+    py: "text/x-python",
+    yaml: "text/x-yaml", yml: "text/x-yaml",
+    md: "text/x-markdown",
+    html: "text/html", htm: "text/html",
+    css: "text/css",
+    ini: "text/x-ini", cfg: "text/x-ini",
+  };
+  return map[ext] || "text/plain";
+}
+
+let _activeEditor = null;  // current CodeMirror instance
+
+async function _openFileEditor(projectId, filePath, initialContent = null) {
+  let content = initialContent ?? "";
+  if (initialContent === null) {
+    try {
+      const res = await api.projects.readFile(projectId, filePath);
+      content = res.content;
+    } catch (err) {
+      alert("Could not open file: " + err.message);
+      return;
+    }
+  }
+
+  openModal(`✎ ${filePath}`, `
+    <div id="codeEditorHost" style="height:460px;border:1px solid var(--color-card-border);border-radius:6px;overflow:hidden;font-size:13px"></div>
+    <div id="editorStatus" style="font-size:11px;color:var(--color-text-muted);margin-top:6px;min-height:16px"></div>
+  `, [
+    { label: "Save", cls: "btn btn-primary", action: async () => {
+      if (!_activeEditor) return;
+      try {
+        await api.projects.writeFile(projectId, filePath, _activeEditor.getValue());
+        document.getElementById("editorStatus").textContent = "Saved ✓";
+        refreshProjectFiles(projectId);
+        setTimeout(closeModal, 600);
+      } catch (err) { alert("Save failed: " + err.message); }
+    }},
+    { label: "Delete", cls: "btn btn-danger", action: async () => {
+      if (!confirm(`Delete ${filePath}? This cannot be undone.`)) return;
+      try {
+        await api.projects.deleteFile(projectId, filePath);
+        closeModal();
+        refreshProjectFiles(projectId);
+      } catch (err) { alert("Delete failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: () => { _activeEditor = null; closeModal(); } },
+  ], { wide: true });
+
+  const host = document.getElementById("codeEditorHost");
+  if (!host) return;
+  if (typeof CodeMirror === "undefined") {
+    host.innerHTML = `<textarea style="width:100%;height:100%;background:#111;color:#eee;font-family:monospace;font-size:13px;padding:10px;border:none;resize:none">${content.replace(/</g,"&lt;")}</textarea>`;
+    _activeEditor = { getValue: () => host.querySelector("textarea").value };
+    return;
+  }
+  _activeEditor = CodeMirror(host, {
+    value: content,
+    mode: _cmMode(filePath),
+    theme: "dracula",
+    lineNumbers: true,
+    lineWrapping: true,
+    indentUnit: 2,
+    tabSize: 2,
+    matchBrackets: true,
+    autoCloseBrackets: true,
+    extraKeys: { Tab: cm => cm.execCommand("insertSoftTab") },
+  });
+  _activeEditor.setSize("100%", "100%");
+  setTimeout(() => _activeEditor.refresh(), 50);
+}
+
 async function refreshProjectFiles(projectId, silent = false) {
   const fileList  = document.getElementById("projFileList");
   const statusEl  = document.getElementById("projFilesStatus");
@@ -798,10 +876,16 @@ async function refreshProjectFiles(projectId, silent = false) {
       for (const f of files) {
         const row = el("div", "file-row");
         const isBin = f.path.endsWith(".bin");
+        const isEditable = !isBin && f.size_bytes <= 512 * 1024;
         row.innerHTML = `
-          <span class="file-path">${f.path}${isBin ? ' <span class="tag" style="font-size:10px;padding:1px 5px">BIN</span>' : ""}</span>
+          <span class="file-path" style="${isEditable ? "cursor:pointer" : ""}">${f.path}${isBin ? ' <span class="tag" style="font-size:10px;padding:1px 5px">BIN</span>' : ""}</span>
           <span class="file-size">${formatBytes(f.size_bytes)}</span>
         `;
+        if (isEditable) {
+          row.style.cursor = "pointer";
+          row.dataset.tip = `Click to edit ${f.path} in the hub editor`;
+          row.onclick = () => _openFileEditor(projectId, f.path);
+        }
         fileList.appendChild(row);
       }
     }
@@ -975,6 +1059,30 @@ document.getElementById("btnProjBack").onclick = () => {
 
 document.getElementById("btnRefreshFiles").onclick = () => {
   if (_currentProject) refreshProjectFiles(_currentProject.id);
+};
+
+document.getElementById("btnNewFile").onclick = () => {
+  if (!_currentProject) return;
+  openModal("New File", `
+    <div class="form-field">
+      <label data-tip="Path relative to the project directory — e.g. web/index.html, src/sensor.cpp, data/config.yaml">File path (relative to project)</label>
+      <input type="text" id="newFilePath" placeholder="web/index.html" style="font-family:monospace">
+    </div>
+    <p style="font-size:12px;color:var(--color-text-muted);margin-top:8px">The file will open in the editor after creation.</p>
+  `, [
+    { label: "Create", cls: "btn btn-primary", action: async () => {
+      const path = document.getElementById("newFilePath").value.trim();
+      if (!path) { alert("Enter a file path."); return; }
+      try {
+        await api.projects.createFile(_currentProject.id, path, "");
+        closeModal();
+        await refreshProjectFiles(_currentProject.id);
+        _openFileEditor(_currentProject.id, path, "");
+      } catch (err) { alert("Create failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+  setTimeout(() => document.getElementById("newFilePath")?.focus(), 100);
 };
 
 // ── Project approval mode selector ─────────────────────────────────────────
@@ -3213,15 +3321,18 @@ const modalTitle = document.getElementById("modalTitle");
 const modalBody  = document.getElementById("modalBody");
 const modalFooter = document.getElementById("modalFooter");
 
-function openModal(title, bodyHTML, buttons = []) {
+function openModal(title, bodyHTML, buttons = [], opts = {}) {
   modalTitle.textContent  = title;
   modalBody.innerHTML     = bodyHTML;
   modalFooter.innerHTML   = "";
   for (const btn of buttons) {
     const b = el("button", btn.cls, btn.label);
+    if (btn.dataset) Object.assign(b.dataset, btn.dataset);
     b.onclick = btn.action;
     modalFooter.appendChild(b);
   }
+  const modalEl = overlay.querySelector(".modal");
+  if (modalEl) modalEl.classList.toggle("modal-wide", !!opts.wide);
   overlay.classList.remove("hidden");
 }
 
@@ -3229,6 +3340,8 @@ function closeModal() {
   overlay.classList.add("hidden");
   modalBody.innerHTML = "";
   modalFooter.innerHTML = "";
+  const modalEl = overlay.querySelector(".modal");
+  if (modalEl) modalEl.classList.remove("modal-wide");
 }
 
 document.getElementById("modalClose").onclick = closeModal;

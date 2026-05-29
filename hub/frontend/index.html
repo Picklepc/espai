@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ESPAI Hub</title>
   <link rel="stylesheet" href="/static/css/app.css">
+  <!-- CodeMirror 5 — in-hub code editor -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css">
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -203,6 +206,7 @@
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
                 <p class="section-heading" style="margin:0">Files</p>
                 <button class="btn btn-secondary btn-sm" id="btnRefreshFiles" data-tip="Refresh the project file list">↻</button>
+                <button class="btn btn-secondary btn-sm" id="btnNewFile" data-tip="Create a new file in this project — enter a path like web/index.html or src/sensor.cpp">+ New File</button>
                 <span id="projFilesStatus" style="font-size:11px;color:var(--color-text-muted)"></span>
               </div>
               <div id="projFileList" class="file-list"><div class="empty-state">Loading…</div></div>
@@ -595,6 +599,16 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm@4.19.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.5.0/lib/xterm-addon-fit.js"></script>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/clike/clike.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/yaml/yaml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/markdown/markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/css/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js"></script>
   <script src="/static/js/api.js"></script>
   <script src="/static/js/app.js"></script>
 </body>

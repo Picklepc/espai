@@ -51,6 +51,11 @@ const api = {
     regenerateContext: (id)      => apiFetch(`/api/projects/${id}/regenerate-context`, { method: "POST" }),
     approvalMode:      (id)      => apiFetch(`/api/projects/${id}/approval-mode`),
     setApprovalMode:   (id, mode)=> apiFetch(`/api/projects/${id}/approval-mode?mode=${encodeURIComponent(mode)}`, { method: "PUT" }),
+    // File editor
+    readFile:    (id, path)    => apiFetch(`/api/projects/${id}/files/${path}`),
+    writeFile:   (id, path, c) => apiFetch(`/api/projects/${id}/files/${path}`, { method: "PUT",    body: JSON.stringify({ content: c }) }),
+    createFile:  (id, path, c) => apiFetch(`/api/projects/${id}/files/${path}`, { method: "POST",   body: JSON.stringify({ content: c || "" }) }),
+    deleteFile:  (id, path)    => apiFetch(`/api/projects/${id}/files/${path}`, { method: "DELETE" }),
     // Project data store
     dataLatest:  (id)             => apiFetch(`/api/projects/${id}/data/latest`),
     dataHistory: (id, params)     => {

@@ -416,6 +416,16 @@ html, body {
   display: flex;
   flex-direction: column;
 }
+.modal.modal-wide {
+  width: min(860px, 95vw);
+  max-height: 90vh;
+}
+/* CodeMirror inside modal */
+.modal-wide .CodeMirror {
+  height: 100%;
+  font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
+  font-size: 13px;
+}
 
 .modal-header {
   display: flex;

@@ -1,0 +1,52 @@
+schema: ESPAI.card.v1
+name: sensor-dashboard
+display_name: Sensor Dashboard
+category: sensing
+description: >
+  Live readings from a device's hub data store with configurable fields and
+  a rolling sparkline chart. Works even when the device is asleep — reads from
+  the hub cache. Suitable for temperature, humidity, battery, or any numeric
+  telemetry stream.
+
+event_source:
+  type: hub_data_store       # reads from /api/projects/{id}/data/latest
+  polling_interval_ms: 5000  # refresh period
+
+config:
+  fields:
+    - key: temperature
+      label: Temperature
+      unit: "°C"
+      sparkline: true
+    - key: humidity
+      label: Humidity
+      unit: "%"
+      sparkline: false
+    - key: battery_pct
+      label: Battery
+      unit: "%"
+      sparkline: false
+  sparkline_points: 60       # number of history points shown on chart
+  show_last_seen: true
+  alert_thresholds:          # optional — highlights values outside range
+    temperature: { min: 0, max: 40 }
+    humidity:    { min: 10, max: 90 }
+
+firmware_notes: >
+  Push readings on every wake-up or measurement:
+    POST /api/projects/{HUB_PROJECT_ID}/data
+    X-Device-ID: {nodeId}
+    {"temperature": 23.5, "humidity": 65, "battery_pct": 87}
+
+compatible_boards:
+  - esp32
+  - esp32s3
+  - esp32c3
+  - esp32s2
+
+example_binding:
+  project: temperature-pipeline
+  worker: temperature-anomaly-tagger
+
+share_policy:
+  export_public: true

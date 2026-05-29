@@ -451,6 +451,90 @@ def project_files(project_id: str):
     return {"project_id": project_id, "root": str(proj_dir), "files": files}
 
 
+# ── In-hub file editor ────────────────────────────────────────────────────────
+
+_FILE_EDITOR_MAX_BYTES = 512 * 1024   # 512 KB — larger files won't fit comfortably in editor
+_FILE_WRITE_MAX_BYTES  = 1 * 1024 * 1024  # 1 MB write limit
+_BLOCKED_FILE_PATTERNS = (".env", "secrets", ".private", "local.yaml", "secrets.yaml")
+
+
+class FileWrite(BaseModel):
+    content: str
+
+
+def _resolve_project_file(project_id: str, file_path: str) -> tuple[Path, Path]:
+    """
+    Resolve a project-relative file_path to an absolute Path.
+    Returns (proj_dir, target). Raises 403 on path traversal, 400 on blocked names.
+    """
+    proj_dir = (PROJECTS_DIR / project_id).resolve()
+    target   = (proj_dir / file_path).resolve()
+    try:
+        target.relative_to(proj_dir)
+    except ValueError:
+        raise HTTPException(403, "Path traversal not allowed")
+    # Block access to private/secret files
+    lower = file_path.lower()
+    if any(pat in lower for pat in _BLOCKED_FILE_PATTERNS):
+        raise HTTPException(403, f"Access to {file_path!r} is blocked")
+    return proj_dir, target
+
+
+@router.get("/{project_id}/files/{file_path:path}")
+def read_project_file(project_id: str, file_path: str):
+    """Read a text file from the project directory for in-hub editing."""
+    proj_dir, target = _resolve_project_file(project_id, file_path)
+    if not target.exists():
+        raise HTTPException(404, "File not found")
+    if not target.is_file():
+        raise HTTPException(400, "Not a file")
+    size = target.stat().st_size
+    if size > _FILE_EDITOR_MAX_BYTES:
+        raise HTTPException(413, f"File is {size // 1024} KB — too large for in-hub editor (max 512 KB)")
+    content = target.read_text(encoding="utf-8", errors="replace")
+    return {"path": file_path, "content": content, "size_bytes": size}
+
+
+@router.put("/{project_id}/files/{file_path:path}")
+def write_project_file(project_id: str, file_path: str, body: FileWrite):
+    """Save edited content back to a file in the project directory."""
+    proj_dir, target = _resolve_project_file(project_id, file_path)
+    encoded = body.content.encode("utf-8")
+    if len(encoded) > _FILE_WRITE_MAX_BYTES:
+        raise HTTPException(413, "Content exceeds 1 MB write limit")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body.content, encoding="utf-8")
+    return {"path": file_path, "size_bytes": len(encoded), "saved": True}
+
+
+@router.post("/{project_id}/files/{file_path:path}")
+def create_project_file(project_id: str, file_path: str, body: FileWrite):
+    """Create a new file in the project directory."""
+    proj_dir, target = _resolve_project_file(project_id, file_path)
+    if target.exists():
+        raise HTTPException(409, f"{file_path!r} already exists — use PUT to overwrite")
+    encoded = body.content.encode("utf-8")
+    if len(encoded) > _FILE_WRITE_MAX_BYTES:
+        raise HTTPException(413, "Content exceeds 1 MB write limit")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body.content, encoding="utf-8")
+    return {"path": file_path, "size_bytes": len(encoded), "created": True}
+
+
+@router.delete("/{project_id}/files/{file_path:path}")
+def delete_project_file(project_id: str, file_path: str):
+    """Delete a file from the project directory."""
+    proj_dir, target = _resolve_project_file(project_id, file_path)
+    # Protect critical project files
+    protected = {".ESPAI-project.json", "ESPAI.md", "platformio.ini"}
+    if target.name in protected:
+        raise HTTPException(403, f"{target.name} is protected and cannot be deleted from the editor")
+    if not target.exists():
+        raise HTTPException(404, "File not found")
+    target.unlink()
+    return {"path": file_path, "deleted": True}
+
+
 _IMPORT_IGNORE = shutil.ignore_patterns(".pio", ".git", "__pycache__", "*.pyc", "node_modules")
 
 _IMPORT_SIZE_LIMIT = 200 * 1024 * 1024  # 200 MB safety cap
