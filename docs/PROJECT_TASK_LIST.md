@@ -193,3 +193,25 @@
 - [ ] Version history view in project detail — list commits, show diff, restore to a prior version
 - [ ] OTA firmware version pinned to git tag — firmware push records the commit SHA in the audit log
 - [ ] Rollback to prior firmware tied to git branch / tag
+
+## Milestone 19 — Standalone Installer and GitHub Releases
+
+### Core packaging
+- [ ] **Frozen path detection in `config.py` and `espai.py`** — detect `sys.frozen` (PyInstaller) and set `ROOT = Path(sys.executable).parent` so data dirs (`data/`, `projects/`, `firmware-catalog/`) resolve relative to the exe, not the bundle internals
+- [ ] **`espai.spec`** — PyInstaller one-dir spec: entry point `espai.py`, bundles `hub/frontend/`, `recipes/`, `workers/`, `cards/`, `design/`, `agents/`, `agent-bench/` as data files; excludes `.venv`, `__pycache__`, `.git`
+- [ ] **`requirements-bundle.txt`** — locked/pinned requirements for reproducible builds; includes `pyinstaller`, `pystray`, `pillow`, `pywinpty` (Windows) or `ptyprocess` (Linux)
+
+### GitHub Actions release pipeline
+- [ ] **`.github/workflows/release.yml`** — triggered on tag push `v*.*.*`; two parallel jobs: `build-windows` (runs-on `windows-latest`) and `build-linux` (runs-on `ubuntu-latest`); each installs Python 3.12, runs PyInstaller, zips the dist folder, uploads artifact
+- [ ] **Release job** — creates a GitHub Release from the tag; attaches `ESPAI-windows.zip` and `ESPAI-linux.tar.gz` as downloadable assets; auto-generates release notes from commit messages since last tag
+
+### Windows experience
+- [ ] **Windows: launch via `ESPAI.exe`** — entry point invokes `espai.py serve` and opens the dashboard in the default browser; optionally starts the tray icon so the hub runs in the background
+- [ ] **Windows: optional Inno Setup installer** — wraps the PyInstaller one-dir output in a proper installer wizard; installs to `%LOCALAPPDATA%\ESPAI`, creates Start Menu shortcut and optional autostart entry; uninstall support
+
+### Linux experience
+- [ ] **Linux: launch via `./espai`** — single binary entry; `espai serve` starts uvicorn; `espai doctor` checks deps as usual
+- [ ] **Linux: optional `.deb` package** — installs binary to `/usr/local/bin/espai`, data skeleton to `/etc/espai/` (read-only defaults) and `~/.local/share/espai/` (user data); systemd service unit included
+
+### First-run experience
+- [ ] **First-run scaffold** — on first launch from a bundled exe, copy default `recipes/`, `workers/`, `cards/`, `design/` from the bundle into the user data directory alongside the exe (Windows) or `~/.local/share/espai/` (Linux); show a one-time welcome message with the dashboard URL
