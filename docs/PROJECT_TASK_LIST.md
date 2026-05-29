@@ -84,11 +84,11 @@
 - [x] known-good tracking and rollback flow (mark-good endpoint + audit log; PATCH catalog; rollback endpoint follows rollback_target pointer; UI: ✓ Mark Known Good + ↩ Set Rollback buttons per catalog entry)
 
 ### OTA UX — Project-Centric Flash Flow (follow-on)
-- [ ] **Project-scoped firmware upload** — add "Upload Firmware" button directly in the project detail view; pre-fills board from the linked device, pre-fills project name as the firmware label; removes the need to navigate to the OTA catalog view first
-- [ ] **Firmware label / display name** — add a `label` field to firmware catalog entries (stored in metadata.yaml + DB); shown instead of board name in the catalog list so "Jingle Bells v1.2" appears instead of "seeed_xiao_esp32s3-1.2.0"
-- [ ] **Project-linked firmware section in project detail** — below the linked devices list, show the firmware entries that have been uploaded for this project (filtered by label or explicit project_id tag); each entry gets a "Flash to Device" one-click button that skips the catalog browse entirely
-- [ ] **Firmware catalog `project_id` tag** — store optional `project_id` on upload (auto-filled when uploading from project detail); used to filter the project firmware section and scope the "Push" device selector to only that project's linked devices
-- [ ] **One-click flash from fleet card** — device cards in Fleet view get a "⬆ Flash" button that opens a minimal modal showing only firmware entries compatible with that device's board, sorted newest first; confirm + push in two clicks
+- [x] **Project-scoped firmware upload** — "⬆ Upload Firmware" button in project detail header; pre-fills board from linked device, pre-fills project name as label; on success refreshes the project Firmware section rather than navigating to OTA view
+- [x] **Firmware label / display name** — `label` field stored in firmware.json on upload; shown in catalog cards ("Jingle Bells v1.0.0" instead of "seeed_xiao_esp32s3-1.0.0") and in project firmware rows
+- [x] **Project-linked firmware section in project detail** — "Firmware" section below Linked Devices; shows entries tagged to this project via `project_id`; each row has a "⬆ Flash" button that pre-filters the push modal to this project's linked devices only
+- [x] **Firmware catalog `project_id` tag** — stored in firmware.json on upload (auto-set when uploading from project context); `GET /api/ota/catalog/project/{project_id}` endpoint returns filtered entries
+- [x] **One-click flash from fleet card** — paired device cards in Fleet view get a "⬆ Flash" button; modal shows only board-compatible firmware sorted newest first with known-good labels; two clicks to push
 
 ## Milestone 9 — Notifications and Automations
 - [x] event rules engine (rules table, REST CRUD, evaluate on publish — actions: log_event, run_worker, webhook)

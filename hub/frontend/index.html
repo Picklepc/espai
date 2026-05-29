@@ -175,6 +175,7 @@
               <button class="btn btn-primary    btn-sm" id="btnProjOpenApp"  data-tip="Open the project's web interface — hub-hosted if a web/ folder exists, otherwise opens the device directly">&#127760; Open App</button>
               <button class="btn btn-secondary btn-sm" id="btnProjBuild"    data-tip="Open a terminal in firmware/ and run pio run to compile">&#9654; Build</button>
               <button class="btn btn-primary    btn-sm" id="btnProjImport"  data-tip="Import the last compiled firmware.bin into the OTA catalog so you can push it to a device over WiFi">&#8679; Import to OTA</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjUploadFirmware" data-tip="Upload a .bin file and tag it to this project — then flash it to a linked device in one click from the Firmware section below">⬆ Upload Firmware</button>
               <button class="btn btn-secondary btn-sm" id="btnProjFlashUSB" data-tip="Flash firmware directly via USB cable (pio run -t upload) — use when device is not yet on WiFi">&#128299; Flash USB</button>
               <button class="btn btn-secondary btn-sm" id="btnProjTheme"    data-tip="Override CSS design tokens while this project is active">🎨 Theme</button>
               <button class="btn btn-danger btn-sm"    id="btnProjDelete"   data-tip="Permanently delete this project (devices and files are not removed)">Delete Project</button>
@@ -201,6 +202,12 @@
               <p class="section-heading">Linked Devices</p>
               <div id="projDeviceList"><div class="empty-state">No devices linked.</div></div>
             </div>
+          </div>
+
+          <!-- Project-scoped firmware -->
+          <div id="projFirmwareSection" style="margin-top:24px">
+            <p class="section-heading">Firmware</p>
+            <div id="projFirmwareList"><div class="empty-state">Loading…</div></div>
           </div>
 
           <!-- Project-scoped agent tasks -->

@@ -363,6 +363,11 @@ async function loadFleet() {
       pairBtn.dataset.tip = "Pair this device with the hub to enable OTA and trusted commands";
       pairBtn.onclick = () => pairDevice(d.id);
       actions.appendChild(pairBtn);
+    } else {
+      const flashBtn = el("button", "btn btn-secondary btn-sm", "⬆ Flash");
+      flashBtn.dataset.tip = "Push firmware to this device — shows board-compatible entries, newest first";
+      flashBtn.onclick = (e) => { e.stopPropagation(); _openFlashDeviceModal(d); };
+      actions.appendChild(flashBtn);
     }
     const delBtn = el("button", "btn btn-danger btn-sm");
     delBtn.innerHTML = "&#x2715;";
@@ -377,6 +382,55 @@ async function loadFleet() {
     card.appendChild(actions);
     listEl.appendChild(card);
   }
+}
+
+async function _openFlashDeviceModal(device) {
+  let catalog;
+  try { catalog = await api.ota.catalog(); } catch (_) { catalog = []; }
+  const compatible = catalog
+    .filter(fw => !fw.board || !device.board || fw.board === device.board)
+    .sort((a, b) => (b.uploaded || "").localeCompare(a.uploaded || ""));
+  if (!compatible.length) {
+    openModal("No Compatible Firmware",
+      `<div class="empty-state">No firmware in catalog matches board <strong>${device.board || "unknown"}</strong>. Upload a binary first.</div>`,
+      [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+    return;
+  }
+  const opts = compatible.map(fw => {
+    const fwId  = fw._folder || `${fw.board}-${fw.version}`;
+    const label = fw.label || `${fw.board} — v${fw.version}`;
+    const tags  = [fw.channel, fw.known_good ? "✓ known good" : ""].filter(Boolean).join(", ");
+    return `<option value="${fwId}">${label} (${tags})</option>`;
+  }).join("");
+  openModal(`Flash — ${device.name || device.id}`, `
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px">
+      Device: <strong>${device.name || device.id}</strong> · Board: <strong>${device.board || "unknown"}</strong>
+    </p>
+    <div class="form-field">
+      <label data-tip="Board-compatible firmware only, newest first. Known-good builds are labelled.">Firmware</label>
+      <select id="flashFwSel">${opts}</select>
+    </div>
+    <div class="form-field">
+      <label data-tip="Logged in the OTA audit trail — your name or a label like 'local' or 'ci'.">Operator</label>
+      <input type="text" id="flashOperator" value="local" placeholder="local">
+    </div>
+  `, [
+    { label: "⬆ Flash Now", cls: "btn btn-primary", action: async () => {
+      const firmware_id = document.getElementById("flashFwSel").value;
+      const operator    = document.getElementById("flashOperator").value.trim() || "local";
+      try {
+        const result = await api.ota.push({ device_id: device.id, firmware_id, operator });
+        closeModal();
+        openModal(result.status === "ok" ? "Flash Successful ✓" : "Flash Failed", `
+          <p><strong>Status:</strong>
+            <span style="color:${result.status === "ok" ? "var(--color-success)" : "var(--color-danger)"}">${result.status}</span>
+          </p>
+          ${result.response ? `<pre style="font-size:11px;margin-top:8px;overflow:auto;max-height:120px">${result.response}</pre>` : ""}
+        `, [{ label: "Close", cls: "btn btn-primary", action: closeModal }]);
+      } catch (err) { alert("Flash failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
 }
 
 async function pairDevice(deviceId) {
@@ -583,27 +637,38 @@ document.getElementById("btnRestoreBackup").onclick = () => {
 
 // ── OTA upload modal ───────────────────────────────────────────────────────
 
-document.getElementById("btnUploadFirmware").onclick = () => {
+// opts: { projectId, projectName, boardHint, linkedIds }  — all optional
+function _openUploadFirmwareModal(opts = {}) {
+  const { projectId, projectName, boardHint = "esp32dev", linkedIds = [] } = opts;
+  const contextNote = projectId
+    ? `<p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;line-height:1.6">
+         Uploading for <strong>${projectName}</strong> — this firmware will appear in the
+         project's <em>Firmware</em> section for one-click flashing to linked devices.
+       </p>`
+    : `<p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+         Upload a compiled <code>.bin</code> from PlatformIO, Arduino IDE, or ESP-IDF.
+         In PlatformIO the file is typically at <code>.pio/build/&lt;env&gt;/firmware.bin</code>.
+       </p>`;
   openModal("Upload Firmware Binary", `
-    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
-      Upload a compiled <code>.bin</code> from PlatformIO, Arduino IDE, or ESP-IDF.
-      In PlatformIO the file is typically at <code>.pio/build/&lt;env&gt;/firmware.bin</code>.
-      After upload, use <strong>Push to Device</strong> to deploy it to a paired ESP32.
-    </p>
+    ${contextNote}
     <div class="form-field">
       <label data-tip="The compiled firmware binary — .bin format only. Found in .pio/build/&lt;env&gt;/firmware.bin after a PlatformIO build.">Firmware .bin file</label>
       <input type="file" id="fwFile" accept=".bin">
     </div>
     <div class="form-field">
-      <label data-tip="Must match your PlatformIO environment name or IDF target exactly (e.g. esp32dev, lolin32, esp32-s3-devkitc-1). A board mismatch is flagged as a warning when pushing.">Board</label>
-      <input type="text" id="fwBoard" placeholder="esp32dev" value="esp32dev">
+      <label data-tip="Human-readable name shown in the catalog and project firmware list — e.g. 'Jingle Bells v1.2'. Defaults to board name if left blank.">Label (display name)</label>
+      <input type="text" id="fwLabel" placeholder="${projectName ? projectName + ' v1.0.0' : 'My Firmware v1.0.0'}" value="${projectName || ''}">
     </div>
     <div class="form-field">
-      <label data-tip="Semantic version — increment with every build so devices can determine whether an update is available (e.g. 1.0.0, 1.1.0, 2.0.0).">Version</label>
+      <label data-tip="Must match your PlatformIO environment name or IDF target exactly (e.g. esp32dev, seeed_xiao_esp32s3). A board mismatch is flagged as a warning when pushing.">Board</label>
+      <input type="text" id="fwBoard" placeholder="${boardHint}" value="${boardHint}">
+    </div>
+    <div class="form-field">
+      <label data-tip="Semantic version — increment with every build (e.g. 1.0.0, 1.1.0, 2.0.0).">Version</label>
       <input type="text" id="fwVersion" placeholder="1.0.0" value="1.0.0">
     </div>
     <div class="form-field">
-      <label data-tip="Release stage: dev for active development builds, beta for limited rollout testing, stable for production devices. Devices can be configured to follow a specific channel.">Channel</label>
+      <label data-tip="Release stage: dev for active development builds, beta for limited rollout testing, stable for production devices.">Channel</label>
       <select id="fwChannel">
         <option value="dev">dev — active development, may be unstable</option>
         <option value="beta">beta — ready for limited testing</option>
@@ -613,21 +678,42 @@ document.getElementById("btnUploadFirmware").onclick = () => {
   `, [
     { label: "Upload", cls: "btn btn-primary", action: async () => {
       const file    = document.getElementById("fwFile").files[0];
+      const label   = document.getElementById("fwLabel").value.trim();
       const board   = document.getElementById("fwBoard").value.trim();
       const version = document.getElementById("fwVersion").value.trim();
       const channel = document.getElementById("fwChannel").value;
-      if (!file) { alert("Select a .bin file."); return; }
+      if (!file)           { alert("Select a .bin file."); return; }
       if (!board || !version) { alert("Board and version are required."); return; }
       try {
-        await api.ota.upload(file, board, version, channel);
+        await api.ota.upload(file, board, version, channel, label, projectId || "");
         closeModal();
-        loadOTA();
+        if (projectId && _currentProject) renderProjectFirmware(_currentProject, linkedIds);
+        else loadOTA();
       } catch (err) {
         alert("Upload failed: " + err.message);
       }
     }},
     { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
   ]);
+}
+
+document.getElementById("btnUploadFirmware").onclick = () => _openUploadFirmwareModal();
+
+document.getElementById("btnProjUploadFirmware").onclick = async () => {
+  if (!_currentProject) return;
+  const linkedIds = Array.isArray(_currentProject.devices) ? _currentProject.devices : [];
+  let boardHint = "esp32dev";
+  if (linkedIds.length) {
+    const devs = await api.devices.list().catch(() => []);
+    const first = devs.find(d => linkedIds.includes(d.id));
+    if (first?.board) boardHint = first.board;
+  }
+  _openUploadFirmwareModal({
+    projectId:   _currentProject.id,
+    projectName: _currentProject.name,
+    boardHint,
+    linkedIds,
+  });
 };
 
 // ── Projects view ──────────────────────────────────────────────────────────
@@ -761,6 +847,7 @@ async function openProject(p) {
 
   const linkedIds = Array.isArray(p.devices) ? p.devices : [];
   await renderProjectDevices(p, linkedIds);
+  renderProjectFirmware(p, linkedIds);
 }
 
 async function renderProjectDevices(project, linkedIds) {
@@ -827,6 +914,43 @@ async function renderProjectDevices(project, linkedIds) {
     ]);
   };
   devList.appendChild(linkBtn);
+}
+
+async function renderProjectFirmware(project, linkedIds) {
+  const listEl = document.getElementById("projFirmwareList");
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="empty-state" style="font-size:12px">Loading…</div>';
+
+  let catalog;
+  try { catalog = await api.ota.catalogByProject(project.id); }
+  catch (_) { catalog = []; }
+
+  if (!catalog.length) {
+    listEl.innerHTML = '<div class="empty-state">No firmware tagged to this project yet. Click ⬆ Upload Firmware to add one.</div>';
+    return;
+  }
+
+  catalog.sort((a, b) => (b.uploaded || "").localeCompare(a.uploaded || ""));
+  listEl.innerHTML = "";
+  for (const fw of catalog) {
+    const row = el("div", "file-row");
+    const displayName = fw.label || `${fw.board} — v${fw.version}`;
+    const goodBadge = fw.known_good
+      ? `<span class="tag" style="background:rgba(26,175,100,.15);color:#1aaf64;border-color:rgba(26,175,100,.3)">✓ Good</span>`
+      : "";
+    row.innerHTML = `
+      <span class="file-path" data-tip="Board: ${fw.board} · Version: ${fw.version} · ${fw.channel}">${displayName}</span>
+      <span class="file-size">${fw.board} · v${fw.version} · ${fw.channel} · ${formatBytes(fw.size_bytes)}</span>
+      <span class="file-ts" data-tip="${fw.uploaded || ''}">${timeAgo(fw.uploaded)}</span>
+      ${goodBadge}
+    `;
+    const flashBtn = el("button", "btn btn-primary btn-sm", "⬆ Flash");
+    flashBtn.style.marginLeft = "auto";
+    flashBtn.dataset.tip = "Push this firmware to a device linked to this project — skips the OTA catalog view";
+    flashBtn.onclick = () => openPushModal(fw, linkedIds);
+    row.appendChild(flashBtn);
+    listEl.appendChild(row);
+  }
 }
 
 document.getElementById("btnProjNewTask").onclick = () => {
@@ -1317,9 +1441,12 @@ async function loadOTA() {
         : "";
       const rbBadge = fw.rollback_target
         ? `<span class="tag" style="font-size:10px">↩ rb: ${fw.rollback_target}</span>` : "";
+      const displayTitle = fw.label || `${fw.board} — v${fw.version}`;
+      const displaySub   = fw.label ? `${fw.board} — v${fw.version} · ${fw.channel} · ${formatBytes(fw.size_bytes)}`
+                                    : `Channel: ${fw.channel} · ${formatBytes(fw.size_bytes)}`;
       card.innerHTML = `
-        <div class="reg-card-title">${fw.board} — v${fw.version}</div>
-        <div class="reg-card-sub">Channel: ${fw.channel} · ${formatBytes(fw.size_bytes)}</div>
+        <div class="reg-card-title">${displayTitle}</div>
+        <div class="reg-card-sub">${displaySub}</div>
         <div class="tag-row">
           <span class="tag" ${fw.sha256 ? `data-tip="Full SHA-256: ${fw.sha256}"` : ""}>${fw.sha256 ? fw.sha256.slice(0,12) + "…" : "no checksum"}</span>
           <span class="tag">${timeAgo(fw.uploaded)}</span>
@@ -1380,9 +1507,16 @@ async function loadOTA() {
 
 // ── OTA push modal ─────────────────────────────────────────────────────────
 
-async function openPushModal(fw) {
+// deviceFilter: optional array of device IDs to restrict the target selector to.
+// If provided but no matches exist among paired devices, falls back to all paired.
+async function openPushModal(fw, deviceFilter = null) {
   const devices = await api.devices.list().catch(() => []);
-  const paired  = devices.filter(d => d.paired);
+  let paired = devices.filter(d => d.paired);
+  if (deviceFilter && deviceFilter.length) {
+    const filterSet = new Set(deviceFilter);
+    const scoped = paired.filter(d => filterSet.has(d.id));
+    if (scoped.length) paired = scoped;
+  }
   if (!paired.length) {
     openModal("No Paired Devices",
       '<div class="empty-state">No paired devices available. Pair a device first from the Fleet view.</div>',
@@ -1392,7 +1526,8 @@ async function openPushModal(fw) {
   const opts = paired.map(d =>
     `<option value="${d.id}" data-board="${d.board || ''}">${d.name || d.id} (${d.board || "unknown board"})</option>`
   ).join("");
-  openModal(`Push Firmware — ${fw.board} v${fw.version}`, `
+  const pushTitle = fw.label || `${fw.board} v${fw.version}`;
+  openModal(`Push Firmware — ${pushTitle}`, `
     <div class="form-field">
       <label data-tip="Only paired devices are eligible for OTA. Pair a device from the Fleet view if it does not appear here.">Target Device</label>
       <select id="pushDeviceSel">${opts}</select>

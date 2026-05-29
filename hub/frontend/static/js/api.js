@@ -90,17 +90,20 @@ const api = {
 
   // OTA
   ota: {
-    catalog:    ()         => apiFetch("/api/ota/catalog"),
+    catalog:          ()        => apiFetch("/api/ota/catalog"),
+    catalogByProject: (pid)     => apiFetch(`/api/ota/catalog/project/${encodeURIComponent(pid)}`),
     log:        (did)      => apiFetch(`/api/ota/log${did ? "?device_id=" + did : ""}`),
     push:       (body)     => apiFetch("/api/ota/push",      { method: "POST",   body: JSON.stringify(body) }),
     rollback:   (body)     => apiFetch("/api/ota/rollback",  { method: "POST",   body: JSON.stringify(body) }),
     markGood:   (id, op)   => apiFetch(`/api/ota/catalog/${encodeURIComponent(id)}/mark-good?operator=${encodeURIComponent(op || "local")}`, { method: "POST" }),
     patchEntry: (id, body) => apiFetch(`/api/ota/catalog/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
-    upload:  (file, board, version, channel) => {
+    upload: (file, board, version, channel, label, projectId) => {
       const fd = new FormData();
       fd.append("file", file);
-      const url = `/api/ota/catalog/upload?board=${encodeURIComponent(board)}&version=${encodeURIComponent(version)}&channel=${encodeURIComponent(channel)}`;
-      return fetch(url, { method: "POST", body: fd }).then(async r => {
+      const p = new URLSearchParams({ board, version, channel });
+      if (label)     p.set("label",      label);
+      if (projectId) p.set("project_id", projectId);
+      return fetch(`/api/ota/catalog/upload?${p}`, { method: "POST", body: fd }).then(async r => {
         if (!r.ok) { const t = await r.text().catch(() => r.statusText); throw new Error(`${r.status} ${t}`); }
         return r.json();
       });

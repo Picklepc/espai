@@ -26,6 +26,8 @@ router = APIRouter()
 _SAFE_FILENAME = re.compile(r"^[a-zA-Z0-9_\-\.]{1,128}$")
 _SAFE_VERSION  = re.compile(r"^\d+\.\d+\.\d+[a-zA-Z0-9\.\-]*$")
 _SAFE_BOARD    = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+_SAFE_LABEL    = re.compile(r"^[a-zA-Z0-9 _\-\.]{0,128}$")
+_SAFE_PROJ_ID  = re.compile(r"^[a-zA-Z0-9_\-]{0,64}$")
 
 
 def _now() -> str:
@@ -111,12 +113,23 @@ def list_catalog():
     return entries
 
 
+@router.get("/catalog/project/{project_id}")
+def catalog_by_project(project_id: str):
+    """Return firmware entries tagged with a specific project_id, newest first."""
+    if not _SAFE_PROJ_ID.match(project_id):
+        raise HTTPException(400, "Invalid project_id")
+    all_entries = list_catalog()
+    return [e for e in all_entries if e.get("project_id") == project_id]
+
+
 @router.post("/catalog/upload")
 async def upload_firmware(
     file: UploadFile = File(...),
     board: str = "generic",
     version: str = "0.0.0",
     channel: str = "dev",
+    label: str = "",        # human-readable display name shown in catalog and project view
+    project_id: str = "",   # project this firmware belongs to (enables project-scoped flash)
 ):
     """
     Upload a firmware .bin into the catalog.
@@ -131,6 +144,12 @@ async def upload_firmware(
         raise HTTPException(400, "Invalid version string")
     if channel not in ("dev", "beta", "stable"):
         raise HTTPException(400, "channel must be dev, beta, or stable")
+    label      = label.strip()[:128]
+    project_id = project_id.strip()[:64]
+    if label and not _SAFE_LABEL.match(label):
+        raise HTTPException(400, "Label contains invalid characters")
+    if project_id and not _SAFE_PROJ_ID.match(project_id):
+        raise HTTPException(400, "Invalid project_id")
 
     content = await file.read()
     if len(content) > 4 * 1024 * 1024:
@@ -152,6 +171,8 @@ async def upload_firmware(
         "board": board,
         "version": version,
         "channel": channel,
+        "label": label,
+        "project_id": project_id,
         "filename": safe_name,
         "size_bytes": len(content),
         "sha256": sha256,
