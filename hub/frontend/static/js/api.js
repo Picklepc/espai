@@ -65,6 +65,16 @@ const api = {
     dataClear:   (id)             => apiFetch(`/api/projects/${id}/data`, { method: "DELETE" }),
   },
 
+  // Local Network Services
+  services: {
+    list:       ()          => apiFetch("/api/services/"),
+    categories: ()          => apiFetch("/api/services/categories"),
+    discover:   (subnet)    => apiFetch("/api/services/discover" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""), { method: "POST" }),
+    add:        (body)      => apiFetch("/api/services/",        { method: "POST",   body: JSON.stringify(body) }),
+    update:     (id, body)  => apiFetch(`/api/services/${id}`,  { method: "PATCH",  body: JSON.stringify(body) }),
+    delete:     (id)        => apiFetch(`/api/services/${id}`,  { method: "DELETE" }),
+  },
+
   // Registry
   workers:  {
     list:          ()         => apiFetch("/api/workers/"),

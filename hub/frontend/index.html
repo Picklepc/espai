@@ -130,9 +130,10 @@
         <header class="view-header">
           <h1>Dashboard</h1>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-secondary" id="btnHomeBrowseLAN"  data-tip="Scan for ALL HTTP devices on your LAN — ESPAI and non-ESPAI (Tasmota, ESPHome, cameras, routers)">🔍 Browse LAN</button>
-            <button class="btn btn-secondary" id="btnHomeScanLAN"    data-tip="Scan your local subnet for ESPAI-compatible nodes and register them automatically">Scan LAN</button>
-            <button class="btn btn-secondary" id="btnHomeAddDevice"  data-tip="Manually add a device by entering its IP address">+ Add Device</button>
+            <button class="btn btn-secondary" id="btnHomeDiscover"   data-tip="Scan LAN for all HTTP services — ESPAI nodes, Tasmota, Jellyfin, OpenWRT, and more. Results are saved to the Local Network grid.">🔍 Discover</button>
+            <button class="btn btn-secondary" id="btnHomeAddService" data-tip="Add any local service by hostname or IP and port — hub auto-fetches its title and favicon">+ Add Service</button>
+            <button class="btn btn-secondary" id="btnHomeScanLAN"    data-tip="Scan for ESPAI-compatible nodes only and register them as fleet devices">Scan LAN</button>
+            <button class="btn btn-secondary" id="btnHomeAddDevice"  data-tip="Manually add an ESPAI device by IP address">+ Add Device</button>
             <button class="btn btn-secondary" id="btnHomeRefresh"    data-tip="Refresh project thumbnails and device status">↻ Refresh</button>
             <button class="btn btn-primary"   id="btnHomeNewProject" data-tip="Create a new ESPAI project — firmware, web app, and hub integration">+ New Project</button>
           </div>
@@ -160,15 +161,18 @@
           </div>
         </div>
 
-        <!-- Project app gallery -->
-        <div class="home-section-header">
-          <h2 class="home-section-title">Projects</h2>
+        <!-- Local Network — categorized service grid -->
+        <div id="localNetContent"></div>
+
+        <!-- ESPAI project app gallery -->
+        <div class="home-section-header" style="margin-top:32px">
+          <h2 class="home-section-title">ESPAI Projects</h2>
         </div>
         <div class="home-proj-grid" id="homeProjGrid">
           <div class="empty-state">Loading projects…</div>
         </div>
 
-        <!-- Device list (formerly Fleet) -->
+        <!-- Device list -->
         <div class="home-section-header" style="margin-top:32px">
           <h2 class="home-section-title">Devices</h2>
         </div>

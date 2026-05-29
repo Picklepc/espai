@@ -345,6 +345,9 @@ async function loadHome() {
   document.getElementById("hstatProjects").textContent = projects.length;
   document.getElementById("hstatJobs").textContent     = activeJobs;
 
+  // Local Network categorized grid (loads independently)
+  loadLocalNetwork();
+
   // Device list
   const devListEl = document.getElementById("homeDeviceList");
   if (devListEl) _renderDeviceCards(devListEl, devices, loadHome);
@@ -408,7 +411,270 @@ document.getElementById("btnHomeNewProject").onclick = () => {
   setTimeout(() => document.getElementById("btnNewProject")?.click(), 150);
 };
 
-// Shared device card renderer — used by Home dashboard (and legacy Fleet if needed)
+// ── Local Network service grid ──────────────────────────────────────────────
+
+const _SVC_COLORS = {
+  tasmota:"#e07828",esphome:"#00bcd4",homeassist:"#18bcf2",openwrt:"#2ecc71",
+  pihole:"#e74c3c",proxmox:"#e67e22",jellyfin:"#8e44ad",plex:"#e5a00d",
+  emby:"#52b54b",kodi:"#17b2e8",navidrome:"#f47225",grafana:"#f46800",
+  portainer:"#13bef9",gitea:"#609926",nextcloud:"#0082c9",synology:"#b5b5b5",
+  espai:"#1aafc4",unknown:"#546e7a",
+};
+const _SVC_EMOJIS = {
+  tasmota:"💡",esphome:"⚡",homeassist:"🏠",openwrt:"🌐",pihole:"🛡️",
+  proxmox:"🖥️",jellyfin:"🎬",plex:"🟡",emby:"🟢",kodi:"🎵",navidrome:"🎵",
+  grafana:"📊",portainer:"🐳",gitea:"🦎",nextcloud:"☁️",synology:"💾",
+  espai:"📡",unknown:"🌐",
+};
+const _SVC_CATEGORY_ORDER = ["projects","smart-home","media","network","tools","other"];
+const _SVC_CATEGORY_LABELS = {
+  "projects":"Projects","smart-home":"Smart Home","media":"Media",
+  "network":"Network","tools":"Tools","other":"Other",
+};
+
+async function loadLocalNetwork() {
+  const container = document.getElementById("localNetContent");
+  if (!container) return;
+
+  const services = await api.services.list().catch(() => []);
+
+  if (!services.length) {
+    container.innerHTML = `
+      <div class="home-section-header">
+        <h2 class="home-section-title">Local Network</h2>
+      </div>
+      <div class="svc-discover-hint">
+        No services yet. Click <strong>🔍 Discover</strong> to scan your LAN, or
+        <strong>+ Add Service</strong> to add Jellyfin, Home Assistant, or any local web service by hostname and port.
+      </div>`;
+    return;
+  }
+
+  // Group by category
+  const groups = {};
+  for (const svc of services) {
+    const cat = svc.category || "other";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(svc);
+  }
+
+  container.innerHTML = "";
+
+  for (const cat of _SVC_CATEGORY_ORDER) {
+    const items = groups[cat];
+    if (!items?.length) continue;
+
+    const section = el("div", "svc-category");
+    const hdr = el("div", "svc-category-header");
+    hdr.innerHTML = `<h3 class="svc-category-title">${_SVC_CATEGORY_LABELS[cat] || cat}</h3>
+                     <span style="font-size:11px;color:var(--color-text-muted)">${items.length} service${items.length !== 1 ? "s" : ""}</span>`;
+    section.appendChild(hdr);
+
+    const grid = el("div", "svc-grid");
+    for (const svc of items) {
+      grid.appendChild(_makeSvcCard(svc));
+    }
+    section.appendChild(grid);
+    container.appendChild(section);
+  }
+}
+
+function _makeSvcCard(svc) {
+  const color   = svc.color || _SVC_COLORS[svc.service_type] || _SVC_COLORS.unknown;
+  const emoji   = _SVC_EMOJIS[svc.service_type] || "🌐";
+  const label   = svc.label || svc.title || `${svc.host}:${svc.port}`;
+  const addr    = svc.port === 80 ? svc.host : `${svc.host}:${svc.port}`;
+  const url     = `${svc.protocol || "http"}://${svc.host}${svc.port !== 80 ? ":" + svc.port : ""}/`;
+  const isPinned = svc.pinned;
+
+  const card = el("div", "svc-card");
+
+  // Coloured strip at top
+  const strip = el("div", "svc-card-strip");
+  strip.style.background = color;
+  card.appendChild(strip);
+
+  // Top row: icon + name + address
+  const top = el("div", "svc-card-top");
+  const iconEl = el("div", "svc-card-icon");
+  iconEl.style.background = color + "22";
+  if (svc.favicon_url) {
+    const img = document.createElement("img");
+    img.src = svc.favicon_url;
+    img.alt = emoji;
+    img.onerror = () => { iconEl.innerHTML = `<span style="font-size:20px">${emoji}</span>`; };
+    iconEl.appendChild(img);
+  } else {
+    iconEl.innerHTML = `<span style="font-size:20px">${emoji}</span>`;
+  }
+  top.appendChild(iconEl);
+
+  const info = el("div", "svc-card-info");
+  const nameEl = el("div", "svc-card-name", label);
+  nameEl.dataset.tip = `${label} — ${url}`;
+  info.appendChild(nameEl);
+  const addrEl = el("div", "svc-card-addr", addr);
+  if (svc.last_seen) addrEl.dataset.tip = `Last seen: ${timeAgo(svc.last_seen)}`;
+  info.appendChild(addrEl);
+  top.appendChild(info);
+  card.appendChild(top);
+
+  // Action row
+  const actions = el("div", "svc-card-actions");
+
+  const openBtn = document.createElement("a");
+  openBtn.href = url;
+  openBtn.target = "_blank";
+  openBtn.rel = "noopener";
+  openBtn.className = "btn btn-primary btn-sm";
+  openBtn.textContent = "Open ↗";
+  openBtn.dataset.tip = `Open ${label} in a new tab`;
+  actions.appendChild(openBtn);
+
+  if (svc.is_espai && svc.project_id) {
+    const projBtn = el("button", "btn btn-secondary btn-sm", "Project →");
+    projBtn.dataset.tip = "Open the ESPAI project detail for this device";
+    projBtn.onclick = () => {
+      showView("projects");
+      setTimeout(async () => {
+        const proj = await api.projects.get(svc.project_id).catch(() => null);
+        if (proj) openProject(proj);
+      }, 100);
+    };
+    actions.appendChild(projBtn);
+  }
+
+  // Rename button
+  const renameBtn = el("button", "btn btn-secondary btn-sm", "✎");
+  renameBtn.dataset.tip = "Rename or recategorise this service";
+  renameBtn.onclick = () => _openSvcEditModal(svc);
+  actions.appendChild(renameBtn);
+
+  // Pin button
+  const pinBtn = el("button", "btn btn-secondary btn-sm", isPinned ? "📌" : "⊙");
+  pinBtn.dataset.tip = isPinned ? "Unpin — move back to normal order" : "Pin to top of category";
+  if (isPinned) pinBtn.classList.add("svc-pin-active");
+  pinBtn.onclick = async () => {
+    await api.services.update(svc.id, { pinned: !isPinned }).catch(() => {});
+    loadLocalNetwork();
+  };
+  actions.appendChild(pinBtn);
+
+  // Hide button
+  const hideBtn = el("button", "btn btn-secondary btn-sm", "✕");
+  hideBtn.dataset.tip = "Hide from grid — run Discover again or add manually to restore";
+  hideBtn.onclick = async () => {
+    if (!confirm(`Hide "${label}"?`)) return;
+    await api.services.update(svc.id, { hidden: true }).catch(() => {});
+    loadLocalNetwork();
+  };
+  actions.appendChild(hideBtn);
+
+  card.appendChild(actions);
+  return card;
+}
+
+function _openSvcEditModal(svc) {
+  const currentLabel = svc.label || svc.title || "";
+  const catOpts = Object.entries(_SVC_CATEGORY_LABELS).map(([k, v]) =>
+    `<option value="${k}" ${svc.category === k ? "selected" : ""}>${v}</option>`
+  ).join("");
+
+  openModal(`Edit — ${currentLabel || svc.host}`, `
+    <div class="form-field">
+      <label data-tip="Friendly name shown on the card — overrides the page title">Label</label>
+      <input type="text" id="svcEditLabel" value="${currentLabel}" placeholder="e.g. Living Room Tasmota">
+    </div>
+    <div class="form-field">
+      <label data-tip="Group this service with similar services on the dashboard">Category</label>
+      <select id="svcEditCat">${catOpts}</select>
+    </div>
+  `, [
+    { label: "Save", cls: "btn btn-primary", action: async () => {
+      const label    = document.getElementById("svcEditLabel").value.trim() || null;
+      const category = document.getElementById("svcEditCat").value;
+      await api.services.update(svc.id, { label, category }).catch(err => alert(err.message));
+      closeModal();
+      loadLocalNetwork();
+    }},
+    { label: "Delete Entry", cls: "btn btn-danger", action: async () => {
+      if (!confirm(`Remove "${currentLabel || svc.host}" from the grid entirely?`)) return;
+      await api.services.delete(svc.id).catch(() => {});
+      closeModal();
+      loadLocalNetwork();
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+  setTimeout(() => { const el = document.getElementById("svcEditLabel"); el?.focus(); el?.select(); }, 100);
+}
+
+// ── Discover + Add Service button handlers ──────────────────────────────────
+
+document.getElementById("btnHomeDiscover").onclick = async () => {
+  const btn = document.getElementById("btnHomeDiscover");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Scanning…";
+  try {
+    const result = await api.services.discover();
+    loadLocalNetwork();
+    btn.textContent = `✓ ${result.found} found`;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3000);
+  } catch (err) {
+    alert("Discover failed: " + err.message);
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+};
+
+document.getElementById("btnHomeAddService").onclick = () => {
+  const catOpts = Object.entries(_SVC_CATEGORY_LABELS).map(([k, v]) =>
+    `<option value="${k}">${v}</option>`
+  ).join("");
+  openModal("Add Local Service", `
+    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      Enter a hostname, IP address, or IP:port. The hub will probe it immediately to
+      fetch its name and icon — works for Jellyfin, Home Assistant, Pi-hole, Tasmota,
+      or any local web service.
+    </p>
+    <div class="form-field">
+      <label data-tip="Hostname or IP address — e.g. jellyfin.local, 192.168.1.50">Host / IP</label>
+      <input type="text" id="svcAddHost" placeholder="jellyfin.local or 192.168.1.50" style="font-family:monospace">
+    </div>
+    <div class="form-field">
+      <label data-tip="Port number — 80 for standard HTTP (default), 8096 for Jellyfin, 8123 for Home Assistant, 3000 for Grafana">Port</label>
+      <input type="number" id="svcAddPort" value="80" min="1" max="65535">
+    </div>
+    <div class="form-field">
+      <label data-tip="Optional — overrides the page title shown on the card. Leave blank to use the auto-detected title.">Label (optional)</label>
+      <input type="text" id="svcAddLabel" placeholder="e.g. My Jellyfin Server">
+    </div>
+    <div class="form-field">
+      <label data-tip="Choose the category for this service on the dashboard">Category</label>
+      <select id="svcAddCat">${catOpts}</select>
+    </div>
+    <p id="svcAddStatus" style="font-size:12px;color:var(--color-text-muted);min-height:18px;margin-top:4px"></p>
+  `, [
+    { label: "Add", cls: "btn btn-primary", action: async () => {
+      const host     = document.getElementById("svcAddHost")?.value.trim();
+      const port     = parseInt(document.getElementById("svcAddPort")?.value, 10) || 80;
+      const label    = document.getElementById("svcAddLabel")?.value.trim() || undefined;
+      const category = document.getElementById("svcAddCat")?.value;
+      const status   = document.getElementById("svcAddStatus");
+      if (!host) { if (status) status.textContent = "Enter a host or IP address."; return; }
+      if (status) status.textContent = "Probing…";
+      try {
+        const svc = await api.services.add({ host, port, label, category });
+        closeModal();
+        loadLocalNetwork();
+      } catch (err) { if (status) status.textContent = "Error: " + err.message; }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+  setTimeout(() => document.getElementById("svcAddHost")?.focus(), 100);
+};
+
+// ── Shared device card renderer — used by Home dashboard (and legacy Fleet if needed)
 function _renderDeviceCards(listEl, devices, onRefresh) {
   if (!devices.length) {
     listEl.innerHTML = '<div class="empty-state">No devices found. Use Scan LAN or + Add Device to discover nodes.</div>';

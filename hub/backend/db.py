@@ -239,5 +239,29 @@ def init_db() -> None:
             timestamp   TEXT NOT NULL,
             PRIMARY KEY (project_id, device_id)
         );
+
+        -- ── Local Network service registry ────────────────────────────────────
+        -- Persists discovered and manually-added LAN services across reloads.
+        -- Upserted by the /api/services/discover scan; never auto-deleted.
+        CREATE TABLE IF NOT EXISTS local_services (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            host          TEXT NOT NULL,      -- IP or hostname (e.g. jellyfin.local)
+            port          INTEGER NOT NULL DEFAULT 80,
+            protocol      TEXT NOT NULL DEFAULT 'http',
+            label         TEXT,              -- user-set friendly name
+            title         TEXT,             -- from <title> tag
+            server        TEXT,             -- from Server HTTP header
+            favicon_url   TEXT,             -- best-guess favicon URL
+            service_type  TEXT NOT NULL DEFAULT 'unknown',
+            category      TEXT NOT NULL DEFAULT 'other',  -- projects/smart-home/media/network/tools/other
+            is_espai      INTEGER NOT NULL DEFAULT 0,
+            project_id    TEXT,             -- linked ESPAI project (if is_espai)
+            pinned        INTEGER NOT NULL DEFAULT 0,
+            hidden        INTEGER NOT NULL DEFAULT 0,
+            discovered_at TEXT NOT NULL,
+            last_seen     TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_local_services_host_port
+            ON local_services (host, port);
         """)
         _migrate(conn)
