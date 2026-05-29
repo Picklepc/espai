@@ -1,0 +1,94 @@
+schema: ESPAI.recipe.v1
+name: Motion Alert Pipeline
+category: sensing.vision
+summary: >
+  PIR or camera-based motion detection pipeline. ESP32 detects motion locally
+  (PIR or frame diff), uploads a snapshot to the hub, and publishes a motion
+  event. An OpenCV worker tags and classifies the snapshot; the rules engine
+  fires a webhook or push notification.
+
+compatibility:
+  compatible_boards:
+    - esp32
+    - esp32s3
+  tested:
+    - board: esp32
+      sensor: PIR (HC-SR501)
+      status: working
+    - board: seeed_xiao_esp32s3
+      sensor: OV2640 camera
+      status: working
+  likely_works:
+    - board: esp32cam
+      reason: Standard Arduino camera + PIR stack.
+
+requires_workers:
+  - opencv-motion-tagger     # classifies snapshots, outputs event.motion_classified
+
+pipeline:
+  - step: detect_motion
+    runs_on: device
+    description: >
+      Wake on PIR interrupt or poll camera frame diff. On trigger: capture a
+      JPEG snapshot, POST it to the hub files API
+      (POST /api/projects/{id}/files/captures/), then publish a motion event
+      to the hub (POST /api/events with type=motion.detected).
+    outputs:
+      - snapshot_path
+      - trigger_source   # pir | frame_diff | manual
+
+  - step: classify_snapshot
+    runs_on: hub
+    worker: opencv-motion-tagger
+    trigger: event.motion.detected
+    description: >
+      Receives the snapshot path from the event payload. Runs motion tagging
+      and optional object classification. Emits event.motion_classified with
+      tag list, confidence scores, and a thumbnail path.
+    inputs:
+      - snapshot_path
+    outputs:
+      - event.motion_classified
+      - tags              # e.g. [person, vehicle, animal]
+      - thumbnail_path
+
+  - step: alert
+    runs_on: hub
+    type: rules_engine
+    description: >
+      Rule: on event.motion_classified → webhook POST to configured URL with
+      tags and thumbnail URL. Optional: push browser notification via SSE/WS.
+
+config:
+  sensitivity: medium          # low | medium | high (maps to frame-diff threshold)
+  cooldown_seconds: 30         # suppress repeated triggers
+  retain_snapshots_days: 7
+  alert_webhook_url: ""        # set in private overlay or env var
+
+firmware:
+  build_flags:
+    - -D SENSOR_TYPE=\"PIR\"   # or CAMERA
+    - -D PIR_PIN=13
+    - -D HUB_PROJECT_ID=\"REPLACE_WITH_PROJECT_ID\"
+  libraries:
+    - ESP32 Camera (if using OV2640)
+
+simulator:
+  script: simulators/fake-camera/fake_camera.py
+  description: >
+    Run fake_camera.py for development — MJPEG stream, snapshot endpoint, and
+    simulated motion events. Connects to the hub automatically so the full
+    pipeline runs without physical hardware.
+
+hub_web_app:
+  description: >
+    Motion event log with thumbnail gallery. Latest snapshot auto-refreshes.
+    Tag filter to show only specific motion classes.
+
+share_policy:
+  export_public: true
+  exclude:
+    - "captures/private/"
+    - "*.private.yaml"
+    - local.yaml
+    - secrets.yaml

@@ -1,0 +1,83 @@
+schema: ESPAI.recipe.v1
+name: Temperature Pipeline
+category: sensing.environmental
+summary: >
+  Single-sensor temperature and humidity monitoring pipeline.
+  ESP32 wakes on schedule, reads a DHT22 or SHT31, pushes readings to the hub,
+  and sleeps. A hub worker tags anomalies and fires alerts via the rules engine.
+
+compatibility:
+  compatible_boards:
+    - esp32
+    - esp32s3
+    - esp32c3
+  tested:
+    - board: esp32
+      sensor: DHT22
+      status: working
+    - board: seeed_xiao_esp32s3
+      sensor: SHT31
+      status: working
+  likely_works:
+    - board: esp32s2
+      reason: Same Arduino WiFi + HTTPClient stack.
+
+requires_workers:
+  - temperature-anomaly-tagger     # optional — alerts on threshold breach
+
+pipeline:
+  - step: read_sensor
+    runs_on: device
+    description: >
+      Wake from deep sleep, read temperature and humidity, push JSON payload to
+      hub data store via POST /api/projects/{id}/data, then deep-sleep for
+      interval_seconds.
+    outputs:
+      - temperature_c
+      - humidity_pct
+      - battery_pct
+
+  - step: tag_anomalies
+    runs_on: hub
+    worker: temperature-anomaly-tagger
+    trigger: on_push
+    description: >
+      Receives the pushed reading via a rules engine event. Compares against
+      thresholds from recipe config. Emits alert events when thresholds are
+      breached.
+    inputs:
+      - temperature_c
+      - humidity_pct
+    outputs:
+      - event.temperature_alert
+
+config:
+  interval_seconds: 300          # device sleep interval (5 min default)
+  thresholds:
+    temperature_max_c: 40.0
+    temperature_min_c: 0.0
+    humidity_max_pct: 90
+  alert_cooldown_minutes: 30     # suppress repeated alerts
+
+firmware:
+  build_flags:
+    - -D SENSOR_TYPE=\"DHT22\"   # or SHT31
+    - -D SLEEP_INTERVAL_S=300
+    - -D HUB_PROJECT_ID=\"REPLACE_WITH_PROJECT_ID\"
+  libraries:
+    - DHT sensor library
+    - Adafruit Unified Sensor
+
+hub_web_app:
+  description: >
+    A simple dashboard showing current temperature/humidity with a sparkline
+    of the last 24 hours. Loads from hub data store — works while device sleeps.
+  files:
+    - projects/{id}/web/index.html
+
+share_policy:
+  export_public: true
+  exclude:
+    - "*.private.yaml"
+    - local.yaml
+    - secrets.yaml

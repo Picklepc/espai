@@ -1,0 +1,97 @@
+schema: ESPAI.recipe.v1
+name: Battery Monitor
+category: battery.monitor
+summary: >
+  General-purpose battery monitoring pipeline. ESP32 reads cell voltage, state
+  of charge, temperature, and current from a supported BMS or via direct ADC.
+  Hub stores history, serves a live dashboard, and fires low-battery alerts.
+
+compatibility:
+  compatible_boards:
+    - esp32
+    - esp32s3
+    - esp32c3
+  tested:
+    - board: esp32
+      interface: uart
+      status: working
+    - board: seeed_xiao_esp32s3
+      interface: i2c
+      status: working
+  likely_works:
+    - board: esp32s2
+      reason: Same UART and I2C driver stack.
+
+requires_workers:
+  - battery-alert-worker     # optional — fires events on low SOC / over-temp
+
+pipeline:
+  - step: read_bms
+    runs_on: device
+    description: >
+      Poll BMS or ADC on a configurable interval. Push payload to hub data
+      store. Payload shape mirrors the fake-bms simulator output so the same
+      dashboard card works during development without hardware.
+    outputs:
+      - voltage_v
+      - current_a
+      - soc_pct
+      - temperature_c
+      - cells           # list of per-cell voltages (optional)
+      - protection_flags
+
+  - step: alert_on_threshold
+    runs_on: hub
+    worker: battery-alert-worker
+    trigger: on_push
+    description: >
+      Evaluates pushed readings against thresholds. Emits alert events consumed
+      by the rules engine for webhook / push-notification delivery.
+    inputs:
+      - soc_pct
+      - temperature_c
+      - voltage_v
+    outputs:
+      - event.battery_low
+      - event.battery_overheat
+      - event.battery_fully_charged
+
+config:
+  poll_interval_seconds: 60
+  thresholds:
+    soc_low_pct: 15
+    soc_critical_pct: 5
+    temperature_max_c: 45.0
+    overvoltage_v: 58.0
+    undervoltage_v: 42.0
+  alert_cooldown_minutes: 60
+
+firmware:
+  build_flags:
+    - -D BMS_INTERFACE=\"UART\"   # or I2C, ADC
+    - -D POLL_INTERVAL_S=60
+    - -D HUB_PROJECT_ID=\"REPLACE_WITH_PROJECT_ID\"
+
+features:
+  implemented:
+    - battery.voltage
+    - battery.current
+    - battery.soc
+    - battery.temperature
+  unsafe_or_blocked:
+    - battery.write_config
+    - battery.reset_bms
+
+simulator:
+  script: simulators/fake-bms/fake_bms.py
+  description: >
+    Run fake_bms.py during development — it exposes the same API and
+    auto-checks in to the hub, so the dashboard and rules engine work
+    without physical hardware.
+
+share_policy:
+  export_public: true
+  exclude:
+    - "*.private.yaml"
+    - local.yaml
+    - secrets.yaml
