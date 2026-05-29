@@ -86,3 +86,45 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # ── Tailscale / Headscale sidecar (optional) ──────────────────────────────
+  # Exposes the ESPAI dashboard over your Tailscale mesh — no port forwarding,
+  # no public IP required.  Access via http://espai-hub:7888/ from any device
+  # on your tailnet, including remote sites with their own ESP32 nodes.
+  #
+  # ⚠  HOST NETWORK — because the espai container uses network_mode: host
+  #    (required for mDNS/zeroconf), this sidecar shares that same host
+  #    network stack.  Tailscale is effectively installed on the router, not
+  #    just inside Docker.  Mitigate with Tailscale ACLs:
+  #      allow src tag:trusted-devices dst tag:espai-hub port 7888
+  #
+  # Setup:
+  #   1. Add TS_AUTHKEY to your .env file.
+  #      Tailscale cloud : tailscale.com/admin/settings/keys → Generate auth key
+  #      Headscale       : headscale preauthkeys create --user espai --expiration 1y
+  #   2. Uncomment the service block below (all lines starting with #   ).
+  #   3. For Headscale, also uncomment and set TS_LOGIN_SERVER.
+  #   4. docker compose up -d
+  #
+  # tailscale:
+  #   image: tailscale/tailscale:stable
+  #   container_name: espai-tailscale
+  #   network_mode: host
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - NET_RAW
+  #   devices:
+  #     - /dev/net/tun:/dev/net/tun
+  #   volumes:
+  #     # Persist node identity and state across restarts
+  #     - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/tailscale:/var/lib/tailscale
+  #   environment:
+  #     TS_AUTHKEY: ${TS_AUTHKEY:-}
+  #     TS_HOSTNAME: ${TS_HOSTNAME:-espai-hub}
+  #     TS_STATE_DIR: /var/lib/tailscale
+  #     TS_USERSPACE: "false"          # kernel networking — better throughput
+  #     # ── Headscale (self-hosted control plane) ──────────────────────────
+  #     # TS_LOGIN_SERVER: ${TS_LOGIN_SERVER:-}
+  #     # ── Optional: ACL tag (create in Tailscale/Headscale admin first) ──
+  #     # TS_EXTRA_ARGS: "--advertise-tags=tag:espai-hub"
+  #   restart: unless-stopped
