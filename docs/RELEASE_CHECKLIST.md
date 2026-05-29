@@ -3,7 +3,7 @@
 This checklist is **reusable** — run it for every release. Before starting:
 
 1. **Reset all boxes** — uncheck every `[x]` and remove any `✓` notes from the previous release.
-2. **Update the checklist itself** — add new sections or items for any features shipped since the last release that need periodic review (new routers, new security gates, new Docker capabilities, new UI elements, etc.). The checklist should always reflect the current surface area of the product.
+2. **Update the checklist itself** — add items for features shipped since the last release, and remove items for anything deprecated or deleted. The checklist should always reflect the current surface area of the product; a stale item that can never pass is worse than no item.
 3. Then run the checklist top-to-bottom, checking boxes and documenting skipped items.
 
 The checklist as it appears in the repo reflects the **most recently completed release** — checked items are what was verified for that release, not the current state.
@@ -19,6 +19,7 @@ The checklist as it appears in the repo reflects the **most recently completed r
   - New security gates → add rows to Section 2
   - New Docker capabilities → add rows to Section 8
   - New packaging steps → add rows to Section 7 or 9
+- [ ] Remove checklist items for deprecated or deleted features — a stale item that can never be checked is worse than no item
 - [ ] Update version strings throughout this file (Sections 1, 6, 7, 8e, 9, Sign-off)
 
 ---
