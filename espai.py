@@ -90,6 +90,49 @@ def check_python_pkg(pkg, import_name=None):
         return False
 
 
+# ── Worker dep preloading ─────────────────────────────────────────────────────
+
+def _preinstall_worker_deps():
+    """
+    Mirrors the Docker entrypoint preload behaviour for native installs.
+    Two sources, both optional:
+      1. ESPAI_PREINSTALL env var — space or comma-separated package list.
+      2. worker-requirements.txt in USER_DIR — standard pip requirements format.
+    Packages are installed into the active venv (or system Python if no venv).
+    """
+    venv_dir = INSTALL_DIR / ".venv"
+    pip_candidates = [
+        venv_dir / "Scripts" / "pip.exe",   # Windows venv
+        venv_dir / "bin" / "pip",            # Linux/macOS venv
+    ]
+    pip_exe = next((str(p) for p in pip_candidates if p.exists()), "pip")
+
+    req_file = USER_DIR / "worker-requirements.txt"
+    if req_file.exists():
+        print(f"  [ESPAI] Pre-installing worker deps from {req_file} …")
+        result = subprocess.run(
+            [pip_exe, "install", "--quiet", "-r", str(req_file)],
+            check=False,
+        )
+        if result.returncode != 0:
+            warn(f"Pre-install from worker-requirements.txt failed (exit {result.returncode})")
+        else:
+            ok("Worker dep pre-install complete")
+
+    preinstall = os.environ.get("ESPAI_PREINSTALL", "").strip()
+    if preinstall:
+        pkgs = preinstall.replace(",", " ").split()
+        print(f"  [ESPAI] Pre-installing: {' '.join(pkgs)}")
+        result = subprocess.run(
+            [pip_exe, "install", "--quiet", *pkgs],
+            check=False,
+        )
+        if result.returncode != 0:
+            warn(f"ESPAI_PREINSTALL failed (exit {result.returncode})")
+        else:
+            ok("Worker dep pre-install complete")
+
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 def cmd_init(args):
@@ -269,6 +312,16 @@ def cmd_serve(args):
     # First-run data scaffold (frozen / bundled installs only)
     if getattr(sys, "frozen", False):
         _first_run_scaffold()
+
+    # Pre-install worker deps before uvicorn starts.
+    # Only runs when we are the final process — if a venv re-launch is about
+    # to happen below, skip here and let the re-launched process handle it so
+    # pip runs exactly once with the correct interpreter.
+    _will_relaunch = (
+        not getattr(sys, "frozen", False) and VENV_PYTHON != sys.executable
+    )
+    if not _will_relaunch:
+        _preinstall_worker_deps()
 
     dashboard_url = f"http://localhost:{port}/"
     print(f"\n  ESPAI Hub  v{'(dev)' if not getattr(sys, 'frozen', False) else 'bundled'}\n")
