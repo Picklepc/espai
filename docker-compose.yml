@@ -15,9 +15,9 @@ services:
     # Pull a pre-built image from the registry (recommended — Docker picks the
     # right arch automatically):
     #
-    #   ghcr.io/picklepc/espai:latest    hub + Agent Bench (Claude CLI)
-    #   ghcr.io/picklepc/espai:workers   + OpenCV, FFmpeg, numpy, scipy
-    #   ghcr.io/picklepc/espai:slim      hub only, smallest image
+    #   ghcr.io/picklepc/espai:latest    Claude CLI + PlatformIO (full dev)  ~1.1 GB
+    #   ghcr.io/picklepc/espai:workers   pre-packaged worker deps            ~750 MB
+    #   ghcr.io/picklepc/espai:slim      hub only, smallest image            ~350 MB
     #
     # Or build locally from source (useful during development):
     #   build: { context: ., dockerfile: hub/Dockerfile }
@@ -65,6 +65,10 @@ services:
       # ANTHROPIC_API_KEY: ""
       # ESPAI_AGENT_BENCH: "true"
 
+      # ── Git identity (used for project auto-commit and Agent Bench commits) ──
+      # GIT_USER_EMAIL: "espai@hub"
+      # GIT_USER_NAME: "ESPAI Hub"
+
     volumes:
       # User data is bind-mounted to the SSD so nothing important lives in
       # the container layer.  Set ESPAI_SSD_PATH in .env or edit paths below.
@@ -82,6 +86,11 @@ services:
       # - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/recipes:/app/recipes
       # - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/workers:/app/workers
       # - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/cards:/app/cards
+
+      # ── PlatformIO toolchain cache (:latest / dev image only) ───────────────
+      # The ESP32 toolchain (~600 MB) is downloaded by PIO on first use.
+      # Mount this so it survives container restarts without re-downloading.
+      # - ${ESPAI_SSD_PATH:-/mnt/sda1/espai}/platformio:/root/.platformio
 
     healthcheck:
       test: ["CMD", "python", "-c",

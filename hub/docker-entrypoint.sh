@@ -35,6 +35,12 @@ if [ -n "$ESPAI_PREINSTALL" ]; then
     echo "[ESPAI] Pre-install complete."
 fi
 
+# ── Git identity ─────────────────────────────────────────────────────────────
+# Required for project auto-commit and Agent Bench task commits.
+# Override via GIT_USER_EMAIL / GIT_USER_NAME env vars in docker-compose.
+git config --global user.email "${GIT_USER_EMAIL:-espai@hub}" 2>/dev/null || true
+git config --global user.name  "${GIT_USER_NAME:-ESPAI Hub}"  2>/dev/null || true
+
 # ── Start hub ─────────────────────────────────────────────────────────────────
 exec uvicorn hub.backend.main:app \
     --host 0.0.0.0 \

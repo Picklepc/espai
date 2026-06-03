@@ -144,9 +144,10 @@ jobs:
 
   # ── Docker multi-arch images (amd64 + arm64, three variants) ────────────────
   #
-  #   latest   — hub + Agent Bench (Claude CLI), no heavy worker deps  ~500 MB
-  #   workers  — hub + Agent Bench + OpenCV / FFmpeg / numpy           ~900 MB
-  #   slim     — hub only, smallest possible image                     ~350 MB
+  #   slim     — hub only, smallest image                              ~350 MB
+  #   workers  — + pre-packaged worker deps (OpenCV/FFmpeg/numpy)      ~750 MB
+  #   dev      — + Claude CLI + PlatformIO for full ESP32 dev          ~1.1 GB
+  #              floats as :latest; OTA-only deploy, no USB required
   #
   build-docker:
     runs-on: ubuntu-latest
@@ -157,21 +158,24 @@ jobs:
       fail-fast: false   # build all variants even if one fails
       matrix:
         include:
-          - variant: latest
-            install_claude: "true"
-            install_worker_deps: "false"
-            tag_suffix: ""
-            floating_tag: "latest"
-          - variant: workers
-            install_claude: "true"
-            install_worker_deps: "true"
-            tag_suffix: "-workers"
-            floating_tag: "workers"
           - variant: slim
             install_claude: "false"
             install_worker_deps: "false"
+            install_pio: "false"
             tag_suffix: "-slim"
             floating_tag: "slim"
+          - variant: workers
+            install_claude: "false"
+            install_worker_deps: "true"
+            install_pio: "false"
+            tag_suffix: "-workers"
+            floating_tag: "workers"
+          - variant: dev
+            install_claude: "true"
+            install_worker_deps: "false"
+            install_pio: "true"
+            tag_suffix: ""
+            floating_tag: "latest"
 
     steps:
       - uses: actions/checkout@v4
@@ -218,6 +222,7 @@ jobs:
           build-args: |
             INSTALL_CLAUDE=${{ matrix.install_claude }}
             INSTALL_WORKER_DEPS=${{ matrix.install_worker_deps }}
+            INSTALL_PIO=${{ matrix.install_pio }}
           # Each variant gets its own GHA cache scope to avoid cross-variant
           # cache pollution from differing build args.
           cache-from: type=gha,scope=docker-${{ matrix.variant }}
@@ -286,14 +291,15 @@ jobs:
 
             | Tag | Includes | Size |
             |---|---|---|
-            | `:${{ github.ref_name }}` / `:latest` | Hub + Agent Bench (Claude CLI) | ~500 MB |
-            | `:${{ github.ref_name }}-workers` / `:workers` | + OpenCV, FFmpeg, numpy, scipy | ~900 MB |
             | `:${{ github.ref_name }}-slim` / `:slim` | Hub only | ~350 MB |
+            | `:${{ github.ref_name }}-workers` / `:workers` | + OpenCV, FFmpeg, numpy, scipy | ~750 MB |
+            | `:${{ github.ref_name }}` / `:latest` | + Claude CLI + PlatformIO (full dev) | ~1.1 GB |
 
             ```bash
             # Docker auto-selects amd64 or arm64 — copy .env.example → .env first
-            docker pull ghcr.io/picklepc/espai:latest        # hub + agent bench
-            docker pull ghcr.io/picklepc/espai:workers       # + opencv / ffmpeg workers
+            docker pull ghcr.io/picklepc/espai:latest        # full dev (Claude + PIO)
+            docker pull ghcr.io/picklepc/espai:workers       # pre-packaged worker deps
+            docker pull ghcr.io/picklepc/espai:slim          # hub only
             docker compose up -d
             ```
 

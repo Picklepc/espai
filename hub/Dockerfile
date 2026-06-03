@@ -29,7 +29,7 @@ RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
 # Enables the bundled workers that require OpenCV, FFmpeg, numpy, or Pillow:
 #   opencv-motion-tagger   ffmpeg-compressor   (and any user workers using these)
 #
-# Pass --build-arg INSTALL_WORKER_DEPS=true to include.
+# Pass --build-arg INSTALL_WORKER_DEPS=true to include (:workers variant).
 # Adds ~400 MB; uses opencv-python-headless (no X11 required).
 ARG INSTALL_WORKER_DEPS=false
 RUN if [ "$INSTALL_WORKER_DEPS" = "true" ]; then \
@@ -43,6 +43,18 @@ RUN if [ "$INSTALL_WORKER_DEPS" = "true" ]; then \
             numpy \
             Pillow \
             scipy; \
+    fi
+
+# ── PlatformIO (optional) ─────────────────────────────────────────────────────
+# Enables in-container ESP32 firmware builds for the :dev image variant.
+# Pass --build-arg INSTALL_PIO=true to include.
+#
+# The ESP32 toolchain (~600 MB) is downloaded by PIO on first use — mount
+# ESPAI_SSD_PATH/platformio to /root/.platformio in docker-compose so the
+# toolchain survives container restarts and isn't re-downloaded each time.
+ARG INSTALL_PIO=false
+RUN if [ "$INSTALL_PIO" = "true" ]; then \
+        pip install --no-cache-dir platformio; \
     fi
 
 # ── Core Python dependencies ──────────────────────────────────────────────────
