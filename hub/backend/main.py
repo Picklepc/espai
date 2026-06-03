@@ -88,8 +88,18 @@ async def lifespan(app: FastAPI):
         conn.execute("UPDATE agent_tasks SET status='draft', updated=? WHERE status='running'", (now,))
         conn.execute("UPDATE agent_runs  SET status='failed', finished=? WHERE status='running'", (now,))
     start_runner()
-    mdns_manager.start(hub_port=PORT, on_node_found=_on_mdns_node_found)
-    mdns_manager.register_all_projects()   # advertise {slug}.local for each project
+    # Run blocking zeroconf calls in a thread so they don't deadlock uvicorn's
+    # event loop. On some network stacks (e.g. OpenWrt) register_service() times
+    # out inside the async context and raises EventLoopBlocked.
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: mdns_manager.start(hub_port=PORT, on_node_found=_on_mdns_node_found),
+        )
+        await loop.run_in_executor(None, mdns_manager.register_all_projects)
+    except Exception as exc:
+        log.warning("mDNS startup failed — auto-discovery disabled: %s", exc)
     mqtt_publisher.init()
     theme_scheduler.start()
     ws_broker.set_loop(asyncio.get_event_loop())

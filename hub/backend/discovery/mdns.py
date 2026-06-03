@@ -11,6 +11,8 @@ import logging
 import socket
 from typing import Callable
 
+from .. import __version__ as _HUB_VERSION
+
 log = logging.getLogger(__name__)
 
 try:
@@ -73,7 +75,7 @@ class MDNSManager:
             f"ESPAI Hub.{_HUB_SERVICE_TYPE}",
             addresses=[socket.inet_aton(self._local_ip)],
             port=hub_port,
-            properties={"version": "0.1.0"},
+            properties={"version": _HUB_VERSION},
         )
         self._zc.register_service(self._hub_info)
         log.info("mDNS: hub advertised as %s:%d", self._local_ip, hub_port)
