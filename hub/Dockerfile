@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nodejs \
         npm \
         curl \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Claude Code CLI (optional) ───────────────────────────────────────────────
