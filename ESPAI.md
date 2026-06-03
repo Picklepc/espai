@@ -105,6 +105,39 @@ const { devices } = await fetch(`/api/projects/${PROJECT_ID}/data/latest`).then(
 
 ---
 
+## Docker / Router Deployment
+
+When ESPAI runs in the `:latest` (dev) Docker image on an OpenWrt router:
+
+**Persistent paths** (bind-mounted to NVMe — survive restarts):
+```
+/app/data/              → hub database, logs
+/app/projects/          → all project workspaces (firmware, web, files)
+/app/firmware-catalog/  → uploaded firmware binaries
+/root/.platformio/      → PIO toolchain cache (if mounted — see compose file)
+```
+
+**Ephemeral paths** (container layer — lost on restart):
+```
+/app/workers/           → unless explicitly bind-mounted in compose
+/app/recipes/           → unless explicitly bind-mounted in compose
+/app/cards/             → unless explicitly bind-mounted in compose
+/usr/local/lib/python*/ → pip installs done at runtime
+```
+
+**Firmware deployment — OTA only.** USB is not available in this environment.
+Workflow for firmware changes:
+1. Edit `projects/{id}/firmware/` source files
+2. Run `pio run` in the project firmware directory (PIO is installed in `:latest`)
+3. The compiled `.bin` is in `.pio/build/{env}/firmware.bin`
+4. Import via hub UI: OTA → Upload Firmware, or use the project "⬆ Import to OTA" button
+5. Flash to device: Fleet → device → "⬆ Flash", or OTA catalog → push
+
+**Do not** `pip install` packages directly — they are lost on restart.
+Use `ESPAI_PREINSTALL` env var or mount a `worker-requirements.txt` instead.
+
+---
+
 ## Security Constraints
 
 - **No secrets in Git.** Credentials via build flags or NVS only.

@@ -2169,59 +2169,104 @@ document.getElementById("btnNewProject").onclick = () => {
 // ── Import existing PIO project ────────────────────────────────────────────
 
 document.getElementById("btnImportProject").onclick = () => {
-  openModal("Import PIO Project", `
+  openModal("Import Project ZIP", `
     <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
-      Copy an existing PlatformIO project folder into the hub. Build artifacts
-      (<code>.pio/</code>) and Git history are excluded automatically. After import,
-      use Agent Bench with the <strong>port-to-hub</strong> template to have the agent
-      analyse the firmware and mirror its features as hub workers — with automatic
-      ESP32 fallback when the hub is unreachable.
+      Upload a <strong>.zip</strong> of any PlatformIO or Arduino IDE project.
+      Build artifacts (<code>.pio/</code>, <code>node_modules/</code>) are stripped automatically.
+      After import a draft <strong>port-to-hub</strong> Agent Bench task is created — run it
+      to have Claude analyse the firmware and build out the ESPAI integration.
     </p>
     <div class="form-field">
-      <label data-tip="Full path to the PlatformIO project folder on this machine — the folder that contains platformio.ini">Project Folder Path</label>
-      <input type="text" id="importPath" placeholder="e.g. C:\\Users\\you\\Projects\\motion-sensor" style="font-family:monospace;font-size:12px">
+      <label data-tip="ZIP file containing your PlatformIO or Arduino project — up to 100 MB">Project ZIP</label>
+      <input type="file" id="importZip" accept=".zip" style="font-size:13px">
     </div>
     <div class="form-field">
-      <label data-tip="Name shown in the project list — defaults to the folder name if left blank">Project Name</label>
+      <label data-tip="Name shown in the project list — defaults to the ZIP filename if left blank">Project Name (optional)</label>
       <input type="text" id="importName" placeholder="e.g. Motion Sensor Node">
     </div>
     <div class="form-field">
       <label data-tip="Passed to the agent as context about what this project does">Description (optional)</label>
       <textarea id="importDesc" rows="2" placeholder="e.g. PIR motion sensor on GPIO 14 — reports to hub and blinks LED on trigger"></textarea>
     </div>
+    <div id="importProgress" style="display:none;margin-top:10px">
+      <div style="height:4px;background:var(--color-card-border);border-radius:2px;overflow:hidden">
+        <div id="importBar" style="height:100%;width:0%;background:var(--color-accent);transition:width .2s"></div>
+      </div>
+    </div>
     <p id="importStatus" style="font-size:12px;color:var(--color-accent);margin-top:8px;min-height:14px"></p>
   `, [
-    { label: "Import", cls: "btn btn-primary", action: async () => {
-      const source_path = document.getElementById("importPath").value.trim();
-      const rawName     = document.getElementById("importName").value.trim();
-      const description = document.getElementById("importDesc").value.trim();
-      const statusEl    = document.getElementById("importStatus");
+    { label: "Import & Create Task", cls: "btn btn-primary", action: async () => {
+      const zipInput  = document.getElementById("importZip");
+      const name      = document.getElementById("importName").value.trim();
+      const desc      = document.getElementById("importDesc").value.trim();
+      const statusEl  = document.getElementById("importStatus");
+      const progressEl = document.getElementById("importProgress");
+      const barEl     = document.getElementById("importBar");
 
-      if (!source_path) { if (statusEl) statusEl.textContent = "Enter a folder path."; return; }
+      if (!zipInput.files.length) {
+        if (statusEl) statusEl.textContent = "Choose a .zip file first.";
+        return;
+      }
+      const zipFile = zipInput.files[0];
 
-      // Derive name from last path component if not provided
-      const name = rawName || source_path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || "Imported Project";
+      const fd = new FormData();
+      fd.append("file", zipFile);
+      if (name) fd.append("name", name);
+      if (desc)  fd.append("description", desc);
 
-      if (statusEl) statusEl.textContent = "Copying files…";
+      if (statusEl) statusEl.textContent = "Uploading…";
+      if (progressEl) progressEl.style.display = "block";
+
       try {
-        const result = await api.projects.import({ source_path, name, description: description || null });
+        // XHR for upload progress
+        const result = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/api/projects/import-zip");
+          xhr.upload.onprogress = e => {
+            if (e.lengthComputable && barEl)
+              barEl.style.width = Math.round(e.loaded / e.total * 80) + "%";
+          };
+          xhr.onload = () => {
+            if (barEl) barEl.style.width = "100%";
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try { resolve(JSON.parse(xhr.responseText)); }
+              catch { reject(new Error("Invalid response")); }
+            } else {
+              try { reject(new Error(JSON.parse(xhr.responseText).detail || "Upload failed")); }
+              catch { reject(new Error(`HTTP ${xhr.status}`)); }
+            }
+          };
+          xhr.onerror = () => reject(new Error("Network error"));
+          xhr.send(fd);
+        });
+
         closeModal();
+        const typeLabel = result.has_platformio ? "PlatformIO" : result.has_arduino ? "Arduino IDE" : "Unknown";
+        const taskNote  = result.task_id
+          ? `<p style="font-size:13px;color:var(--color-text-muted);margin-top:10px;line-height:1.6">
+               A draft <strong>port-to-hub</strong> Agent Bench task has been created.
+               Open the project → Agent Tasks section to review and run it.
+             </p>`
+          : `<p style="font-size:12px;color:var(--color-warning);margin-top:10px">
+               Agent Bench is disabled — enable it in settings to run the porting task.
+             </p>`;
+
         openModal("Import Complete ✓", `
-          <p style="margin-bottom:10px">
-            <strong>${result.name}</strong> imported — ${result.file_count} files copied.
-            ${result.has_platformio ? '<span style="color:var(--color-success)">✓ PlatformIO project detected.</span>' : ""}
+          <p style="margin-bottom:6px">
+            <strong>${result.name}</strong> imported — ${result.file_count} files extracted.
           </p>
-          <p style="font-size:13px;color:var(--color-text-muted);line-height:1.6">
-            Next: open the project, link a device, then use
-            <strong>Agent Bench → port-to-hub</strong> to have the agent analyse the
-            firmware and wire up hub connectivity with standalone fallback.
+          <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:4px">
+            Project type: <strong>${typeLabel}</strong> &nbsp;·&nbsp;
+            Source preserved in <code>source/</code>
           </p>
+          ${taskNote}
         `, [{ label: "Open Project", cls: "btn btn-primary", action: async () => {
           closeModal();
           const p = await api.projects.get(result.id).catch(() => null);
           if (p) openProject(p); else loadProjects();
         }}]);
       } catch (err) {
+        if (progressEl) progressEl.style.display = "none";
         if (statusEl) statusEl.textContent = "Error: " + err.message;
       }
     }},

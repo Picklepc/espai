@@ -43,6 +43,11 @@ For full context see `docs/DESIGN_SPEC.md`.
 - **Never commit code that doesn't compile** — run `pio run` first.
 - **Never speculate about closed paths** — if a path is not in `allowed_paths`,
   ask rather than assume.
+- **Never attempt USB flashing** — in Docker/router deployments USB is not
+  available. The only firmware delivery path is OTA via the hub.
+- **Never `pip install` directly** — use `ESPAI_PREINSTALL` or the
+  `worker-requirements.txt` preload mechanism; packages installed directly
+  into the container layer are lost on restart.
 
 ---
 

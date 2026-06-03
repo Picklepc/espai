@@ -1,19 +1,122 @@
 schema: ESPAI.task-template.v1
 id: port-to-hub
-name: "Port to Hub"
-description: "Analyse an imported ESP32 project, mirror its endpoints as hub workers, and add hub connectivity to the firmware with ESP32 fallback when the hub is unreachable."
-# Paths are inferred from project context: projects/{id}/firmware/ + projects/{id}/workers/ + workers/
-default_allowed_paths: []
+name: "Port Existing Project to ESPAI"
+description: >
+  Analyse an imported ESP32/Arduino project (source/ directory) and port it to
+  the ESPAI platform — moving hub-appropriate features off the ESP32 while keeping
+  the firmware lean and self-contained with offline fallback.
+
+default_allowed_paths:
+  - "projects/{project_id}/"
+  - "workers/"
+  - "recipes/"
+  - "cards/"
+
 acceptance_criteria_template:
-  - "Firmware compiles without errors"
-  - "Hub receives device events within 5 seconds of trigger"
-  - "ESP32 falls back to its local web server when hub is unreachable (10 s timeout)"
-  - "No existing hub functionality regressed"
-  - "No hardcoded credentials, IPs, or MAC addresses"
+  - "All files in source/ read and findings summarised in notes.md"
+  - "Hub workers created for processing that moved off the ESP32"
+  - "Dashboard cards created for data the firmware previously served locally"
+  - "Firmware updated to use ESPAI hub checkin pattern (fire-and-forget)"
+  - "Firmware falls back to AP mode and local operation when hub is unreachable"
+  - "No hardcoded credentials, IPs, or MAC addresses remain"
+  - "pio run passes with no errors"
+
 checks:
   - platformio_build
   - espai_validate
+
+# ── Porting workflow ──────────────────────────────────────────────────────────
+#
+# Claude receives this as part of the system prompt for port-to-hub tasks.
+prompt_prefix: |
+  You are porting an existing ESP32 project to the ESPAI platform.
+  The original source is preserved in source/ — do not modify it.
+  Work in projects/{project_id}/firmware/, projects/{project_id}/workers/,
+  and the shared workers/, recipes/, cards/ directories.
+
+  ## ESPAI three-zone model
+
+  | Zone      | Runs on   | Responsibility                                      |
+  |-----------|-----------|-----------------------------------------------------|
+  | Firmware  | ESP32     | Sensors, actuators, real-time control, offline loop |
+  | Workers   | Hub (py)  | Processing, ML, file I/O, event generation          |
+  | Dashboard | Hub (JS)  | Cards, charts, controls, project web app            |
+
+  ## Porting decision guide
+
+  Move TO the hub (create a worker) when the firmware:
+  - Serves an HTTP web server with routes (port 80 web app)
+  - Does heavy computation: FFT, image processing, ML inference
+  - Formats or aggregates data before sending it somewhere
+  - Writes files (logs, captures, databases)
+  - Calls external APIs or services
+
+  Keep ON the ESP32 when:
+  - The operation must happen in real-time (< 10 ms response)
+  - The device must work offline (sensor loop, actuator control)
+  - It requires direct hardware access (GPIO, I2C, SPI, BLE, ADC)
+
+  ## Step-by-step process
+
+  1. READ every file in source/ — understand the full project
+  2. WRITE a porting plan to notes.md:
+     - What the project does
+     - What stays on the ESP32 and why
+     - What moves to the hub and how
+     - What new workers / cards / recipes will be created
+  3. CREATE hub workers for moved functionality
+  4. CREATE ESPAI cards for any sensor dashboards or controls
+  5. CREATE a recipe if the project implements a reusable pipeline
+  6. UPDATE firmware to:
+     - Remove web server routes that moved to the hub
+     - Add hub checkin calls (fire-and-forget — never block the loop)
+     - Keep the AP fallback mode (ESPAI-{id} hotspot on WiFi fail)
+     - Keep the local sensor loop fully functional offline
+  7. RUN pio run and fix all errors before finishing
+
+  ## Hub checkin pattern (add to firmware)
+
+  ```cpp
+  // Fire-and-forget — never block on hub response
+  void checkinHub(float value) {
+      if (WiFi.status() != WL_CONNECTED) return;
+      HTTPClient http;
+      http.begin("http://" + String(HUB_IP) + ":7888/api/projects/" +
+                 String(HUB_PROJECT_ID) + "/data");
+      http.addHeader("Content-Type", "application/json");
+      http.addHeader("X-Device-ID", nodeId);
+      http.POST("{\"value\":" + String(value, 2) + "}");
+      http.end();
+  }
+  ```
+
+  ## Hub worker skeleton
+
+  ```python
+  # workers/{name}/main.py
+  import json, sys
+
+  def run(inputs: dict) -> dict:
+      # inputs come from the job queue payload
+      value = inputs.get("value", 0)
+      # ... process ...
+      return {"result": value, "events": [{"type": "sensor.reading", "data": {"value": value}}]}
+
+  if __name__ == "__main__":
+      print(json.dumps(run(json.loads(sys.argv[1] if len(sys.argv) > 1 else "{}"))))
+  ```
+
+  ## Constraints (Docker / router deployment)
+
+  - Firmware is deployed via OTA only — no USB flashing available
+  - Import the compiled .bin via hub UI after pio run succeeds
+  - Do not pip install packages directly — add to worker requirements.txt
+  - Persistent paths: projects/, data/, firmware-catalog/ (bind-mounted)
+  - Ephemeral paths: anything else in the container layer
+
 suggested_context_questions:
-  - "Which device endpoints should be mirrored as hub workers?"
-  - "What timeout should trigger the ESP32 fallback mode?"
-  - "Should the hub worker store readings in the events table or a separate store?"
+  - "What hardware does this project use (sensors, actuators, peripherals)?"
+  - "Which ESP32 board variant is this targeting?"
+  - "Should the hub worker store readings in the events table or project data store?"
+  - "Are there any external APIs or services the firmware calls that should move to a worker?"
+  - "What is the expected checkin frequency (every N seconds)?"

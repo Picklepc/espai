@@ -1,14 +1,17 @@
 ﻿import hashlib
+import io
 import json
 import re
 import secrets
 import shutil
+import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import mimetypes
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
@@ -1090,3 +1093,173 @@ def serve_project_page(project_id: str, file_path: str = "index.html"):
 
     media_type, _ = mimetypes.guess_type(str(target))
     return FileResponse(str(target), media_type=media_type or "application/octet-stream")
+
+
+# ── ZIP import ────────────────────────────────────────────────────────────────
+
+_ZIP_MAX_BYTES = 100 * 1024 * 1024          # 100 MB hard limit
+_ZIP_SKIP_PREFIXES = {                       # build artifacts / caches to drop
+    ".pio/", "__pycache__/", ".git/",
+    "node_modules/", ".venv/", "venv/",
+    "build/", "dist/",
+}
+_PORT_CRITERIA = [
+    "All source files in source/ have been read and a porting plan summarised in notes.md",
+    "Hub workers created for any processing that moved off the ESP32",
+    "Dashboard cards created for sensor data the firmware previously served locally",
+    "Firmware updated to use ESPAI hub checkin pattern (fire-and-forget HTTP POST)",
+    "Firmware falls back to AP mode and local operation when hub is unreachable",
+    "No hardcoded credentials, IPs, or MAC addresses remain in source",
+    "pio run passes with no errors in projects/{id}/firmware/",
+]
+
+
+@router.post("/import-zip")
+async def import_project_from_zip(
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    description: str = Form(""),
+):
+    """
+    Create a new ESPAI project from an uploaded ZIP file.
+
+    Accepts PlatformIO, Arduino IDE, or any ESP32 project zip.  Extracts the
+    source to projects/{id}/source/, scaffolds the full ESPAI project structure
+    alongside it, and auto-creates a draft 'port-to-hub' Agent Bench task so
+    Claude can analyse and port the project on demand.
+    """
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(400, "Only .zip files are accepted")
+
+    content = await file.read(_ZIP_MAX_BYTES + 1)
+    if len(content) > _ZIP_MAX_BYTES:
+        raise HTTPException(413, "ZIP must be under 100 MB")
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "File is not a valid ZIP archive")
+
+    # Derive project name from zip filename when not supplied
+    zip_stem = Path(file.filename or "imported").stem
+    project_name = name.strip() or zip_stem or "Imported Project"
+    desc = description.strip() or None
+
+    # Create project in DB and scaffold directories
+    project_id = secrets.token_hex(6)
+    slug = _to_hostname(project_name)
+    now = _now()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO projects (id, name, description, devices, slug, created) VALUES (?,?,?,?,?,?)",
+            (project_id, project_name, desc or "", json.dumps([]), slug, now),
+        )
+    _create_project_folder(project_id, project_name, desc)
+
+    # Extract ZIP → projects/{id}/source/
+    proj_dir  = PROJECTS_DIR / project_id
+    source_dir = proj_dir / "source"
+    source_dir.mkdir(exist_ok=True)
+
+    # Persist the original ZIP for reference
+    (proj_dir / "source.zip").write_bytes(content)
+
+    # Detect whether the ZIP has a single top-level folder to strip
+    names = zf.namelist()
+    top_prefix = ""
+    if names:
+        first = names[0].split("/")[0]
+        if first and all(n == first or n.startswith(first + "/") for n in names):
+            top_prefix = first + "/"
+
+    file_count   = 0
+    has_pio      = False
+    has_arduino  = False
+    source_root  = str(source_dir.resolve())
+
+    for member in zf.infolist():
+        rel = member.filename
+        if top_prefix:
+            rel = rel[len(top_prefix):]
+        if not rel:
+            continue
+        # Drop build artifacts / caches
+        if any(rel.startswith(p) or ("/" + p) in rel for p in _ZIP_SKIP_PREFIXES):
+            continue
+        # Guard against path traversal
+        dest = (source_dir / rel).resolve()
+        if not str(dest).startswith(source_root):
+            continue
+        if member.is_dir():
+            dest.mkdir(parents=True, exist_ok=True)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(zf.read(member.filename))
+            file_count += 1
+            if rel in ("platformio.ini",) or rel.endswith("/platformio.ini"):
+                has_pio = True
+            if rel.endswith(".ino"):
+                has_arduino = True
+
+    zf.close()
+
+    project_type = "platformio" if has_pio else "arduino" if has_arduino else "unknown"
+
+    # Register mDNS advertisement
+    _mdns.register_project(slug, project_id)
+
+    # Auto-create draft porting task (best-effort — Agent Bench may be disabled)
+    task_id = None
+    try:
+        task_id = str(uuid.uuid4())
+        allowed = [f"projects/{project_id}/", "workers/", "recipes/", "cards/"]
+        task_desc = (
+            f"Imported from **{file.filename}** — detected as: **{project_type}**.\n\n"
+            "## Porting instructions\n\n"
+            "1. **Read** all files in `source/` — understand what the project does\n"
+            "2. **Summarise** your findings in `notes.md` (sensor types, endpoints, "
+            "web server routes, external services, heavy processing)\n"
+            "3. **Port web server routes** → hub workers in `projects/{id}/workers/` "
+            "or shared `workers/`\n"
+            "4. **Port sensor dashboards** → ESPAI cards in `cards/`\n"
+            "5. **Port pipelines** → ESPAI recipes in `recipes/`\n"
+            "6. **Update firmware** in `projects/{id}/firmware/` to replace local "
+            "web server with hub checkin calls — keep AP fallback for offline use\n"
+            "7. **Run `pio run`** in `projects/{id}/firmware/` and fix all errors\n"
+            "8. **Never hardcode** credentials, IPs, or MAC addresses\n"
+        )
+        with get_conn() as conn:
+            conn.execute(
+                """INSERT INTO agent_tasks
+                   (id, project_id, title, description, template, status,
+                    allowed_paths, acceptance_criteria, context,
+                    context_type, context_id, parent_task_id,
+                    lane, adapter_id, created, updated)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    task_id, project_id,
+                    f"Port '{project_name}' to ESPAI",
+                    task_desc,
+                    "port-to-hub", "draft",
+                    json.dumps(allowed),
+                    json.dumps(_PORT_CRITERIA),
+                    None,
+                    "project", project_id, None,
+                    "dev", None,
+                    now, now,
+                ),
+            )
+    except Exception:
+        task_id = None  # agent bench disabled or DB error — not fatal
+
+    return {
+        "id":            project_id,
+        "name":          project_name,
+        "slug":          slug,
+        "created":       now,
+        "file_count":    file_count,
+        "has_platformio": has_pio,
+        "has_arduino":   has_arduino,
+        "project_type":  project_type,
+        "task_id":       task_id,
+    }
