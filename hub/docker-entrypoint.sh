@@ -35,6 +35,18 @@ if [ -n "$ESPAI_PREINSTALL" ]; then
     echo "[ESPAI] Pre-install complete."
 fi
 
+# ── Network share permissions ─────────────────────────────────────────────────
+# Docker runs as root, so bind-mounted directories are root-owned.
+# Samba/NFS on the host runs as a different user and can't delete root files.
+# Setting g+rwX,o+rwX makes the share fully writable from the host.
+# Opt out by setting ESPAI_SKIP_SHARE_CHMOD=1 in docker-compose environment.
+if [ "${ESPAI_SKIP_SHARE_CHMOD:-0}" != "1" ]; then
+    for d in /app/data /app/projects /app/firmware-catalog \
+              /app/workers /app/recipes /app/cards; do
+        [ -d "$d" ] && chmod -R g+rwX,o+rwX "$d" 2>/dev/null || true
+    done
+fi
+
 # ── Git identity ─────────────────────────────────────────────────────────────
 # Required for project auto-commit and Agent Bench task commits.
 # Override via GIT_USER_EMAIL / GIT_USER_NAME env vars in docker-compose.
