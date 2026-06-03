@@ -1034,10 +1034,15 @@ def run_task(task_id: str, data: RunCreate):
         proc = None
         try:
             if adapter == "claude-code-cli":
-                # --print: non-interactive output; --dangerously-skip-permissions:
-                # execute file-editing tools without confirmation prompts.
-                # Prompt is piped via stdin; cwd is repo root so relative paths work.
-                args = [cli_bin, "--print", "--dangerously-skip-permissions"]
+                # --print: non-interactive, prompt via stdin.
+                # --dangerously-skip-permissions: skip tool confirmations — rejected
+                # when running as root (Docker).  In that case the image bakes in
+                # /root/.claude/settings.json which pre-approves all required tools.
+                import os as _os
+                _root = hasattr(_os, "getuid") and _os.getuid() == 0
+                args = [cli_bin, "--print"]
+                if not _root:
+                    args.append("--dangerously-skip-permissions")
                 proc = subprocess.Popen(
                     args,
                     stdin=subprocess.PIPE,

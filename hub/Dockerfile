@@ -23,6 +23,9 @@ ARG INSTALL_CLAUDE=true
 RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
         npm install -g @anthropic-ai/claude-code --no-audit --no-fund \
         || echo "WARNING: Claude Code CLI install failed — Agent Bench will not work"; \
+        mkdir -p /root/.claude; \
+        printf '{\n  "permissions": {\n    "allow": [\n      "Bash(*)",\n      "Read(*)",\n      "Write(*)",\n      "Edit(*)",\n      "Glob(*)",\n      "Grep(*)",\n      "WebFetch(*)",\n      "WebSearch(*)",\n      "TodoWrite(*)",\n      "TodoRead(*)"\n    ]\n  }\n}\n' \
+        > /root/.claude/settings.json; \
     fi
 
 # ── Worker dependencies (optional) ───────────────────────────────────────────
