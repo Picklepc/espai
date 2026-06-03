@@ -481,6 +481,24 @@ class ConfigUpdate(BaseModel):
     allow_dev_device_deploy: bool = False
     require_human_review: bool = True
     allowed_adapters: list[str] = ["manual"]
+    claude_tool_mode: str = "full"   # "full" | "safe"
+
+
+# Tools pre-approved in /root/.claude/settings.json for each mode.
+# "full"  — shell + web + file tools (enables pio, wget, jadx, decompilation, etc.)
+# "safe"  — file tools only, no shell execution or network access
+_CLAUDE_TOOL_MODES: dict[str, list[str]] = {
+    "full": [
+        "Bash(*)", "Read(*)", "Write(*)", "Edit(*)",
+        "Glob(*)", "Grep(*)", "WebFetch(*)", "WebSearch(*)",
+        "TodoWrite(*)", "TodoRead(*)",
+    ],
+    "safe": [
+        "Read(*)", "Write(*)", "Edit(*)",
+        "Glob(*)", "Grep(*)",
+        "TodoWrite(*)", "TodoRead(*)",
+    ],
+}
 
 
 # ── Config endpoints ──────────────────────────────────────────────────────────
@@ -491,12 +509,16 @@ def get_config():
     allow_dev = os.environ.get("ESPAI_AGENT_ALLOW_DEV_DEPLOY", "false").lower() == "true"
     require_review = os.environ.get("ESPAI_AGENT_REQUIRE_REVIEW", "true").lower() != "false"
     allowed = os.environ.get("ESPAI_AGENT_ADAPTERS", "manual").split(",")
+    tool_mode = os.environ.get("ESPAI_CLAUDE_TOOL_MODE", "full")
+    if tool_mode not in _CLAUDE_TOOL_MODES:
+        tool_mode = "full"
     return {
         "enabled": enabled,
         "allow_dev_device_deploy": allow_dev,
         "require_human_review": require_review,
         "allowed_adapters": [a.strip() for a in allowed],
         "available_adapters": list(_KNOWN_ADAPTERS.keys()),
+        "claude_tool_mode": tool_mode,
     }
 
 
@@ -506,11 +528,13 @@ def update_config(data: ConfigUpdate):
     env_path = ROOT / ".env"
     lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
 
+    tool_mode = data.claude_tool_mode if data.claude_tool_mode in _CLAUDE_TOOL_MODES else "full"
     updates = {
         "ESPAI_AGENT_BENCH": "true" if data.enabled else "false",
         "ESPAI_AGENT_ALLOW_DEV_DEPLOY": "true" if data.allow_dev_device_deploy else "false",
         "ESPAI_AGENT_REQUIRE_REVIEW": "true" if data.require_human_review else "false",
         "ESPAI_AGENT_ADAPTERS": ",".join(data.allowed_adapters),
+        "ESPAI_CLAUDE_TOOL_MODE": tool_mode,
     }
 
     new_lines = []
@@ -542,6 +566,20 @@ def update_config(data: ConfigUpdate):
 
 # ── Doctor endpoint ───────────────────────────────────────────────────────────
 
+def _claude_authenticated() -> bool:
+    """Check whether Claude Code CLI has stored credentials."""
+    import pathlib
+    home = pathlib.Path.home()
+    candidates = [
+        home / ".claude" / ".credentials.json",
+        home / ".claude" / "credentials.json",
+        home / ".config" / "claude" / "credentials.json",
+        # Windows AppData path
+        pathlib.Path(os.environ.get("APPDATA", "")) / "Claude" / "credentials.json",
+    ]
+    return any(p.exists() and p.stat().st_size > 10 for p in candidates)
+
+
 @router.get("/doctor")
 def agent_doctor():
     tools = {
@@ -553,6 +591,8 @@ def agent_doctor():
         "claude":    _detect_tool("claude",    "--version"),
         "node":      _detect_tool("node",      "--version"),
     }
+    claude_installed = tools["claude"]["found"]
+    claude_authed    = claude_installed and _claude_authenticated()
     adapters_ready = {
         "manual": {
             "ready": True,
@@ -563,8 +603,10 @@ def agent_doctor():
             "install_hint": _KNOWN_ADAPTERS["codex-cli"]["install_hint"],
         },
         "claude-code-cli": {
-            "ready": tools["claude"]["found"],
+            "ready": claude_installed and claude_authed,
             "install_hint": _KNOWN_ADAPTERS["claude-code-cli"]["install_hint"],
+            "authenticated": claude_authed,
+            "installed": claude_installed,
         },
     }
     return {
@@ -1034,11 +1076,21 @@ def run_task(task_id: str, data: RunCreate):
         proc = None
         try:
             if adapter == "claude-code-cli":
-                # --print: non-interactive, prompt via stdin.
-                # --dangerously-skip-permissions: skip tool confirmations — rejected
-                # when running as root (Docker).  In that case the image bakes in
-                # /root/.claude/settings.json which pre-approves all required tools.
-                import os as _os
+                # Write /root/.claude/settings.json fresh from the current tool
+                # mode setting so permissions are always in sync with the UI toggle.
+                import os as _os, json as _json, pathlib as _pl
+                _tool_mode = _os.environ.get("ESPAI_CLAUDE_TOOL_MODE", "full")
+                if _tool_mode not in _CLAUDE_TOOL_MODES:
+                    _tool_mode = "full"
+                _claude_dir = _pl.Path(_os.path.expanduser("~")) / ".claude"
+                _claude_dir.mkdir(parents=True, exist_ok=True)
+                (_claude_dir / "settings.json").write_text(
+                    _json.dumps({"permissions": {"allow": _CLAUDE_TOOL_MODES[_tool_mode]}},
+                                indent=2),
+                    encoding="utf-8",
+                )
+                # --dangerously-skip-permissions is rejected when running as root.
+                # The settings.json above handles tool approval instead.
                 _root = hasattr(_os, "getuid") and _os.getuid() == 0
                 args = [cli_bin, "--print"]
                 if not _root:

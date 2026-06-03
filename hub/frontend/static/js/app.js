@@ -4265,22 +4265,70 @@ function _abWireEvents() {
     }).join("");
 
     const adapterRows = Object.entries(d.adapters_ready || {}).map(([k, v]) => {
-      const ready = (typeof v === "object") ? v.ready : v;
-      const hint  = !ready && v?.install_hint
-        ? `<div class="doctor-hint"><code>${v.install_hint}</code></div>` : "";
+      const info      = typeof v === "object" ? v : { ready: v };
+      const installed = info.installed ?? info.ready ?? false;
+      const authed    = info.authenticated;  // undefined for non-claude adapters
+      const ready     = info.ready ?? false;
+      const hint      = !installed && info.install_hint
+        ? `<div class="doctor-hint"><code>${info.install_hint}</code></div>` : "";
+
+      let valText, valColor;
+      if (!installed) {
+        valText = "not installed"; valColor = "var(--color-danger)";
+      } else if (authed === false) {
+        valText = "not logged in"; valColor = "var(--color-warning)";
+      } else {
+        valText = "ready"; valColor = "var(--color-success)";
+      }
+
       return `<div class="doctor-row" data-tool="${k}">
         <span class="doctor-icon ${ready ? "ok" : "miss"}">${ready ? "✓" : "✗"}</span>
         <span class="doctor-name">${k}</span>
-        <span class="doctor-val" style="color:${ready ? "var(--color-success)" : "var(--color-danger)"}">${ready ? "ready" : "not installed"}</span>
+        <span class="doctor-val" style="color:${valColor}">${valText}</span>
       </div>${hint}`;
     }).join("");
+
+    const claudeInfo    = d.adapters_ready?.["claude-code-cli"] || {};
+    const claudeInstalled = claudeInfo.installed ?? claudeInfo.ready ?? false;
+    const claudeAuthed    = claudeInfo.authenticated ?? false;
+
+    const authNote = claudeInstalled && !claudeAuthed
+      ? `<p style="font-size:12px;color:var(--color-warning);margin-top:14px;line-height:1.6">
+           ⚠ Claude Code is installed but <strong>not logged in</strong>.
+           Click <strong>Login to Claude</strong> below — on Docker/headless, copy the URL shown and open it in your browser.
+         </p>`
+      : "";
 
     openModal("Agent Bench Doctor", `
       <p class="doctor-section-label">Tools</p>
       ${toolRows}
       <p class="doctor-section-label" style="margin-top:16px">Adapters</p>
       ${adapterRows}
-    `, [{ label: "Close", cls: "btn btn-secondary", action: () => { _hideDoctorTooltip(); closeModal(); } }]);
+      ${authNote}
+    `, [
+      ...(claudeInstalled ? [{
+        label: claudeAuthed ? "Re-login to Claude" : "Login to Claude",
+        cls: "btn btn-secondary",
+        tip: claudeAuthed
+          ? "Re-authenticate Claude Code CLI — opens a terminal with 'claude login'"
+          : "Authenticate Claude Code CLI — opens a terminal with 'claude login'; on Docker copy the URL shown into your browser",
+        action: () => {
+          _hideDoctorTooltip(); closeModal();
+          showView("terminal");
+          setTimeout(async () => {
+            try {
+              const s = await api.terminal.create({ title: "Claude Login" });
+              _termAttach(s.id, s.title);
+              setTimeout(() => {
+                if (_termSessions[s.id]?.ws?.readyState === 1)
+                  _termSessions[s.id].ws.send("claude login\n");
+              }, 800);
+            } catch (_) {}
+          }, 150);
+        }
+      }] : []),
+      { label: "Close", cls: "btn btn-secondary", action: () => { _hideDoctorTooltip(); closeModal(); } },
+    ]);
 
     // Wire tooltip hover on all doctor rows
     document.querySelectorAll(".doctor-row[data-tool]").forEach(row => {
@@ -4322,23 +4370,48 @@ function _abWireEvents() {
   document.getElementById("btnAbDoctor").onclick = _runDoctor;
 
   document.getElementById("btnAbSettings").onclick = async () => {
-    let cfg = { enabled: true, allow_dev_device_deploy: false, require_human_review: true, allowed_adapters: ["manual"] };
+    let cfg = { enabled: true, allow_dev_device_deploy: false, require_human_review: true, allowed_adapters: ["manual"], claude_tool_mode: "full" };
     try { cfg = await api.agentBench.getConfig(); } catch (_) {}
+    const mode = cfg.claude_tool_mode || "full";
     openModal("Agent Bench Settings", `
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
-        <input type="checkbox" id="abSetEnabled" ${cfg.enabled ? "checked" : ""}> Enabled
+        <input type="checkbox" id="abSetEnabled" ${cfg.enabled ? "checked" : ""}
+          data-tip="Enable or disable the Agent Bench feature entirely"> Enabled
       </label>
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
-        <input type="checkbox" id="abSetReview" ${cfg.require_human_review ? "checked" : ""}> Require human review before merge
+        <input type="checkbox" id="abSetReview" ${cfg.require_human_review ? "checked" : ""}
+          data-tip="Require you to approve the diff before any changes are applied"> Require human review before merge
       </label>
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
-        <input type="checkbox" id="abSetDevDeploy" ${cfg.allow_dev_device_deploy ? "checked" : ""}> Allow dev device deployment
+        <input type="checkbox" id="abSetDevDeploy" ${cfg.allow_dev_device_deploy ? "checked" : ""}
+          data-tip="Allow agent tasks to push firmware to dev-lane devices"> Allow dev device deployment
       </label>
       <div class="form-field">
-        <label>Allowed adapters (comma-separated)</label>
+        <label data-tip="Comma-separated list of adapter IDs Claude can use — e.g. manual, claude-code-cli">Allowed adapters</label>
         <input type="text" id="abSetAdapters" value="${(cfg.allowed_adapters || ["manual"]).join(",")}">
       </div>
-      <p style="font-size:11px;color:var(--color-text-muted);margin-top:6px">Restart hub after saving for changes to take full effect.</p>
+      <div class="form-field" style="margin-top:14px">
+        <label data-tip="Controls which tools Claude Code can use without asking for permission">Claude tool access</label>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+          <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer">
+            <input type="radio" name="abToolMode" value="full" ${mode === "full" ? "checked" : ""}
+              style="margin-top:2px">
+            <span>
+              <strong>Full</strong> — shell commands, web access, file operations<br>
+              <span style="font-size:11px;color:var(--color-text-muted)">Enables pio build, APK download/decompile, wget, pip, and other shell tools</span>
+            </span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer">
+            <input type="radio" name="abToolMode" value="safe" ${mode === "safe" ? "checked" : ""}
+              style="margin-top:2px">
+            <span>
+              <strong>Safe</strong> — file read/write only, no shell or network<br>
+              <span style="font-size:11px;color:var(--color-text-muted)">Claude can edit code but cannot run commands or download files</span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <p style="font-size:11px;color:var(--color-text-muted);margin-top:10px">Changes take effect on the next task run — no restart needed.</p>
     `, [
       { label: "Save", cls: "btn btn-primary", action: async () => {
         const enabled = document.getElementById("abSetEnabled").checked;
@@ -4346,8 +4419,9 @@ function _abWireEvents() {
         const allow_dev_device_deploy = document.getElementById("abSetDevDeploy").checked;
         const adaptersRaw = document.getElementById("abSetAdapters").value.trim();
         const allowed_adapters = adaptersRaw ? adaptersRaw.split(",").map(s => s.trim()).filter(Boolean) : ["manual"];
+        const claude_tool_mode = document.querySelector('input[name="abToolMode"]:checked')?.value || "full";
         try {
-          await api.agentBench.updateConfig({ enabled, require_human_review, allow_dev_device_deploy, allowed_adapters });
+          await api.agentBench.updateConfig({ enabled, require_human_review, allow_dev_device_deploy, allowed_adapters, claude_tool_mode });
           closeModal();
           await loadAgentBench();
         } catch (err) { alert("Error: " + err.message); }
