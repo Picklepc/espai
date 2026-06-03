@@ -12,6 +12,7 @@ import socket
 from typing import Callable
 
 from .. import __version__ as _HUB_VERSION
+from ..config import MDNS_ENABLED
 
 log = logging.getLogger(__name__)
 
@@ -64,12 +65,20 @@ class MDNSManager:
         self._project_services: dict[str, "ServiceInfo"] = {}
 
     def start(self, hub_port: int, on_node_found: Callable[[dict], None]) -> None:
-        if not _ZEROCONF_OK:
+        if not _ZEROCONF_OK or not MDNS_ENABLED:
+            if not MDNS_ENABLED:
+                log.info("mDNS: disabled via ESPAI_MDNS=0 — use manual IP add or subnet scan")
             return
-        self._zc = Zeroconf()
+        try:
+            self._zc = Zeroconf()
+        except Exception as exc:
+            log.warning("mDNS: failed to initialise zeroconf: %s", exc)
+            return
         self._hub_port = hub_port
-        hostname = socket.gethostname()
-        self._local_ip = socket.gethostbyname(hostname)
+        try:
+            self._local_ip = socket.gethostbyname(socket.gethostname())
+        except socket.gaierror:
+            self._local_ip = "127.0.0.1"
         self._hub_info = ServiceInfo(
             _HUB_SERVICE_TYPE,
             f"ESPAI Hub.{_HUB_SERVICE_TYPE}",
@@ -77,12 +86,18 @@ class MDNSManager:
             port=hub_port,
             properties={"version": _HUB_VERSION},
         )
-        self._zc.register_service(self._hub_info)
-        log.info("mDNS: hub advertised as %s:%d", self._local_ip, hub_port)
-        self._browser = ServiceBrowser(
-            self._zc, _NODE_SERVICE_TYPE,
-            NodeDiscoveryListener(on_node_found, self._zc),
-        )
+        try:
+            self._zc.register_service(self._hub_info)
+            log.info("mDNS: hub advertised as %s:%d", self._local_ip, hub_port)
+        except Exception as exc:
+            log.warning("mDNS: hub advertisement failed (discovery degraded): %s", exc)
+        try:
+            self._browser = ServiceBrowser(
+                self._zc, _NODE_SERVICE_TYPE,
+                NodeDiscoveryListener(on_node_found, self._zc),
+            )
+        except Exception as exc:
+            log.warning("mDNS: node browser failed: %s", exc)
 
     def register_project(self, slug: str, project_id: str) -> None:
         """

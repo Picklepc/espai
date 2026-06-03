@@ -37,6 +37,10 @@ services:
       ESPAI_HOST: "0.0.0.0"
       ESPAI_PORT: "7888"
       ESPAI_DEBUG: "0"
+      # mDNS advertisement can fail on some OpenWrt/router Docker builds due to
+      # multicast restrictions.  Set to "0" to disable it — manual IP add and
+      # subnet scan still work.  Remove or set to "1" on normal Linux hosts.
+      ESPAI_MDNS: "0"
 
       # ── Worker dependency preloading ────────────────────────────────────────
       # Packages listed here are pip-installed on every container start before

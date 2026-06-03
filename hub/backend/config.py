@@ -42,3 +42,7 @@ HOST = os.environ.get("ESPAI_HOST", "0.0.0.0")
 PORT = int(os.environ.get("ESPAI_PORT", "7888"))
 DEBUG = os.environ.get("ESPAI_DEBUG", "0") == "1"
 ACTIVE_THEME = os.environ.get("ESPAI_THEME", "retro")
+# Set ESPAI_MDNS=0 to disable mDNS advertisement and discovery.
+# Recommended for Docker on OpenWrt — multicast is unreliable in that
+# environment; manual IP add and subnet scan still work without it.
+MDNS_ENABLED = os.environ.get("ESPAI_MDNS", "1") != "0"
