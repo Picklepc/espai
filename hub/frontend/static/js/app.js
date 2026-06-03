@@ -2247,9 +2247,18 @@ document.getElementById("btnImportProject").onclick = () => {
                A draft <strong>port-to-hub</strong> Agent Bench task has been created.
                Open the project → Agent Tasks section to review and run it.
              </p>`
-          : `<p style="font-size:12px;color:var(--color-warning);margin-top:10px">
-               Agent Bench is disabled — enable it in settings to run the porting task.
-             </p>`;
+          : `<div style="margin-top:12px;font-size:12px;line-height:1.7">
+               <p style="color:var(--color-text-muted);margin-bottom:6px">
+                 Agent Bench is disabled. Manual porting steps:
+               </p>
+               <ol style="margin:0;padding-left:18px;color:var(--color-text-muted)">
+                 <li>Open the project → browse <code>source/</code> in the file editor</li>
+                 <li>Create hub <strong>Workers</strong> for any processing that ran on the ESP32</li>
+                 <li>Create <strong>Cards</strong> for sensor dashboards the firmware served locally</li>
+                 <li>Edit <code>firmware/src/main.cpp</code> — add hub checkin calls, remove local web server</li>
+                 <li>Build with <code>pio run</code> → import the <code>.bin</code> via OTA → flash to device</li>
+               </ol>
+             </div>`;
 
         openModal("Import Complete ✓", `
           <p style="margin-bottom:6px">
