@@ -2780,6 +2780,20 @@ async function loadWorkers() {
       btnRow.appendChild(stopBtn);
       btnRow.appendChild(restartBtn);
 
+      // Startup toggle for service workers
+      const startupBtn = el("button", "btn btn-secondary btn-sm",
+                            startupManual ? "🔁 Auto-start" : "⏱ Manual");
+      startupBtn.dataset.tip = startupManual
+        ? "Switch to auto — this service will start automatically at hub boot"
+        : "Switch to manual — this service will not auto-start at hub boot";
+      startupBtn.onclick = async () => {
+        try {
+          await api.workers.patch(wname, { startup: startupManual ? "auto" : "manual" });
+          loadWorkers();
+        } catch (err) { alert("Error: " + err.message); }
+      };
+      btnRow.appendChild(startupBtn);
+
       // Logs button for service workers
       const logsBtn = el("button", "btn btn-secondary btn-sm", "📋 Logs");
       logsBtn.dataset.tip = "View recent stdout/stderr from this service worker";
@@ -3197,11 +3211,15 @@ async function _openRegistryEditor(type, itemName, displayName) {
 
   _regEditorCtx = { type, itemName, displayName };
 
-  // Fetch files
+  // Fetch files (and git log for workers)
   let files = [];
+  let gitData = { commits: [], is_repo: false };
   try {
-    const res = await _REG_API[type].files(itemName);
-    files = res.files || [];
+    const fetches = [_REG_API[type].files(itemName)];
+    if (type === "worker") fetches.push(api.workers.gitLog(itemName).catch(() => ({ commits: [], is_repo: false })));
+    const results = await Promise.all(fetches);
+    files = results[0].files || [];
+    if (type === "worker") gitData = results[1];
   } catch (err) {
     alert("Could not load files: " + err.message);
     return;
@@ -3221,6 +3239,46 @@ async function _openRegistryEditor(type, itemName, displayName) {
     </div>
     <button class="btn btn-secondary btn-sm" id="btnRegNewFile" data-tip="Create a new file in this ${type}'s folder">＋ New File</button>`;
   detailEl.appendChild(hdr);
+
+  // Git card for workers
+  if (type === "worker" && gitData.is_repo) {
+    const gitCard = el("div", "git-repo-card");
+    const commits = gitData.commits || [];
+    const commitRows = commits.map(c => {
+      const shortMsg = c.message.length > 50 ? c.message.slice(0, 50) + "…" : c.message;
+      return `<div class="git-commit-row" data-sha="${c.hash}">
+        <code class="git-hash" data-tip="Commit ${c.hash}">${c.hash.slice(0,7)}</code>
+        <span class="git-msg" data-tip="${c.message.replace(/"/g,'&quot;')}">${shortMsg}</span>
+        <span class="git-age" data-tip="${c.timestamp}">${timeAgo(c.timestamp)}</span>
+        <button class="btn btn-secondary btn-sm worker-rollback-btn" data-sha="${c.hash}" data-msg="${c.message.replace(/"/g,'&quot;')}"
+          data-tip="Restore ${itemName} to state at commit ${c.hash.slice(0,7)}">Roll Back</button>
+      </div>`;
+    }).join("");
+    gitCard.innerHTML = `
+      <div class="git-card-header">
+        <span class="git-card-title" data-tip="Git history for this worker — all file saves are auto-committed">🔀 Worker History</span>
+      </div>
+      <div class="git-commits-list">${commitRows || '<div style="font-size:12px;color:var(--color-text-muted);padding:6px 12px">No commits yet — edit a file to start tracking.</div>'}</div>
+    `;
+    gitCard.querySelectorAll(".worker-rollback-btn").forEach(btn => {
+      btn.onclick = async () => {
+        const sha = btn.dataset.sha;
+        const msg = btn.dataset.msg;
+        if (!confirm(`Restore "${displayName}" to commit ${sha.slice(0,7)} — "${msg}"?\n\nOnly this worker's files will be restored. Other workers are unaffected.`)) return;
+        try {
+          btn.disabled = true;
+          btn.textContent = "Restoring…";
+          await api.workers.gitRollback(itemName, sha);
+          await _openRegistryEditor(type, itemName, displayName);
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = "Roll Back";
+          alert("Rollback failed: " + err.message);
+        }
+      };
+    });
+    detailEl.appendChild(gitCard);
+  }
 
   const fileListEl = el("div", "file-list");
   fileListEl.id = "regEditorFileList";

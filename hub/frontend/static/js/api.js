@@ -102,6 +102,8 @@ const api = {
     test:          (n, body)  => apiFetch(`/api/workers/${encodeURIComponent(n)}/test`, { method: "POST", body: JSON.stringify(body) }),
     compat:        (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/compat`),
     logs:          (n, lines) => apiFetch(`/api/workers/${encodeURIComponent(n)}/logs${lines ? "?lines=" + lines : ""}`),
+    gitLog:        (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/git/log`),
+    gitRollback:   (n, sha)   => apiFetch(`/api/workers/${encodeURIComponent(n)}/git/rollback`, { method: "POST", body: JSON.stringify({ sha }) }),
     files:         (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/files`),
     readFile:      (n, path)  => apiFetch(`/api/workers/${encodeURIComponent(n)}/files/${path}`),
     writeFile:     (n, path, c) => apiFetch(`/api/workers/${encodeURIComponent(n)}/files/${path}`, { method: "PUT",  body: JSON.stringify({ content: c }) }),

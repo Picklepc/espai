@@ -90,7 +90,8 @@ def patch_worker(worker_name: str, body: WorkerPatch):
     except Exception as exc:
         raise HTTPException(500, f"Failed to write worker.yaml: {exc}")
 
-    git_helper.git_commit(ROOT, f"config: workers/{folder}/worker.yaml")
+    _ensure_workers_git()
+    git_helper.git_commit(WORKERS_DIR, f"config: {folder}/worker.yaml")
     return {"worker": worker_name, "enabled": data.get("enabled", True), "startup": data.get("startup", "auto")}
 
 
@@ -99,6 +100,28 @@ def get_worker_logs(worker_name: str, lines: int = 100):
     """Return recent log lines for a running service worker."""
     from ..workers.runner import get_worker_logs as _get_logs
     return {"worker": worker_name, "lines": _get_logs(worker_name, min(lines, 500))}
+
+
+class WorkerGitRollback(BaseModel):
+    sha: str
+
+
+@router.get("/{worker_name}/git/log")
+def worker_git_log(worker_name: str, limit: int = 20):
+    """Return commits that touched this worker's folder."""
+    folder = _worker_folder(worker_name)
+    commits = git_helper.git_log_path(WORKERS_DIR, folder, limit=min(limit, 100))
+    return {"worker": worker_name, "commits": commits, "is_repo": git_helper.is_repo(WORKERS_DIR)}
+
+
+@router.post("/{worker_name}/git/rollback")
+def worker_git_rollback(worker_name: str, body: WorkerGitRollback):
+    """Restore this worker's files to their state at a specific commit."""
+    folder = _worker_folder(worker_name)
+    result = git_helper.git_checkout_path(WORKERS_DIR, body.sha, folder)
+    if not result["ok"]:
+        raise HTTPException(400, result["error"])
+    return result
 
 
 @router.get("/{worker_name}/compat")

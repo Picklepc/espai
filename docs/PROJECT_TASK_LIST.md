@@ -234,8 +234,8 @@ The hub maintains a persistent registry of every discovered or manually-added LA
 - [x] **Services view** — dedicated "Services" nav tab (`view-services`); groups services by category (Projects / Smart Home / Media / Network / Tools / Other); pinned items float to top; Discover, Add, and Show Hidden buttons; `loadServicesView()` in app.js
 - [x] **Pin / hide / label** — "⋯" menu on every service tile opens edit modal: set label, category, pin/unpin, hide, or delete; all stored in `local_services.pinned/.hidden/.label`; edit modal reloads both home and services view
 - [x] **Category auto-detect** — `_detect()` in `services.py` fingerprints by `<title>` and Server header; recognises Tasmota, ESPHome, Home Assistant, OpenWrt, Pi-hole, Proxmox, Jellyfin, Plex, Emby, Kodi, Grafana, Portainer, Gitea, Nextcloud, Synology
-- [ ] **Link service to project** — "Link to Project" button on service card sets `local_services.project_id`; shows project badge on service; clicking opens project detail
-- [ ] **Service health polling** — background task pings pinned services every 60 s; updates `last_seen`; shows online/offline dot in the Services view
+- [x] **Link service to project** — `ServicePatch.project_id`; async edit modal loads project list; Linked Project picker in edit modal (0.3.1)
+- [x] **Service health polling** — `reachable INTEGER` column; TCP ping background thread (60 s); green/red dot on pinned tiles (0.3.1)
 
 ## Milestone 21 — Integration Template Library
 
@@ -276,7 +276,7 @@ Cleanup, polish, and M18/M19/M20 follow-ons before the 0.4.0 Matter release.
 - [x] **Git-tagged OTA rollback** (M18) — `git_sha` in firmware.json; 🎯 Flash button in git log view (0.3.2)
 - [x] **Firmware CI builds** (M19) — PlatformIO matrix job, three board envs, attached to GitHub Release (0.3.2)
 - [x] **RELEASE_CHECKLIST.md** — updated for 0.3.1 with all M17–M22 items (0.3.1)
-- [ ] **Codex CLI adapter first-run login** — `_codex_authenticated()` check; Doctor shows Codex login button; `list_adapters` returns auth state; run_task pre-checks auth and offers login instead of failing
+- [ ] **Codex / Claude CLI login shortcut** — Doctor shows "Launch to authenticate" button for each unauthenticated CLI adapter; opens the CLI in the Terminal view so user can complete auth; no ESPAI-owned auth flow
 - [x] **Auto-apply (remove human review)** — all agent runs auto-apply on success; review panel, diff view, approve/reject buttons, and `require_human_review` config removed; git rollback replaces diff+approve workflow
 
 ## Milestone 22.7 — Worker Management (v0.3.4)
@@ -295,9 +295,9 @@ Frictionless worker development with proper lifecycle controls, git history, and
 - [x] **Bundled workers ship with `enabled: true`** — explicit default; scaffold template also writes `enabled: true`
 
 ### Pending (pre-0.4.0)
-- [ ] **Workers git card** — show last N commits with Roll Back per commit in the worker file editor (same as project git card); requires WORKERS_DIR git repo (now initialized)
-- [ ] **Worker startup policy UI** — dropdown to toggle `startup: auto / manual` from worker card without editing YAML
-- [ ] **`_sync_workers()` preserves user `enabled`/`startup`** — when bundle version is higher and worker is overwritten, copy user's `enabled` and `startup` values back into the fresh YAML
+- [x] **Workers git card** — `git_log_path()` + `git_checkout_path()` in git_helper; `GET /api/workers/{name}/git/log` + `POST /api/workers/{name}/git/rollback`; git card shown in worker file editor with per-commit Roll Back (restores only that worker's folder — other workers unaffected)
+- [x] **Worker startup policy UI** — ⏱ Manual / 🔁 Auto-start toggle button on service worker cards; calls `PATCH /api/workers/{name}` to update YAML
+- [x] **`_sync_workers()` preserves user `enabled`/`startup`** — reads user values before rmtree; writes them back into fresh YAML after copy if they differ from bundle defaults
 
 ## Milestone 23 — Matter Bridge (hub-hosted) — target: v0.4.0
 

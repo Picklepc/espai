@@ -122,6 +122,50 @@ def get_head_sha(proj_dir: Path) -> str | None:
         return None
 
 
+def git_log_path(repo_dir: Path, path: str, limit: int = 20) -> list[dict]:
+    """Return commits that touched a specific path within the repo."""
+    git = _find_git()
+    if not git or not is_repo(repo_dir):
+        return []
+    try:
+        r = _run(git, repo_dir,
+                 "log", f"--max-count={limit}",
+                 "--pretty=format:%H\x1f%s\x1f%an\x1f%ai",
+                 "--", path)
+        if r.returncode != 0:
+            return []
+        commits = []
+        for line in r.stdout.strip().splitlines():
+            parts = line.split("\x1f", 3)
+            if len(parts) == 4:
+                commits.append({
+                    "hash":      parts[0][:12],
+                    "message":   parts[1],
+                    "author":    parts[2],
+                    "timestamp": parts[3].strip(),
+                })
+        return commits
+    except Exception as exc:
+        log.debug("git_log_path failed: %s", exc)
+        return []
+
+
+def git_checkout_path(repo_dir: Path, sha: str, path: str) -> dict:
+    """Restore a specific path to its state at commit sha (non-destructive to other files)."""
+    git = _find_git()
+    if not git or not is_repo(repo_dir):
+        return {"ok": False, "error": "Not a git repository"}
+    if not re.match(r"^[0-9a-f]{4,40}$", sha):
+        return {"ok": False, "error": "Invalid commit hash"}
+    try:
+        r = _run(git, repo_dir, "checkout", sha, "--", path)
+        if r.returncode == 0:
+            return {"ok": True, "sha": sha, "path": path}
+        return {"ok": False, "error": (r.stderr or r.stdout).strip()}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def git_rollback(proj_dir: Path, sha: str) -> dict:
     """Reset the working tree to the state at commit sha (git reset --hard). Returns ok/error."""
     git = _find_git()

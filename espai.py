@@ -351,8 +351,30 @@ def _sync_workers() -> None:
             continue  # malformed YAML — leave it alone
 
         if src_ver > dst_ver:
+            # Preserve user-set lifecycle fields before overwriting
+            user_fields = {}
+            for field in ("enabled", "startup"):
+                if field in dst_meta:
+                    user_fields[field] = dst_meta[field]
+
             shutil.rmtree(str(dst_worker_dir))
             shutil.copytree(str(src_worker_dir), str(dst_worker_dir))
+
+            # Write user fields back if they differ from the bundled defaults
+            if user_fields:
+                try:
+                    fresh_yaml = dst_worker_dir / "worker.yaml"
+                    fresh_meta = _yaml.safe_load(fresh_yaml.read_text(encoding="utf-8")) or {}
+                    changed = False
+                    for field, val in user_fields.items():
+                        if fresh_meta.get(field) != val:
+                            fresh_meta[field] = val
+                            changed = True
+                    if changed:
+                        fresh_yaml.write_text(_yaml.dump(fresh_meta, default_flow_style=False, allow_unicode=True), encoding="utf-8")
+                except Exception:
+                    pass  # non-fatal — user can re-set via UI
+
             updated.append(f"{name} ({'.'.join(str(x) for x in dst_ver)}→{'.'.join(str(x) for x in src_ver)})")
 
     if installed:
