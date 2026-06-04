@@ -1,0 +1,45 @@
+schema: ESPAI.worker.v1
+name: tasmota-poller
+display_name: Tasmota Poller
+description: >
+  Polls a Tasmota device via its local HTTP API and pushes power, energy,
+  and sensor readings to the ESPAI hub data store. Works with Tasmota 9+
+  on any ESP8266/ESP32 device in STA mode.
+version: "1.0.0"
+entrypoint: main.py
+mode: oneshot
+quarantine: true
+
+permissions:
+  network: true
+
+env_required:
+  - TASMOTA_HOST     # IP or hostname, e.g. 192.168.1.42 or tasmota-plug.local
+env_optional:
+  - TASMOTA_PASSWORD # Tasmota web UI password (if set)
+  - ESPAI_HUB_URL    # hub base URL, defaults to http://localhost:7888
+
+inputs:
+  project_id:
+    type: string
+    description: ESPAI project ID to push readings to
+    required: true
+  channel:
+    type: string
+    description: Tasmota StatusSNS channel (default "1" for single sensor)
+    default: "1"
+
+outputs:
+  state:
+    type: object
+    description: Latest device state (power, energy, sensors)
+  events:
+    type: array
+    description: ESPAI events emitted (device.update)
+
+resource_cost:
+  cpu: low
+  memory: low
+  disk: none
+
+tags: [integration, tasmota, smart-home, power-monitoring]

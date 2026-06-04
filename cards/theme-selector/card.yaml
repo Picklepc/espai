@@ -1,0 +1,46 @@
+schema: ESPAI.card.v1
+name: theme-selector
+display_name: Theme Selector
+category: hub
+description: >
+  Hub-hosted card for switching the active design theme, creating custom themes,
+  and setting per-project theme overrides. Uses the hub design API — no device
+  firmware required.
+
+event_source:
+  type: hub_api            # reads from /api/design/themes and /api/design/theme/active
+  polling_interval_ms: 0  # no polling — user-triggered actions only
+
+hub_api_endpoints:
+  - method: GET
+    path: /api/design/themes
+    description: List all available themes (official + custom)
+  - method: GET
+    path: /api/design/theme/active
+    description: Get the currently active theme name
+  - method: PUT
+    path: /api/design/theme/active
+    body: '{"name": "ocean"}'
+    description: Switch the active theme hub-wide
+  - method: POST
+    path: /api/design/themes
+    body: '{"name": "my-theme", "tokens": {"color.accent": "#ff6600"}}'
+    description: Create a new custom theme
+  - method: DELETE
+    path: /api/design/themes/{name}
+    description: Delete a custom theme (built-in themes are undeletable)
+  - method: GET
+    path: /api/projects/{id}/theme
+    description: Get per-project theme overrides
+  - method: PUT
+    path: /api/projects/{id}/theme
+    body: '{"theme_overrides": {"--color-accent": "#ff6600"}}'
+    description: Apply per-project CSS token overrides
+
+config:
+  show_palette_swatches: true   # display color swatches for each theme
+  show_custom_badge: true       # "official" / "custom" badge on theme cards
+  allow_delete_custom: true     # show delete button for custom themes
+
+share_policy:
+  export_public: true

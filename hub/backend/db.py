@@ -107,6 +107,11 @@ def _migrate(conn) -> None:
     if "device_type" not in proj_cols:
         conn.execute("ALTER TABLE projects ADD COLUMN device_type TEXT DEFAULT 'esp32'")
 
+    # Add sleep_interval_s to devices — records how long node sleeps between wake-ups; NULL = always-on
+    dev_cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
+    if "sleep_interval_s" not in dev_cols:
+        conn.execute("ALTER TABLE devices ADD COLUMN sleep_interval_s INTEGER")
+
 
 def init_db() -> None:
     with get_conn() as conn:

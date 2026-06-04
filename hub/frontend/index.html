@@ -38,6 +38,7 @@
         <li><a href="#" class="nav-item" data-view="design"              data-tip="Design token and theme editor — controls the visual appearance">Design</a></li>
         <li><a href="#" class="nav-item" data-view="events"              data-tip="Real-time event log from devices and the hub">Events</a></li>
         <li><a href="#" class="nav-item" data-view="rules"               data-tip="Automation rules that trigger actions when events occur">Rules</a></li>
+        <li><a href="#" class="nav-item" data-view="services"            data-tip="All discovered local services — Tasmota, Jellyfin, Home Assistant, cameras, NAS, and more">Services</a></li>
         <li><a href="#" class="nav-item" data-view="agent-bench"         data-tip="AI-assisted development workspace (optional feature)">Agent Bench</a></li>
         <li><a href="#" class="nav-item" data-view="terminal"           data-tip="Full PTY terminal — run builds, Git, serial monitor, and Claude Code directly in the browser">Terminal</a></li>
       </ul>
@@ -140,7 +141,8 @@
           <header class="view-header">
             <h1>Projects</h1>
             <div style="display:flex;gap:8px">
-              <button class="btn btn-secondary" id="btnImportProject" data-tip="Upload a .zip of any PlatformIO or Arduino project — creates a new ESPAI project and a draft port-to-hub Agent Bench task">⬆ Import ZIP</button>
+              <button class="btn btn-secondary" id="btnImportProject"  data-tip="Upload a .zip of any PlatformIO or Arduino project — creates a new ESPAI project and a draft port-to-hub Agent Bench task">⬆ Import ZIP</button>
+              <a class="btn btn-secondary"     id="btnCaddyDownload" href="/api/caddy/download" download="Caddyfile" data-tip="Download an auto-generated Caddyfile that routes {slug}.local to each project's web app — requires Caddy 2.x on the host">⬇ Caddyfile</a>
               <button class="btn btn-primary"   id="btnNewProject"    data-tip="Create a new project with a fresh firmware scaffold and hub integration template">+ New Project</button>
             </div>
           </header>
@@ -535,6 +537,20 @@
           </div>
         </div>
 
+      </section>
+
+      <!-- Services view -->
+      <section class="view" id="view-services">
+        <header class="view-header">
+          <h1>Services</h1>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary" id="btnSvcDiscover"   data-tip="Scan your LAN for all HTTP services — results are saved and survive page reloads">🔍 Discover</button>
+            <button class="btn btn-secondary" id="btnSvcAdd"        data-tip="Add any local service by hostname or IP — hub auto-fetches its title and icon">+ Add</button>
+            <button class="btn btn-secondary" id="btnSvcShowHidden" data-tip="Toggle visibility of hidden services">Show Hidden</button>
+          </div>
+        </header>
+        <p class="view-desc">All local web services discovered on your LAN — ESPAI projects, Tasmota, Jellyfin, Home Assistant, routers, and more. Pinned services float to the top.</p>
+        <div id="svcViewContent"><div class="empty-state">Loading…</div></div>
       </section>
 
       <!-- Terminal view -->

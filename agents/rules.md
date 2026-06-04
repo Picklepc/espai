@@ -26,6 +26,9 @@ projects. Unmarked rules apply to all project types.
 
 - **Keep firmware lean.** Measure/actuate on the ESP32; store/process on the hub.
 - **Run `pio run`** after every firmware change. Fix all errors before committing.
+- **Import the build to the OTA catalog** after a successful compile — call
+  `POST /api/projects/{project_id}/import-build` so the binary appears in the
+  OTA menu and can be flashed without a manual import step.
 - **Use `\"backslash-escaped\"` quotes** in `platformio.ini` `build_flags` strings.
 - **Implement AP fallback** in all project firmware — `ESPAI-{id}` hotspot on WiFi fail.
 - **Make hub checkins fire-and-forget** — never block the firmware loop on the hub.

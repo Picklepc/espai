@@ -31,6 +31,7 @@ class DeviceCheckin(BaseModel):
     fw_version: str | None = None
     capabilities: dict | None = None
     ip: str | None = None
+    sleep_interval_s: int | None = None   # node reports its configured sleep interval; 0 = awake-always
 
     @field_validator("id")
     @classmethod
@@ -123,15 +124,16 @@ def checkin(data: DeviceCheckin):
         # Preserve paired state — nodes cannot un-pair themselves via checkin
         paired = int(existing["paired"]) if existing else 0
         conn.execute(
-            """INSERT INTO devices (id, ip, name, board, fw_version, paired, last_seen, capabilities)
-               VALUES (?,?,?,?,?,?,?,?)
+            """INSERT INTO devices (id, ip, name, board, fw_version, paired, last_seen, capabilities, sleep_interval_s)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  ip=excluded.ip,
                  name=excluded.name,
                  board=excluded.board,
                  fw_version=excluded.fw_version,
                  last_seen=excluded.last_seen,
-                 capabilities=excluded.capabilities""",
+                 capabilities=excluded.capabilities,
+                 sleep_interval_s=COALESCE(excluded.sleep_interval_s, devices.sleep_interval_s)""",
             (
                 data.id,
                 data.ip,
@@ -141,9 +143,15 @@ def checkin(data: DeviceCheckin):
                 paired,
                 now,
                 json.dumps(data.capabilities or {}),
+                data.sleep_interval_s,
             ),
         )
-    return {"status": "ok", "paired": bool(paired)}
+        # Return the hub-stored sleep interval so the node can adopt hub-side overrides
+        row = conn.execute(
+            "SELECT sleep_interval_s FROM devices WHERE id=?", (data.id,)
+        ).fetchone()
+    hub_sleep = row["sleep_interval_s"] if row else None
+    return {"status": "ok", "paired": bool(paired), "sleep_interval_s": hub_sleep}
 
 
 @router.post("/manual")

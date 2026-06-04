@@ -29,7 +29,7 @@ from .db import get_conn, init_db
 from . import __version__ as HUB_VERSION
 from .discovery.mdns import mdns_manager
 from . import mqtt_publisher, theme_scheduler, ws_broker
-from .routers import admin, agent_bench, cards, data, design, devices, events, jobs, ota, packages, projects, recipes, rules, services, terminal, workers
+from .routers import admin, agent_bench, caddy, cards, data, design, devices, events, jobs, ota, packages, projects, recipes, rules, services, terminal, workers
 from .workers.runner import start_runner, start_services
 
 log = logging.getLogger(__name__)
@@ -148,6 +148,7 @@ app.include_router(rules.router,    prefix="/api/rules",    tags=["rules"])
 app.include_router(admin.router,       prefix="/api/admin",        tags=["admin"])
 app.include_router(agent_bench.router, prefix="/api/agent-bench",  tags=["agent-bench"])
 app.include_router(services.router,    prefix="/api/services",      tags=["services"])
+app.include_router(caddy.router,       prefix="/api/caddy",         tags=["caddy"])
 app.include_router(terminal.router,    prefix="/api/terminal",     tags=["terminal"])
 app.include_router(data.router,        prefix="/api/projects",     tags=["project-data"])
 

@@ -1,0 +1,42 @@
+schema: ESPAI.worker.v1
+name: zigbee2mqtt-bridge
+display_name: Zigbee2MQTT Bridge
+description: >
+  Subscribes to a Zigbee2MQTT MQTT broker and forwards all device payloads
+  to the ESPAI hub data store. Runs as a persistent service — set mode: service
+  to keep the MQTT connection open. Each Zigbee device gets its own data series
+  keyed by device friendly name.
+version: "1.0.0"
+entrypoint: main.py
+mode: service
+quarantine: true
+
+permissions:
+  network: true
+
+env_required:
+  - MQTT_HOST        # MQTT broker IP or hostname
+env_optional:
+  - MQTT_PORT        # default 1883
+  - MQTT_USER
+  - MQTT_PASS
+  - MQTT_TOPIC_PREFIX  # default zigbee2mqtt
+  - ESPAI_HUB_URL
+
+inputs:
+  project_id:
+    type: string
+    required: true
+
+outputs:
+  events:
+    type: array
+    description: device.update events for each received Zigbee message
+
+resource_cost:
+  cpu: low
+  memory: low
+  disk: none
+  not_rt_safe: false
+
+tags: [integration, zigbee, zigbee2mqtt, mqtt, smart-home]

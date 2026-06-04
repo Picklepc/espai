@@ -8,6 +8,7 @@ applicable_types: [esp32, hybrid]
 default_allowed_paths: []
 acceptance_criteria_template:
   - "Firmware compiles without errors (pio run)"
+  - "Build imported to OTA catalog (POST /api/projects/{project_id}/import-build)"
   - "New feature does not increase flash usage beyond 70%"
   - "No hardcoded credentials, network addresses, or MAC addresses"
   - "Serial output is informative and uses [TAG] prefix"

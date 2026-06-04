@@ -28,7 +28,9 @@
 #include <Update.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include <mbedtls/md.h>
+#include <esp_sleep.h>
 
 // ── Build-flag defaults ────────────────────────────────────────────────────
 
@@ -52,6 +54,13 @@
 #define BOARD_ID "esp32"
 #endif
 
+// SLEEP_INTERVAL_S — seconds between deep-sleep wake-ups.
+// Set to 0 (default) to disable deep sleep and run a continuous web server.
+// Set via platformio.ini: -D SLEEP_INTERVAL_S=60
+#ifndef SLEEP_INTERVAL_S
+#define SLEEP_INTERVAL_S 0
+#endif
+
 static const uint32_t WIFI_TIMEOUT_MS     = 15000;
 static const uint32_t CHECKIN_INTERVAL_MS = 60000;
 
@@ -63,6 +72,7 @@ bool      wifiConnected = false;
 bool      apMode        = false;
 uint32_t  lastCheckin   = 0;
 bool      paired        = false;
+int       sleepIntervalS = SLEEP_INTERVAL_S;  // can be updated from hub checkin response
 
 // OTA state — reset on each new upload
 static bool                  g_otaError  = false;
@@ -141,6 +151,8 @@ void handleCheckin() {
   JsonDocument doc;
   doc["status"] = "ok";
   doc["id"]     = nodeId;
+  doc["paired"] = paired;
+  doc["sleep_interval_s"] = sleepIntervalS;
   sendJson(200, doc);
 }
 
@@ -230,6 +242,47 @@ void handleOtaUpload() {
 
 void handleNotFound() {
   sendError(404, "Not found");
+}
+
+// ── Hub self-checkin (node → hub) ─────────────────────────────────────────
+// Fire-and-forget: posts identity to hub and optionally reads back sleep_interval_s.
+// Returns the hub-recommended sleep interval (0 = keep awake), or -1 on failure.
+int hubCheckin(const String& hubUrl) {
+  if (!wifiConnected) return -1;
+#ifdef HUB_PROJECT_ID
+  HTTPClient http;
+  String url = hubUrl + "/api/devices/checkin";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  String body = "{\"id\":\"" + nodeId + "\",\"name\":\"" NODE_NAME "\",\"board\":\"" BOARD_ID
+              + "\",\"fw_version\":\"" FW_VERSION "\",\"ip\":\""
+              + WiFi.localIP().toString() + "\",\"sleep_interval_s\":"
+              + String(sleepIntervalS) + "}";
+  int code = http.POST(body);
+  if (code == 200) {
+    JsonDocument resp;
+    deserializeJson(resp, http.getString());
+    if (!resp["sleep_interval_s"].isNull()) {
+      sleepIntervalS = resp["sleep_interval_s"].as<int>();
+    }
+  }
+  http.end();
+  return sleepIntervalS;
+#else
+  return 0;
+#endif
+}
+
+// ── Deep sleep helper ──────────────────────────────────────────────────────
+// Enters deep sleep for `seconds`. GPIO16/RTC0 must be wired to RST for wake-up
+// on standard ESP32. ESP32-S3/C3 use the built-in RTC timer — no wire needed.
+void enterDeepSleep(int seconds) {
+  Serial.printf("[sleep] Entering deep sleep for %d s\n", seconds);
+  Serial.flush();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+  esp_deep_sleep_start();
 }
 
 // ── Wi-Fi setup ────────────────────────────────────────────────────────────
@@ -331,6 +384,14 @@ void setup() {
 
   server.begin();
   Serial.println("[ESPAI] HTTP server started on port 80");
+
+  // Hub checkin on boot — posts identity and retrieves hub-side sleep interval
+#ifdef HUB_URL
+  if (wifiConnected) {
+    hubCheckin(String(HUB_URL));
+    Serial.printf("[ESPAI] Hub checkin done. sleep_interval_s=%d\n", sleepIntervalS);
+  }
+#endif
 }
 
 // ── Loop ───────────────────────────────────────────────────────────────────
@@ -348,9 +409,18 @@ void loop() {
     }
   }
 
-  // Periodic self-checkin log (hub-side checkin is driven by the hub)
-  if (millis() - lastCheckin > CHECKIN_INTERVAL_MS) {
-    lastCheckin = millis();
+  // Deep sleep mode: serve HTTP for a short window so OTA / commands can land,
+  // then sleep for the configured interval.
+  if (sleepIntervalS > 0) {
+    // Stay awake for up to 5 s after boot to handle any pending requests
+    if (millis() > 5000) {
+      enterDeepSleep(sleepIntervalS);
+    }
+  } else {
+    // Awake-always: periodic self-checkin timestamp
+    if (millis() - lastCheckin > CHECKIN_INTERVAL_MS) {
+      lastCheckin = millis();
+    }
   }
 
   delay(5);

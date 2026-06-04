@@ -1,0 +1,45 @@
+schema: ESPAI.worker.v1
+name: wled-controller
+display_name: WLED Controller
+description: >
+  Reads and writes WLED state via its local JSON API. Can poll current state
+  (brightness, color, effect) and push it to the hub, or apply a preset state
+  to the WLED device. Works with WLED 0.13+.
+version: "1.0.0"
+entrypoint: main.py
+mode: oneshot
+quarantine: true
+
+permissions:
+  network: true
+
+env_required:
+  - WLED_HOST        # IP or hostname of the WLED device
+env_optional:
+  - ESPAI_HUB_URL
+
+inputs:
+  project_id:
+    type: string
+    required: true
+  action:
+    type: string
+    description: "poll (read state) or apply (write state)"
+    default: poll
+  state:
+    type: object
+    description: State to apply when action=apply (brightness, color, effect)
+
+outputs:
+  state:
+    type: object
+    description: Current WLED state
+  events:
+    type: array
+
+resource_cost:
+  cpu: low
+  memory: low
+  disk: none
+
+tags: [integration, wled, lighting, smart-home]

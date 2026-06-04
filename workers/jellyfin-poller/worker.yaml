@@ -1,0 +1,44 @@
+schema: ESPAI.worker.v1
+name: jellyfin-poller
+display_name: Jellyfin Poller
+description: >
+  Polls a local Jellyfin server for active sessions and library stats.
+  Pushes now-playing info (title, user, progress) and session count to the
+  ESPAI hub data store. Emits media.playing and media.stopped events.
+  Also works with Emby (same API surface).
+version: "1.0.0"
+entrypoint: main.py
+mode: oneshot
+quarantine: true
+
+permissions:
+  network: true
+
+env_required:
+  - JELLYFIN_HOST    # e.g. jellyfin.local or 192.168.1.100
+  - JELLYFIN_API_KEY # API key from Jellyfin dashboard → API Keys
+env_optional:
+  - JELLYFIN_PORT    # default 8096
+  - ESPAI_HUB_URL
+
+inputs:
+  project_id:
+    type: string
+    required: true
+
+outputs:
+  sessions:
+    type: array
+    description: Active playback sessions
+  state:
+    type: object
+    description: Summary pushed to hub data store
+  events:
+    type: array
+
+resource_cost:
+  cpu: low
+  memory: low
+  disk: none
+
+tags: [integration, jellyfin, emby, media]

@@ -218,9 +218,8 @@ Document in release notes:
 - Linux AppImage only CI-tested on ubuntu-latest x86_64
 - Theme selector card not yet implemented
 - `_migrate()` duplicate slug migration block — backfill unreachable on upgrade path (cosmetic, not data-loss)
-- LAN Services Registry view not yet implemented (M20) — `local_services` table exists, browse endpoint works, no dedicated UI tab yet
-- Integration Template Library not yet implemented (M21) — api-integration task template and project scaffold present; pre-built Tasmota/Shelly/WLED/Zigbee2MQTT workers pending
-- Hub-Hosted Web App Framework not yet implemented (M22) — projects/web/ served at /app/{slug}/ but no starter scaffold generated on create
+- M20 follow-ons: "Link service to project" button and background service health polling not yet implemented
+- M3 sleep/wake: 5 s awake window before deep sleep is a fixed constant — should be NVS-configurable in a future release
 
 ---
 

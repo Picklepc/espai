@@ -39,7 +39,7 @@
 - [x] mDNS advertisement (_ESPAI-node._tcp.local)
 - [x] build-flag credential injection (no hardcoded secrets)
 - [x] actual OTA binary receive + apply — `Update.begin/write/end` + incremental SHA-256 verify in `firmware/seed/src/main.cpp`; reboot on success, error logged to Serial
-- [ ] sleep/wake checkin support (TODO)
+- [x] sleep/wake checkin support — `SLEEP_INTERVAL_S` build flag (default 0 = always-on); on boot posts identity to `HUB_URL/api/devices/checkin` and reads back hub-side `sleep_interval_s` override; serves HTTP for 5 s window then calls `esp_deep_sleep()`; hub stores `sleep_interval_s` in `devices` table (additive migration); checkin response includes `sleep_interval_s` so hub can override node's compiled-in value
 
 ## Milestone 4 — Discovery and Pairing
 - [x] manual IP add (POST /api/devices/manual)
@@ -157,7 +157,7 @@
 
 ### Cards
 - [x] Card preview system — `GET /api/cards/{name}/preview`; serves hand-authored `preview.html` if present, else generates retro-styled preview from card YAML; sensor-dashboard has animated live preview with sparklines + dummy readings; Cards view has "👁 Preview" button per card opening an iframe modal
-- [ ] Theme selector card — lets users switch the hub theme, create/delete themes, and pick per-project themes
+- [x] Theme selector card — `cards/theme-selector/card.yaml`; hub-only card; documents GET/PUT `/api/design/themes`, GET/PUT `/api/design/theme/active`, GET/PUT `/api/projects/{id}/theme` endpoints
 - [x] Network manager card — `cards/network-manager/card.yaml`; WiFi STA/AP, SSID scan, hostname editor; device endpoint spec included
 - [x] File manager card — `cards/file-manager/card.yaml`; browse LittleFS/SPIFFS/SD via device REST API; device endpoint spec included; interactive `preview.html` with directory navigation, storage bar, mock file tree (7 KB)
 - [x] Device log card — `cards/device-log/card.yaml`; WebSocket log stream + polling fallback; level filter; ring buffer; auto-scroll
@@ -191,7 +191,7 @@
 
 ## Milestone 17 — Local Project Access (Caddy / mDNS routing)
 
-- [ ] Caddy integration — auto-generate a Caddyfile mapping project names to hub-hosted project pages (e.g. `motion-sensor.local → hub:8080/projects/{id}`)
+- [x] Caddy integration — `hub/backend/routers/caddy.py`; `GET /api/caddy/caddyfile` returns generated config; `GET /api/caddy/download` serves as file attachment; `POST /api/caddy/write` writes to `ESPAI_CADDY_PATH` (default `data/Caddyfile`); each project slug gets a `{slug}.local → reverse_proxy localhost:{port}/app/{slug}` block; "⬇ Caddyfile" button in Projects view header
 - [x] Project page nav — "🌐 Open App" button in project detail calls `GET /api/projects/{id}/app-url`; priority: hub-hosted web/index.html → linked device IP → mDNS slug.local; opens in new tab
 - [x] LAN device browser — `POST /api/devices/browse` probes all 254 subnet hosts on port 80; returns ESPAI nodes (is_espai=True) + any other HTTP device (title from `<title>`, server header); "🔍 Browse LAN" button in Fleet; results modal shows both groups with direct "Open ↗" links
 - [x] Device link from fleet — paired and unpaired devices with known IPs show a "🌐" button that opens `http://{ip}/` in a new tab
@@ -230,9 +230,9 @@
 
 The hub maintains a persistent registry of every discovered or manually-added LAN service. This is the foundation of the "replace cloud apps" experience — a single pane of glass for all local devices and services.
 
-- [ ] **Services view** — dedicated "Services" tab in the dashboard; shows all `local_services` rows with icon, label, category (smart-home / media / network / tools / other), host, last-seen; pinned services float to top
-- [ ] **Pin / hide / label** — pin any discovered service to keep it visible; hide noisy entries; set a friendly label (e.g. "Living Room TV" instead of `192.168.1.55`); all stored in `local_services.pinned` / `.hidden` / `.label`
-- [ ] **Category auto-detect** — fingerprint discovered services by response headers, `<title>`, and path patterns; auto-assign category (Jellyfin → media, Tasmota → smart-home, pfSense → network, etc.)
+- [x] **Services view** — dedicated "Services" nav tab (`view-services`); groups services by category (Projects / Smart Home / Media / Network / Tools / Other); pinned items float to top; Discover, Add, and Show Hidden buttons; `loadServicesView()` in app.js
+- [x] **Pin / hide / label** — "⋯" menu on every service tile opens edit modal: set label, category, pin/unpin, hide, or delete; all stored in `local_services.pinned/.hidden/.label`; edit modal reloads both home and services view
+- [x] **Category auto-detect** — `_detect()` in `services.py` fingerprints by `<title>` and Server header; recognises Tasmota, ESPHome, Home Assistant, OpenWrt, Pi-hole, Proxmox, Jellyfin, Plex, Emby, Kodi, Grafana, Portainer, Gitea, Nextcloud, Synology
 - [ ] **Link service to project** — "Link to Project" button on service card sets `local_services.project_id`; shows project badge on service; clicking opens project detail
 - [ ] **Service health polling** — background task pings pinned services every 60 s; updates `last_seen`; shows online/offline dot in the Services view
 
@@ -240,19 +240,19 @@ The hub maintains a persistent registry of every discovered or manually-added LA
 
 Pre-built integration workers for the most common local-API devices. Each ships as a worker YAML + Python file in `workers/` so agents can extend them rather than starting from scratch.
 
-- [ ] **Tasmota** — HTTP `GET /cm?cmnd=Status%200`; toggle relay; push power/energy/temp readings to hub; `worker.yaml` with `TASMOTA_IP` env var
-- [ ] **Shelly** — gen1 (`/status`) and gen2 (`/rpc/Shelly.GetStatus`) auto-detect; power monitoring; relay control; webhook registration for push events
-- [ ] **WLED** — `/json/state` read + write; brightness, color, effect index; push effect change events
-- [ ] **Zigbee2MQTT** — MQTT subscribe to `zigbee2mqtt/#`; parse device payloads; push to hub data store per device; emit `device.update` events
-- [ ] **Jellyfin / Plex** — now-playing poller; session info; push `media.playing` / `media.stopped` events; webhook receiver for instant push
-- [ ] **Generic HTTP poller worker** — parameterized worker that takes `BASE_URL`, `POLL_PATH`, `AUTH_HEADER`, `POLL_INTERVAL_S` as inputs; no code required for simple REST devices; reusable base for quick integrations
+- [x] **Tasmota** — `workers/tasmota-poller/`; `Status 0` full probe; power, energy, relay state, generic sensors; `TASMOTA_HOST` + optional `TASMOTA_PASSWORD` env vars
+- [x] **Shelly** — `workers/shelly-poller/`; gen1 (`/status`) and gen2 (`/rpc/Shelly.GetStatus`) auto-detect; power, energy, temperature, switch state; `SHELLY_HOST` env var
+- [x] **WLED** — `workers/wled-controller/`; `/json/state` + `/json/info` read; optional state write (action=apply); brightness, color, effect, palette; `WLED_HOST` env var
+- [x] **Zigbee2MQTT** — `workers/zigbee2mqtt-bridge/`; MQTT subscribe to `{prefix}/#`; forwards all device payloads to hub data store keyed by device name; `mode: service` persistent connection; `MQTT_HOST` env var
+- [x] **Jellyfin** — `workers/jellyfin-poller/`; active sessions, now-playing title/user/progress; `media.playing` events; `JELLYFIN_HOST` + `JELLYFIN_API_KEY` env vars (also works with Emby)
+- [x] **Generic HTTP poller** — `workers/http-poller/`; `base_url`, `path`, `method`, `body`, `field_map` inputs; `HTTP_AUTH_HEADER` env var; reusable base for any REST device
 
 ## Milestone 22 — Hub-Hosted Web App Framework
 
 Make it easy to build and deploy a full custom web app as the local replacement for a device's cloud dashboard. The app lives in `projects/{id}/web/` and is served at `/app/{slug}/`.
 
-- [ ] **Starter web app scaffold** — when a project is created, `web/index.html` is generated with: hub API base URL injected, project ID constant, data fetch + display boilerplate, auto-refresh on WebSocket events; different starter for esp32 vs integration vs hybrid
-- [ ] **Hub API client snippet** — `web/hub-api.js` copied into scaffold; thin wrapper around fetch with auth header injection, WebSocket reconnect, and helper for `data/latest`
-- [ ] **Live-reload in dev** — file watcher on `projects/{id}/web/**`; hub sends `reload` event over WebSocket when web files change; browser reloads automatically
-- [ ] **App manifest** — `web/app.json` describes the app (name, icon_url, theme_color, entry_point); hub reads it for the "🌐 Open App" button and LAN service registry entry
-- [ ] **Caddy auto-config** (links Milestone 17) — when a project has a web app, add `{slug}.local → /app/{slug}/` to the generated Caddyfile so the app is reachable at a friendly hostname without port numbers
+- [x] **Starter web app scaffold** — `web/index.html` generated on project create; type-specific templates for esp32 (sensor readings grid), integration (tile grid), hybrid (two-section layout); auto-refreshes on hub data push; 5 s polling fallback
+- [x] **Hub API client snippet** — `web/hub-api.js` generated on project create; `espai.getLatest()`, `espai.pushData()`, `espai.connectWS()`; works from hub (`/app/{slug}/`) or direct device access; live-reload handler built in
+- [x] **Live-reload in dev** — `write_project_file` in `projects.py` broadcasts `project.web.reload` WebSocket event when any `web/` file is saved; `hub-api.js` `connectWS` handler reloads the page if the slug matches
+- [x] **App manifest** — `web/app.json` written on project create: `name`, `description`, `project_id`, `entry_point`, `theme_color`
+- [x] **Caddy auto-config** (links Milestone 17) — completed above; Caddyfile contains `{slug}.local` blocks for all projects

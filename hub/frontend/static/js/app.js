@@ -637,51 +637,6 @@ function _makeSvcCard(svc) {
   return tile;
 }
 
-function _openSvcEditModal(svc) {
-  const currentLabel = svc.label || svc.title || "";
-  const catOpts = Object.entries(_SVC_CATEGORY_LABELS).map(([k, v]) =>
-    `<option value="${k}" ${svc.category === k ? "selected" : ""}>${v}</option>`
-  ).join("");
-
-  openModal(`Edit — ${currentLabel || svc.host}`, `
-    <div class="form-field">
-      <label data-tip="Friendly name shown on the card — overrides the page title">Label</label>
-      <input type="text" id="svcEditLabel" value="${currentLabel}" placeholder="e.g. Living Room Tasmota">
-    </div>
-    <div class="form-field">
-      <label data-tip="Group this service with similar services on the dashboard">Category</label>
-      <select id="svcEditCat">${catOpts}</select>
-    </div>
-  `, [
-    { label: "Save", cls: "btn btn-primary", action: async () => {
-      const label    = document.getElementById("svcEditLabel").value.trim() || null;
-      const category = document.getElementById("svcEditCat").value;
-      await api.services.update(svc.id, { label, category }).catch(err => alert(err.message));
-      closeModal();
-      loadLocalNetwork();
-    }},
-    { label: svc.pinned ? "Unpin" : "📌 Pin", cls: "btn btn-secondary", action: async () => {
-      await api.services.update(svc.id, { pinned: !svc.pinned }).catch(() => {});
-      closeModal();
-      loadLocalNetwork();
-    }},
-    { label: "Hide", cls: "btn btn-secondary", action: async () => {
-      if (!confirm(`Hide "${currentLabel || svc.host}"?`)) return;
-      await api.services.update(svc.id, { hidden: true }).catch(() => {});
-      closeModal();
-      loadLocalNetwork();
-    }},
-    { label: "Delete Entry", cls: "btn btn-danger", action: async () => {
-      if (!confirm(`Remove "${currentLabel || svc.host}" from the grid entirely?`)) return;
-      await api.services.delete(svc.id).catch(() => {});
-      closeModal();
-      loadLocalNetwork();
-    }},
-    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
-  ]);
-  setTimeout(() => { const el = document.getElementById("svcEditLabel"); el?.focus(); el?.select(); }, 100);
-}
-
 // ── Discover + Add Service button handlers ──────────────────────────────────
 
 document.getElementById("btnHomeDiscover").onclick = async () => {
@@ -747,6 +702,167 @@ document.getElementById("btnHomeAddService").onclick = () => {
   ]);
   setTimeout(() => document.getElementById("svcAddHost")?.focus(), 100);
 };
+
+// ── Dedicated Services view ────────────────────────────────────────────────
+
+let _svcShowHidden = false;
+
+async function loadServicesView() {
+  const container = document.getElementById("svcViewContent");
+  if (!container) return;
+  container.innerHTML = '<div class="empty-state">Loading…</div>';
+
+  const all = await api.services.list().catch(() => []);
+  const services = _svcShowHidden ? all : all.filter(s => !s.hidden);
+
+  if (!services.length) {
+    container.innerHTML = `<div class="empty-state">No services yet — click <strong>🔍 Discover</strong> to scan your LAN.</div>`;
+    return;
+  }
+
+  const groups = {};
+  for (const svc of services) {
+    const cat = svc.category || "other";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(svc);
+  }
+
+  container.innerHTML = "";
+  for (const cat of _SVC_CATEGORY_ORDER) {
+    const items = groups[cat];
+    if (!items?.length) continue;
+    const band = el("div", "svc-band");
+    const hd   = el("div", "svc-band-hd");
+    hd.innerHTML = `<span class="svc-band-label">${_SVC_CATEGORY_LABELS[cat] || cat}</span>
+                    <span class="svc-band-count">${items.length}</span>`;
+    band.appendChild(hd);
+    const grid = el("div", "svc-grid");
+    for (const svc of items) {
+      const card = _makeSvcCard(svc);
+      // In services view, edit modal should reload this view too
+      const moreBtn = card.querySelector(".btn-secondary");
+      if (moreBtn) {
+        const orig = moreBtn.onclick;
+        moreBtn.onclick = (e) => { e.stopPropagation(); _openSvcEditModal(svc, true); };
+      }
+      grid.appendChild(card);
+    }
+    band.appendChild(grid);
+    container.appendChild(band);
+  }
+}
+
+document.getElementById("btnSvcDiscover").onclick = async () => {
+  const btn = document.getElementById("btnSvcDiscover");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Scanning…";
+  try {
+    const result = await api.services.discover();
+    await loadServicesView();
+    btn.textContent = `✓ ${result.found} found`;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3000);
+  } catch (err) {
+    alert("Discover failed: " + err.message);
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+};
+
+document.getElementById("btnSvcAdd").onclick = () => {
+  const catOpts = Object.entries(_SVC_CATEGORY_LABELS).map(([k, v]) =>
+    `<option value="${k}">${v}</option>`
+  ).join("");
+  openModal("Add Local Service", `
+    <div class="form-field">
+      <label data-tip="Hostname or IP address — e.g. jellyfin.local, 192.168.1.50">Host / IP</label>
+      <input type="text" id="svcAddHost2" placeholder="jellyfin.local or 192.168.1.50" style="font-family:monospace">
+    </div>
+    <div class="form-field">
+      <label data-tip="Port number — 80 for HTTP (default), 8096 for Jellyfin, 8123 for Home Assistant">Port</label>
+      <input type="number" id="svcAddPort2" value="80" min="1" max="65535">
+    </div>
+    <div class="form-field">
+      <label data-tip="Optional friendly name — overrides the auto-detected page title">Label (optional)</label>
+      <input type="text" id="svcAddLabel2" placeholder="e.g. Living Room Jellyfin">
+    </div>
+    <div class="form-field">
+      <label data-tip="Category shown in the Services view">Category</label>
+      <select id="svcAddCat2">${catOpts}</select>
+    </div>
+    <p id="svcAddStatus2" style="font-size:12px;color:var(--color-text-muted);min-height:18px;margin-top:4px"></p>
+  `, [
+    { label: "Add", cls: "btn btn-primary", action: async () => {
+      const host     = document.getElementById("svcAddHost2")?.value.trim();
+      const port     = parseInt(document.getElementById("svcAddPort2")?.value, 10) || 80;
+      const label    = document.getElementById("svcAddLabel2")?.value.trim() || undefined;
+      const category = document.getElementById("svcAddCat2")?.value;
+      const status   = document.getElementById("svcAddStatus2");
+      if (!host) { if (status) status.textContent = "Enter a host or IP address."; return; }
+      if (status) status.textContent = "Probing…";
+      try {
+        await api.services.add({ host, port, label, category });
+        closeModal();
+        loadServicesView();
+      } catch (err) { if (status) status.textContent = "Error: " + err.message; }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+  setTimeout(() => document.getElementById("svcAddHost2")?.focus(), 100);
+};
+
+document.getElementById("btnSvcShowHidden").onclick = () => {
+  _svcShowHidden = !_svcShowHidden;
+  const btn = document.getElementById("btnSvcShowHidden");
+  btn.textContent = _svcShowHidden ? "Hide Hidden" : "Show Hidden";
+  loadServicesView();
+};
+
+// Patch _openSvcEditModal to accept an optional fromServicesView flag
+const _origOpenSvcEdit = _openSvcEditModal;
+function _openSvcEditModal(svc, fromServicesView = false) {
+  const currentLabel = svc.label || svc.title || "";
+  const catOpts = Object.entries(_SVC_CATEGORY_LABELS).map(([k, v]) =>
+    `<option value="${k}" ${svc.category === k ? "selected" : ""}>${v}</option>`
+  ).join("");
+  const reloadFn = fromServicesView
+    ? () => { loadLocalNetwork(); loadServicesView(); }
+    : () => loadLocalNetwork();
+
+  openModal(`Edit — ${currentLabel || svc.host}`, `
+    <div class="form-field">
+      <label data-tip="Friendly name shown on the card — overrides the page title">Label</label>
+      <input type="text" id="svcEditLabel" value="${currentLabel}" placeholder="e.g. Living Room Tasmota">
+    </div>
+    <div class="form-field">
+      <label data-tip="Group this service with similar services">Category</label>
+      <select id="svcEditCat">${catOpts}</select>
+    </div>
+  `, [
+    { label: "Save", cls: "btn btn-primary", action: async () => {
+      const label    = document.getElementById("svcEditLabel").value.trim() || null;
+      const category = document.getElementById("svcEditCat").value;
+      await api.services.update(svc.id, { label, category }).catch(err => alert(err.message));
+      closeModal(); reloadFn();
+    }},
+    { label: svc.pinned ? "Unpin" : "📌 Pin", cls: "btn btn-secondary", action: async () => {
+      await api.services.update(svc.id, { pinned: !svc.pinned }).catch(() => {});
+      closeModal(); reloadFn();
+    }},
+    { label: "Hide", cls: "btn btn-secondary", action: async () => {
+      if (!confirm(`Hide "${currentLabel || svc.host}"?`)) return;
+      await api.services.update(svc.id, { hidden: true }).catch(() => {});
+      closeModal(); reloadFn();
+    }},
+    { label: "Delete Entry", cls: "btn btn-danger", action: async () => {
+      if (!confirm(`Remove "${currentLabel || svc.host}" from the registry entirely?`)) return;
+      await api.services.delete(svc.id).catch(() => {});
+      closeModal(); reloadFn();
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+  setTimeout(() => { const el = document.getElementById("svcEditLabel"); el?.focus(); el?.select(); }, 100);
+}
 
 // ── Home dashboard device pills ──────────────────────────────────────────────
 function _renderDevicePills(listEl, devices, onRefresh, devProjectMap = new Map()) {
@@ -5344,6 +5460,7 @@ const viewLoaders = {
   events:        loadEvents,
   rules:         loadRules,
   "agent-bench": loadAgentBench,
+  services:      loadServicesView,
 };
 
 function loadView(name) {

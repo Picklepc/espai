@@ -83,6 +83,13 @@ const api = {
     delete:     (id)        => apiFetch(`/api/services/${id}`,  { method: "DELETE" }),
   },
 
+  // Caddy config
+  caddy: {
+    get:      () => apiFetch("/api/caddy/caddyfile"),
+    write:    () => apiFetch("/api/caddy/write", { method: "POST" }),
+    downloadUrl: () => "/api/caddy/download",
+  },
+
   // Registry
   workers: {
     list:          ()         => apiFetch("/api/workers/"),

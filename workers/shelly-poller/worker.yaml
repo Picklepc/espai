@@ -1,0 +1,47 @@
+schema: ESPAI.worker.v1
+name: shelly-poller
+display_name: Shelly Poller
+description: >
+  Polls a Shelly device via its local HTTP API. Auto-detects gen1 (/status)
+  vs gen2/gen3 (/rpc/Shelly.GetStatus) protocol. Pushes power, energy, switch
+  state, and temperature readings to the ESPAI hub data store.
+version: "1.0.0"
+entrypoint: main.py
+mode: oneshot
+quarantine: true
+
+permissions:
+  network: true
+
+env_required:
+  - SHELLY_HOST      # IP or hostname, e.g. 192.168.1.55
+env_optional:
+  - SHELLY_AUTH_USER # Shelly auth username (gen1 HTTP basic auth)
+  - SHELLY_AUTH_PASS # Shelly auth password
+  - ESPAI_HUB_URL
+
+inputs:
+  project_id:
+    type: string
+    required: true
+  channel:
+    type: integer
+    description: Switch/relay channel index (0-based, default 0)
+    default: 0
+
+outputs:
+  state:
+    type: object
+    description: Device state including power, energy, temperature, switch state
+  generation:
+    type: string
+    description: Detected API generation (gen1 or gen2)
+  events:
+    type: array
+
+resource_cost:
+  cpu: low
+  memory: low
+  disk: none
+
+tags: [integration, shelly, smart-home, power-monitoring]

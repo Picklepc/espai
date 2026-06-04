@@ -17,7 +17,7 @@ from pydantic import BaseModel, field_validator
 
 from ..config import ACTIVE_THEME, DESIGN_DIR, FIRMWARE_CATALOG_DIR, PROJECTS_DIR
 from ..db import get_conn, _to_hostname
-from .. import git_helper
+from .. import git_helper, ws_broker
 from ..discovery.mdns import mdns_manager as _mdns
 
 router = APIRouter()
@@ -281,6 +281,259 @@ if __name__ == "__main__":
     print(json.dumps(run(inp)))
 """
 
+_WEB_HUB_API_JS = """\
+/**
+ * ESPAI Hub API client — included in every project web scaffold.
+ * Works whether the page is served from the hub (/app/{slug}/) or a device directly.
+ */
+(function (global) {
+  const HUB_HOSTED = location.pathname.startsWith("/app/");
+  const HUB_BASE   = HUB_HOSTED ? "" : (localStorage.getItem("espai_hub") || "http://espai.local:7888");
+  const PROJECT_ID = document.documentElement.dataset.projectId || "";
+
+  const hub = {
+    base: HUB_BASE,
+    projectId: PROJECT_ID,
+
+    async getLatest() {
+      const r = await fetch(`${HUB_BASE}/api/projects/${PROJECT_ID}/data/latest`);
+      if (!r.ok) throw new Error(`hub: ${r.status}`);
+      return r.json();
+    },
+
+    async pushData(payload) {
+      return fetch(`${HUB_BASE}/api/projects/${PROJECT_ID}/data`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+
+    connectWS(onEvent) {
+      const wsBase = HUB_BASE.replace(/^http/, "ws");
+      let ws, retryMs = 1000;
+      const connect = () => {
+        ws = new WebSocket(`${wsBase}/api/ws`);
+        ws.onmessage = e => {
+          try {
+            const msg = JSON.parse(e.data);
+            // Live-reload: hub reloads the page when a web file is saved
+            if (msg.type === "project.web.reload" && PROJECT_ID && msg.slug) {
+              if (location.pathname.includes(msg.slug)) { location.reload(); return; }
+            }
+            onEvent(msg);
+          } catch (_) {}
+        };
+        ws.onclose   = () => { setTimeout(connect, retryMs = Math.min(retryMs * 2, 30000)); };
+        ws.onopen    = () => { retryMs = 1000; };
+      };
+      connect();
+      return { close: () => ws && ws.close() };
+    },
+  };
+
+  global.espai = hub;
+})(window);
+"""
+
+_WEB_INDEX_ESP32 = """\
+<!DOCTYPE html>
+<html lang="en" data-project-id="{project_id}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{name}</title>
+  <script src="hub-api.js"></script>
+  <style>
+    body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; margin: 0; padding: 20px; }}
+    h1   {{ font-size: 1.4rem; color: #1aafc4; margin-bottom: 4px; }}
+    .sub {{ font-size: 0.85rem; color: #888; margin-bottom: 24px; }}
+    .card {{ background: #16213e; border: 1px solid #2a2a4e; border-radius: 10px; padding: 16px; margin-bottom: 16px; max-width: 480px; }}
+    .label {{ font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: .05em; }}
+    .value {{ font-size: 2rem; font-weight: 700; color: #1aafc4; margin: 4px 0; }}
+    .unit  {{ font-size: 0.9rem; color: #aaa; }}
+    .status {{ font-size: 0.8rem; color: #555; margin-top: 8px; }}
+  </style>
+</head>
+<body>
+  <h1>{name}</h1>
+  <p class="sub">{description}</p>
+  <div class="card" id="readings">
+    <div class="label">Loading…</div>
+  </div>
+  <div class="status" id="status">Connecting to hub…</div>
+
+  <script>
+    const readingsEl = document.getElementById("readings");
+    const statusEl   = document.getElementById("status");
+
+    function renderReadings(devices) {{
+      const entries = Object.entries(Object.values(devices)[0] || {{}});
+      if (!entries.length) {{ readingsEl.innerHTML = '<div class="label">No data yet</div>'; return; }}
+      readingsEl.innerHTML = entries
+        .filter(([k]) => !k.startsWith("_"))
+        .map(([k, v]) => `
+          <div class="label">${{k}}</div>
+          <div class="value">${{typeof v === "number" ? v.toFixed(2) : v}}</div>
+        `).join("");
+    }}
+
+    async function refresh() {{
+      try {{
+        const {{ devices }} = await espai.getLatest();
+        renderReadings(devices || {{}});
+        statusEl.textContent = "Last updated: " + new Date().toLocaleTimeString();
+      }} catch (e) {{
+        statusEl.textContent = "Hub unreachable — " + e.message;
+      }}
+    }}
+
+    refresh();
+    espai.connectWS(msg => {{ if (msg.type === "project.data") refresh(); }});
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>
+"""
+
+_WEB_INDEX_INTEGRATION = """\
+<!DOCTYPE html>
+<html lang="en" data-project-id="{project_id}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{name}</title>
+  <script src="hub-api.js"></script>
+  <style>
+    body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; margin: 0; padding: 20px; }}
+    h1   {{ font-size: 1.4rem; color: #1aafc4; margin-bottom: 4px; }}
+    .sub {{ font-size: 0.85rem; color: #888; margin-bottom: 24px; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; max-width: 900px; }}
+    .tile {{ background: #16213e; border: 1px solid #2a2a4e; border-radius: 10px; padding: 16px; }}
+    .label {{ font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: .05em; }}
+    .value {{ font-size: 1.6rem; font-weight: 700; color: #1aafc4; margin: 4px 0; word-break: break-all; }}
+    .status {{ font-size: 0.8rem; color: #555; margin-top: 16px; }}
+  </style>
+</head>
+<body>
+  <h1>{name}</h1>
+  <p class="sub">{description}</p>
+  <div class="grid" id="grid">
+    <div class="tile"><div class="label">Loading…</div></div>
+  </div>
+  <div class="status" id="status">Connecting to hub…</div>
+
+  <script>
+    const gridEl  = document.getElementById("grid");
+    const statusEl = document.getElementById("status");
+
+    function renderGrid(devices) {{
+      const latest = Object.values(devices)[0] || {{}};
+      const entries = Object.entries(latest).filter(([k]) => !k.startsWith("_"));
+      if (!entries.length) {{ gridEl.innerHTML = '<div class="tile"><div class="label">No data yet — run the integration worker to populate</div></div>'; return; }}
+      gridEl.innerHTML = entries.map(([k, v]) => `
+        <div class="tile">
+          <div class="label">${{k}}</div>
+          <div class="value">${{typeof v === "number" ? v.toFixed(2) : v}}</div>
+        </div>
+      `).join("");
+    }}
+
+    async function refresh() {{
+      try {{
+        const {{ devices }} = await espai.getLatest();
+        renderGrid(devices || {{}});
+        statusEl.textContent = "Last updated: " + new Date().toLocaleTimeString();
+      }} catch (e) {{
+        statusEl.textContent = "Hub unreachable — " + e.message;
+      }}
+    }}
+
+    refresh();
+    espai.connectWS(msg => {{ if (msg.type === "project.data") refresh(); }});
+    setInterval(refresh, 15000);
+  </script>
+</body>
+</html>
+"""
+
+_WEB_INDEX_HYBRID = """\
+<!DOCTYPE html>
+<html lang="en" data-project-id="{project_id}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{name}</title>
+  <script src="hub-api.js"></script>
+  <style>
+    body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; margin: 0; padding: 20px; }}
+    h1   {{ font-size: 1.4rem; color: #1aafc4; margin-bottom: 4px; }}
+    .sub {{ font-size: 0.85rem; color: #888; margin-bottom: 24px; }}
+    .section-hd {{ font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: .05em; margin: 20px 0 8px; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; max-width: 900px; }}
+    .tile {{ background: #16213e; border: 1px solid #2a2a4e; border-radius: 10px; padding: 14px; }}
+    .label {{ font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: .05em; }}
+    .value {{ font-size: 1.4rem; font-weight: 700; color: #1aafc4; margin: 4px 0; word-break: break-all; }}
+    .status {{ font-size: 0.8rem; color: #555; margin-top: 16px; }}
+  </style>
+</head>
+<body>
+  <h1>{name}</h1>
+  <p class="sub">{description}</p>
+  <div class="section-hd">ESP32 Node</div>
+  <div class="grid" id="nodeGrid"><div class="tile"><div class="label">Loading…</div></div></div>
+  <div class="section-hd">Integration</div>
+  <div class="grid" id="integGrid"><div class="tile"><div class="label">Loading…</div></div></div>
+  <div class="status" id="status">Connecting…</div>
+
+  <script>
+    const nodeGrid  = document.getElementById("nodeGrid");
+    const integGrid = document.getElementById("integGrid");
+    const statusEl  = document.getElementById("status");
+
+    function renderGrid(el, data) {{
+      const entries = Object.entries(data).filter(([k]) => !k.startsWith("_"));
+      if (!entries.length) {{ el.innerHTML = '<div class="tile"><div class="label">No data yet</div></div>'; return; }}
+      el.innerHTML = entries.map(([k, v]) => `
+        <div class="tile">
+          <div class="label">${{k}}</div>
+          <div class="value">${{typeof v === "number" ? v.toFixed(2) : v}}</div>
+        </div>
+      `).join("");
+    }}
+
+    async function refresh() {{
+      try {{
+        const {{ devices }} = await espai.getLatest();
+        const devEntries = Object.entries(devices || {{}});
+        // First device = ESP32 node, remaining = integration sources
+        renderGrid(nodeGrid, devEntries[0]?.[1] || {{}});
+        const integData = devEntries.slice(1).reduce((acc, [, v]) => ({{...acc, ...v}}), {{}});
+        renderGrid(integGrid, integData);
+        statusEl.textContent = "Last updated: " + new Date().toLocaleTimeString();
+      }} catch (e) {{
+        statusEl.textContent = "Hub unreachable — " + e.message;
+      }}
+    }}
+
+    refresh();
+    espai.connectWS(msg => {{ if (msg.type === "project.data") refresh(); }});
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>
+"""
+
+_WEB_APP_MANIFEST = """\
+{{
+  "name": "{name}",
+  "description": "{description}",
+  "project_id": "{project_id}",
+  "entry_point": "index.html",
+  "theme_color": "#1aafc4"
+}}
+"""
+
 _INTEGRATION_CONFIG_TEMPLATE = """\
 # {name} — integration configuration
 # Copy values here and set sensitive fields via environment variables.
@@ -522,6 +775,32 @@ def _create_project_folder(
             encoding="utf-8",
         )
 
+    # ── Web app starter scaffold ──────────────────────────────────────────────
+    web_dir = proj_dir / "web"
+    web_dir.mkdir(exist_ok=True)
+    (web_dir / "hub-api.js").write_text(_WEB_HUB_API_JS, encoding="utf-8")
+    web_template = {
+        "esp32":        _WEB_INDEX_ESP32,
+        "integration":  _WEB_INDEX_INTEGRATION,
+        "hybrid":       _WEB_INDEX_HYBRID,
+    }.get(device_type, _WEB_INDEX_ESP32)
+    (web_dir / "index.html").write_text(
+        web_template.format(
+            project_id=project_id,
+            name=name,
+            description=description or "ESPAI project web app",
+        ),
+        encoding="utf-8",
+    )
+    (web_dir / "app.json").write_text(
+        _WEB_APP_MANIFEST.format(
+            project_id=project_id,
+            name=name,
+            description=description or "",
+        ),
+        encoding="utf-8",
+    )
+
     gitignore = "captures/\n*.private.*\nsecrets.*\n.env\n"
     if device_type in ("esp32", "hybrid"):
         gitignore += ".pio/\n"
@@ -703,6 +982,12 @@ def write_project_file(project_id: str, file_path: str, body: FileWrite):
     target.write_text(body.content, encoding="utf-8")
     # Auto-commit to project git history (silent if not a repo)
     git_helper.git_commit(proj_dir, f"edit: {file_path}", [file_path])
+    # Live-reload: broadcast to browsers when a web app file changes
+    if file_path.startswith("web/"):
+        with get_conn() as _c:
+            _row = _c.execute("SELECT slug FROM projects WHERE id=?", (project_id,)).fetchone()
+        _slug = _row["slug"] if _row else project_id
+        ws_broker.broadcast_event_sync({"type": "project.web.reload", "slug": _slug, "path": file_path})
     return {"path": file_path, "size_bytes": len(encoded), "saved": True}
 
 

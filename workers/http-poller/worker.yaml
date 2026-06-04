@@ -1,0 +1,67 @@
+schema: ESPAI.worker.v1
+name: http-poller
+display_name: Generic HTTP Poller
+description: >
+  Parameterised one-shot worker that fetches any JSON HTTP endpoint and pushes
+  the response to the ESPAI hub data store. No code required for simple REST
+  devices — configure via inputs. Use as a starting point for custom integrations
+  or as a quick test poller before writing a dedicated worker.
+version: "1.0.0"
+entrypoint: main.py
+mode: oneshot
+quarantine: true
+
+permissions:
+  network: true
+
+env_optional:
+  - HTTP_AUTH_HEADER  # e.g. "Bearer mytoken" — set in .env, not in inputs
+  - ESPAI_HUB_URL
+
+inputs:
+  project_id:
+    type: string
+    required: true
+  base_url:
+    type: string
+    description: Base URL of the target device or API
+    required: true
+  path:
+    type: string
+    description: Path to fetch (appended to base_url)
+    default: /
+  method:
+    type: string
+    description: HTTP method (GET or POST)
+    default: GET
+  body:
+    type: object
+    description: Request body for POST requests
+  field_map:
+    type: object
+    description: >
+      Optional rename map — {"source_key": "hub_key"} renames fields before
+      pushing to hub. Unmapped fields are passed through unchanged.
+
+outputs:
+  raw:
+    type: object
+    description: Raw parsed JSON response
+  mapped:
+    type: object
+    description: Response after field_map applied
+  events:
+    type: array
+
+test_inputs:
+  project_id: "test"
+  base_url: "http://localhost:7888"
+  path: "/api/status"
+  field_map: {}
+
+resource_cost:
+  cpu: low
+  memory: low
+  disk: none
+
+tags: [integration, http, generic, utility]
