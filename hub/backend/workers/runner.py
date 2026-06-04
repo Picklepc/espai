@@ -67,14 +67,6 @@ def _load_policy() -> dict:
     return {}
 
 
-def _worker_is_quarantined(worker: dict, policy: dict) -> bool:
-    if worker.get("quarantine"):
-        return True
-    if not worker.get("trusted") and not worker.get("local", True):
-        if policy.get("workers", {}).get("imported_default_state") == "quarantined":
-            return True
-    return False
-
 
 def _fail_job(job_id: str, error: str) -> None:
     try:
@@ -129,10 +121,6 @@ def _run_job(job_id: str, worker_name: str, inputs: dict) -> None:
     worker = _resolve_worker(worker_name, project_id)
     if not worker:
         _fail_job(job_id, f"Worker {worker_name!r} not found in registry")
-        return
-
-    if _worker_is_quarantined(worker, policy):
-        _fail_job(job_id, f"Worker {worker_name!r} is quarantined — review and lift quarantine to enable")
         return
 
     violations = check_permissions(worker, policy)
@@ -379,9 +367,6 @@ def start_services() -> None:
         wname = worker.get("name") or worker.get("_folder")
         if not wname:
             continue
-        if _worker_is_quarantined(worker, policy):
-            log.info("Service %r is quarantined — skipping auto-start", wname)
-            continue
         _launch_service(wname, worker)
 
 
@@ -411,8 +396,6 @@ def service_start(worker_name: str) -> tuple[bool, str]:
     )
     if not worker or worker.get("mode") != "service":
         return False, "not a service worker"
-    if _worker_is_quarantined(worker, policy):
-        return False, "worker is quarantined"
     ok = _launch_service(worker_name, worker)
     return ok, "started" if ok else "entrypoint not found"
 

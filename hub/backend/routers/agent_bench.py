@@ -7,7 +7,7 @@ Security model (enforced here, not delegated to the agent):
 - Blocked paths are never writable by any adapter
 - OTA to non-dev devices is rejected
 - All adapter actions are logged in agent_runs
-- Workers created by agents start quarantined
+- Workers created by agents are committed to git for review
 """
 
 import glob
@@ -140,36 +140,6 @@ def _is_blocked(path: str) -> bool:
                 return True
     return False
 
-
-def _auto_lift_worker_quarantine(allowed_paths: list[str]) -> None:
-    """
-    When a task is auto-approved (require_human_review=false), lift quarantine
-    on any workers the task was allowed to create or modify.
-    Matches paths like 'workers/{name}/' or 'projects/{id}/workers/{name}/'.
-    """
-    import re as _re
-    import yaml as _yaml
-    worker_names: list[str] = []
-    for p in allowed_paths:
-        m = _re.search(r"workers/([^/]+)/?$", p)
-        if m:
-            worker_names.append(m.group(1))
-
-    for wname in worker_names:
-        yaml_path = WORKERS_DIR / wname / "worker.yaml"
-        if not yaml_path.exists():
-            continue
-        try:
-            with open(yaml_path, encoding="utf-8") as fh:
-                data = _yaml.safe_load(fh) or {}
-            if data.get("quarantine"):
-                data["quarantine"] = False
-                data["trusted"]    = True
-                with open(yaml_path, "w", encoding="utf-8") as fh:
-                    _yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
-                log.info("Auto-lifted quarantine on worker %r (auto-approved task)", wname)
-        except Exception as exc:
-            log.warning("Auto-quarantine-lift failed for %r: %s", wname, exc)
 
 
 def _extra_tool_dirs() -> list[str]:
@@ -510,7 +480,6 @@ class ReviewCreate(BaseModel):
 class ConfigUpdate(BaseModel):
     enabled: bool = False
     allow_dev_device_deploy: bool = False
-    require_human_review: bool = True
     allowed_adapters: list[str] = ["manual"]
     claude_tool_mode: str = "full"   # "full" | "safe"
 
@@ -570,18 +539,17 @@ def list_templates(device_type: str = "esp32"):
 def get_config():
     enabled = _is_enabled()
     allow_dev = os.environ.get("ESPAI_AGENT_ALLOW_DEV_DEPLOY", "false").lower() == "true"
-    require_review = os.environ.get("ESPAI_AGENT_REQUIRE_REVIEW", "true").lower() != "false"
     allowed = os.environ.get("ESPAI_AGENT_ADAPTERS", "manual").split(",")
     tool_mode = os.environ.get("ESPAI_CLAUDE_TOOL_MODE", "full")
     if tool_mode not in _CLAUDE_TOOL_MODES:
         tool_mode = "full"
     return {
-        "enabled": enabled,
+        "enabled":                enabled,
         "allow_dev_device_deploy": allow_dev,
-        "require_human_review": require_review,
-        "allowed_adapters": [a.strip() for a in allowed],
-        "available_adapters": list(_KNOWN_ADAPTERS.keys()),
-        "claude_tool_mode": tool_mode,
+        "require_human_review":   False,   # removed — agent changes always auto-apply; use git to roll back
+        "allowed_adapters":       [a.strip() for a in allowed],
+        "available_adapters":     list(_KNOWN_ADAPTERS.keys()),
+        "claude_tool_mode":       tool_mode,
     }
 
 
@@ -593,11 +561,10 @@ def update_config(data: ConfigUpdate):
 
     tool_mode = data.claude_tool_mode if data.claude_tool_mode in _CLAUDE_TOOL_MODES else "full"
     updates = {
-        "ESPAI_AGENT_BENCH": "true" if data.enabled else "false",
+        "ESPAI_AGENT_BENCH":           "true" if data.enabled else "false",
         "ESPAI_AGENT_ALLOW_DEV_DEPLOY": "true" if data.allow_dev_device_deploy else "false",
-        "ESPAI_AGENT_REQUIRE_REVIEW": "true" if data.require_human_review else "false",
-        "ESPAI_AGENT_ADAPTERS": ",".join(data.allowed_adapters),
-        "ESPAI_CLAUDE_TOOL_MODE": tool_mode,
+        "ESPAI_AGENT_ADAPTERS":        ",".join(data.allowed_adapters),
+        "ESPAI_CLAUDE_TOOL_MODE":      tool_mode,
     }
 
     new_lines = []
@@ -998,8 +965,7 @@ def add_message(task_id: str, data: MessageCreate):
             (msg_id, task_id, data.role, data.content, now),
         )
 
-        # When an agent message is added for a manual-adapter run, snapshot the
-        # filesystem so the diff viewer shows what actually changed (not null vs before).
+        # When an agent message arrives for a manual run, auto-approve and commit.
         if data.role == "agent":
             task = dict(task_row)
             allowed = json.loads(task.get("allowed_paths") or "[]")
@@ -1013,10 +979,27 @@ def add_message(task_id: str, data: MessageCreate):
                     "UPDATE agent_runs SET snapshot_after=?, finished=?, status='completed' WHERE id=?",
                     (json.dumps(snapshot_after), now, run["id"]),
                 )
+                conn.execute(
+                    "INSERT INTO agent_reviews (id, task_id, run_id, decision, notes, created) VALUES (?,?,?,?,?,?)",
+                    (str(uuid.uuid4()), task_id, run["id"], "approved",
+                     "auto-applied (manual) — use git log to review changes", now),
+                )
             conn.execute(
-                "UPDATE agent_tasks SET status='awaiting_review', updated=? WHERE id=?",
+                "UPDATE agent_tasks SET status='approved', updated=? WHERE id=?",
                 (now, task_id),
             )
+
+    # Auto-commit project git on manual run completion
+    if data.role == "agent":
+        task_data = dict(task_row)
+        proj_id = (task_data.get("context_id") if task_data.get("context_type") == "project"
+                   else task_data.get("project_id"))
+        title = task_data.get("title", task_id)[:60]
+        if proj_id:
+            try:
+                git_helper.git_commit(PROJECTS_DIR / proj_id, f"agent: {title} (auto-applied)")
+            except Exception:
+                pass
 
     return {"id": msg_id, "task_id": task_id}
 
@@ -1255,11 +1238,8 @@ def run_task(task_id: str, data: RunCreate):
             snapshot_after = _snapshot_paths(allowed)
             success        = proc.returncode == 0
 
-            # Respect the require_human_review setting.
-            # When false: auto-approve on success — git commits and quarantine
-            # is lifted automatically; task goes straight to 'approved'.
-            require_review = os.environ.get("ESPAI_AGENT_REQUIRE_REVIEW", "true").lower() != "false"
-            new_task_status = "awaiting_review" if (require_review or not success) else "approved"
+            # Agent changes always auto-apply — use git log to review history and roll back.
+            new_task_status = "approved" if success else "needs_changes"
 
             with get_conn() as conn:
                 conn.execute(
@@ -1286,10 +1266,10 @@ def run_task(task_id: str, data: RunCreate):
                     conn.execute(
                         "INSERT INTO agent_reviews (id, task_id, run_id, decision, notes, created) VALUES (?,?,?,?,?,?)",
                         (str(uuid.uuid4()), task_id, run_id, "approved",
-                         "auto-applied (require_human_review=false)", finished),
+                         "auto-applied — use git log to review changes", finished),
                     )
 
-            # Auto-approve side-effects: git commit + quarantine lift
+            # Auto-approve side-effect: git commit
             if new_task_status == "approved":
                 try:
                     proj_id = None
@@ -1309,8 +1289,6 @@ def run_task(task_id: str, data: RunCreate):
                         )
                 except Exception as _exc:
                     log.warning("Auto-approve git commit failed: %s", _exc)
-                # Lift quarantine on any workers the task created/modified
-                _auto_lift_worker_quarantine(allowed)
 
         except subprocess.TimeoutExpired:
             if proc:

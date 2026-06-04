@@ -1598,7 +1598,10 @@ async function refreshProjectFiles(projectId, silent = false) {
   const statusEl  = document.getElementById("projFilesStatus");
   if (!silent) fileList.innerHTML = '<div class="empty-state">Loading…</div>';
   try {
-    const { files, root } = await api.projects.files(projectId);
+    const [{ files, root }, gitData] = await Promise.all([
+      api.projects.files(projectId),
+      api.projects.gitLog(projectId, 8).catch(() => ({ commits: [], is_repo: false })),
+    ]);
 
     // Wire VS Code button when we have a root path
     const vsBtn = document.getElementById("btnOpenVSCode");
@@ -1608,16 +1611,68 @@ async function refreshProjectFiles(projectId, silent = false) {
       vsBtn.dataset.tip   = `Open ${fwDir} in VS Code`;
       vsBtn.onclick       = () => window.open(_pathToVSCodeUri(fwDir), "_self");
     }
-    const snapshot = JSON.stringify(files.map(f => f.path + f.size_bytes));
+
+    const topCommitHash = gitData.commits?.[0]?.hash || "";
+    const snapshot = JSON.stringify(files.map(f => f.path + f.size_bytes)) + topCommitHash;
 
     // Avoid re-rendering if nothing changed (silent poll)
     if (silent && snapshot === _filesSnapshot) return;
     _filesSnapshot = snapshot;
 
+    fileList.innerHTML = "";
+
+    // Git repository card — shown above files when repo exists
+    if (gitData.is_repo) {
+      const gitCard = el("div", "git-repo-card");
+      const commits = gitData.commits || [];
+      const commitRows = commits.map(c => {
+        const shortMsg = c.message.length > 50 ? c.message.slice(0, 50) + "…" : c.message;
+        return `<div class="git-commit-row" data-sha="${c.hash}">
+          <code class="git-hash" data-tip="Commit ${c.hash}">${c.hash.slice(0,7)}</code>
+          <span class="git-msg" data-tip="${c.message.replace(/"/g,'&quot;')}">${shortMsg}</span>
+          <span class="git-age" data-tip="${c.timestamp}">${timeAgo(c.timestamp)}</span>
+          <button class="btn btn-secondary btn-sm git-rollback-btn" data-sha="${c.hash}" data-msg="${c.message.replace(/"/g,'&quot;')}"
+            data-tip="Roll back to this commit — resets working tree to ${c.hash.slice(0,7)}">Roll Back</button>
+        </div>`;
+      }).join("");
+      gitCard.innerHTML = `
+        <div class="git-card-header">
+          <span class="git-card-title" data-tip="This project's git history — every file save and agent run is auto-committed">🔀 Git History</span>
+          <button class="btn btn-secondary btn-sm" id="btnGitCardViewAll" data-tip="View full commit history and Flash shortcuts">View All</button>
+        </div>
+        <div class="git-commits-list">${commitRows || '<div style="font-size:12px;color:var(--color-text-muted);padding:6px 0">No commits yet.</div>'}</div>
+      `;
+      fileList.appendChild(gitCard);
+
+      // Wire "View All" to open the full git log modal
+      gitCard.querySelector("#btnGitCardViewAll").onclick = () =>
+        document.getElementById("btnProjGitLog").click();
+
+      // Wire Roll Back buttons
+      gitCard.querySelectorAll(".git-rollback-btn").forEach(btn => {
+        btn.onclick = async () => {
+          const sha = btn.dataset.sha;
+          const msg = btn.dataset.msg;
+          if (!confirm(`Roll back to commit ${sha.slice(0,7)} — "${msg}"?\n\nThis resets the working tree to that state. Uncommitted changes will be lost.\nYou can always return to the current state via git reflog in the terminal.`)) return;
+          try {
+            btn.disabled = true;
+            btn.textContent = "Rolling back…";
+            await api.projects.gitRollback(projectId, sha);
+            await refreshProjectFiles(projectId);
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = "Roll Back";
+            alert("Rollback failed: " + err.message);
+          }
+        };
+      });
+    }
+
     if (!files.length) {
-      fileList.innerHTML = '<div class="empty-state">No files yet.</div>';
+      const empty = el("div", "empty-state");
+      empty.textContent = "No files yet.";
+      fileList.appendChild(empty);
     } else {
-      fileList.innerHTML = "";
       for (const f of files) {
         const row = el("div", "file-row");
         const isBin = f.path.endsWith(".bin");
@@ -2678,13 +2733,9 @@ async function loadWorkers() {
                             crashed: "var(--color-danger)", restarting: "var(--color-warning)",
                             starting: "var(--color-accent)" }[svcState] || "var(--color-text-muted)";
 
-    const card = el("div", item.quarantine ? "reg-card reg-card-quarantined" : "reg-card");
+    const card = el("div", "reg-card");
 
     card.innerHTML = `
-      ${item.quarantine ? `
-        <div class="quarantine-banner" data-tip="This worker is quarantined — it cannot run jobs until you review and trust it">
-          ⚠ Quarantined — review code before enabling
-        </div>` : ""}
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
         <div class="reg-card-title">${title}</div>
         <div style="display:flex;gap:5px;flex-shrink:0">
@@ -2704,41 +2755,7 @@ async function loadWorkers() {
     const btnRow = el("div", "");
     btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:10px";
 
-    if (item.quarantine) {
-      // Primary CTA for quarantined workers: review and trust
-      const trustBtn = el("button", "btn btn-primary btn-sm", "🔓 Review & Trust");
-      trustBtn.dataset.tip = "View the worker code, then lift quarantine to enable it for production jobs";
-      trustBtn.onclick = async () => {
-        // Show code preview then offer to trust
-        let codePreview = "(could not read files)";
-        try {
-          const files = await api.workers.files(wname);
-          const mainFile = (files || []).find(f => f.path?.endsWith(".py") || f.name?.endsWith(".py"));
-          if (mainFile) {
-            const content = await api.workers.readFile(wname, mainFile.path || mainFile.name);
-            codePreview = (content.content || "").slice(0, 2000);
-          }
-        } catch (_) {}
-        openModal(`Review — ${title}`, `
-          <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:10px;line-height:1.6">
-            Review the worker code below. If it looks safe, click <strong>Trust & Enable</strong>
-            to lift quarantine and allow this worker to run production jobs.
-          </p>
-          <pre style="font-size:11px;line-height:1.5;max-height:300px;overflow-y:auto;background:var(--color-card);border:1px solid var(--color-card-border);border-radius:6px;padding:10px;white-space:pre-wrap;word-break:break-word">${codePreview.replace(/</g,"&lt;")}</pre>
-        `, [
-          { label: "Trust & Enable", cls: "btn btn-primary",
-            tip: "Set quarantine: false, trusted: true in worker.yaml — enables production job execution",
-            action: async () => {
-              try { await api.workers.setQuarantine(wname, false); closeModal(); loadWorkers(); }
-              catch (err) { alert("Error: " + err.message); }
-            }
-          },
-          { label: "Keep Quarantined", cls: "btn btn-secondary", action: closeModal },
-        ]);
-      };
-      btnRow.appendChild(trustBtn);
-
-    } else if (isService) {
+    if (isService) {
       // Service worker controls
       const isRunning = ["running", "starting", "restarting"].includes(svcState);
       const startBtn = el("button", "btn btn-secondary btn-sm", "▶ Start");
@@ -4143,7 +4160,7 @@ document.getElementById("btnNewRule").onclick = () => {
 // ── Agent Bench view ───────────────────────────────────────────────────────
 
 let _abCurrentTask = null;
-let _abConfig = { require_human_review: true, claude_tool_mode: "full", enabled: false };
+let _abConfig = { claude_tool_mode: "full", enabled: false };
 let _abStatusFilter = "";
 let _abPollTimer = null;
 let _abTaskProjectMode = "dev"; // approval mode of the current task's project
@@ -4210,24 +4227,6 @@ async function loadAgentBench() {
   disabledEl.classList.add("hidden");
   detailEl.classList.add("hidden");
 
-  // Auto-apply banner — visible when require_human_review is OFF
-  const autoApplyBanner = document.getElementById("abAutoApplyBanner");
-  if (autoApplyBanner) {
-    const autoOn = config.require_human_review === false;
-    autoApplyBanner.style.display = autoOn ? "flex" : "none";
-  }
-
-  // "Turn off" button in the banner
-  const turnOffBtn = document.getElementById("btnAbAutoApplyOff");
-  if (turnOffBtn) {
-    turnOffBtn.onclick = async () => {
-      try {
-        await api.agentBench.updateConfig({ ..._abConfig, require_human_review: true });
-        _abConfig.require_human_review = true;
-        if (autoApplyBanner) autoApplyBanner.style.display = "none";
-      } catch (err) { alert("Error: " + err.message); }
-    };
-  }
   listEl.classList.remove("hidden");
 
   await _abLoadTaskList();
@@ -4420,88 +4419,41 @@ const _ADAPTER_DESCRIPTIONS = {
 };
 
 function _abUpdateRunControls(task) {
-  const runPanel    = document.getElementById("abRunPanel");
-  const pastePanel  = document.getElementById("abPastePanel");
-  const reviewPanel = document.getElementById("abReviewPanel");
-  const adapterDesc = document.getElementById("abAdapterDesc");
-  const resetBtn    = document.getElementById("btnAbReset");
+  const runPanel        = document.getElementById("abRunPanel");
+  const pastePanel      = document.getElementById("abPastePanel");
+  const completionPanel = document.getElementById("abCompletionPanel");
+  const resetBtn        = document.getElementById("btnAbReset");
 
-  const requireReview = _abConfig.require_human_review !== false;
-  const canRun        = ["draft", "needs_changes"].includes(task.status);
-  const isStuck       = task.status === "running";
-  const needsPaste    = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
-  // Show review panel only when review is required and task is awaiting it
-  const needsReview   = task.status === "awaiting_review" && !needsPaste && requireReview;
-  // Auto-applied: task approved without human review
-  const autoApplied   = task.status === "approved" && !requireReview;
+  const canRun    = ["draft", "needs_changes"].includes(task.status);
+  const isStuck   = task.status === "running";
+  const needsPaste = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
+  const isDone    = ["approved", "rejected"].includes(task.status);
 
   runPanel.style.display = canRun ? "" : "none";
   pastePanel.classList.toggle("hidden", !needsPaste);
-  reviewPanel.classList.toggle("hidden", !needsReview);
+  if (completionPanel) completionPanel.classList.toggle("hidden", !isDone);
   if (resetBtn) resetBtn.style.display = isStuck ? "" : "none";
 
-  // Show auto-applied banner when review is disabled and task completed
-  let autoBanner = document.getElementById("abAutoAppliedBanner");
-  if (autoApplied) {
-    if (!autoBanner) {
-      autoBanner = document.createElement("div");
-      autoBanner.id = "abAutoAppliedBanner";
-      autoBanner.style.cssText = "padding:10px 14px;background:rgba(26,175,196,.1);border:1px solid rgba(26,175,196,.3);border-radius:6px;font-size:13px;color:var(--color-accent);margin-top:10px";
-      autoBanner.dataset.tip = "Changes were applied automatically because require_human_review is off — use git log in the project to review history";
-      reviewPanel.parentNode?.insertBefore(autoBanner, reviewPanel);
+  // Update completion panel text based on outcome
+  if (completionPanel && isDone) {
+    const heading = document.getElementById("abCompletionHeading");
+    const hint    = document.getElementById("abCompletionHint");
+    if (task.status === "approved") {
+      if (heading) heading.textContent = "Done ✓";
+      if (hint) hint.innerHTML = 'Changes applied and committed to git. Open the project\'s <strong>📋 History</strong> to see what changed, or use the <strong>🎯 Flash</strong> shortcut to roll back a firmware build.';
+    } else {
+      if (heading) heading.textContent = "Closed";
+      if (hint) hint.textContent = "Task was closed without changes. Re-run to try again.";
     }
-    autoBanner.textContent = "✓ Auto-applied — changes committed to git. View Diff to review or use ↩ Continue in Terminal for follow-ups.";
-    autoBanner.style.display = "";
-  } else if (autoBanner) {
-    autoBanner.style.display = "none";
   }
 
-  if (needsReview) _abApplyReviewMode(_abTaskProjectMode);
-
+  const adapterDesc = document.getElementById("abAdapterDesc");
   if (adapterDesc) {
     const sel = document.getElementById("abAdapterSelect");
     adapterDesc.textContent = sel ? (_ADAPTER_DESCRIPTIONS[sel.value] || "") : "";
   }
 }
 
-function _abApplyReviewMode(mode) {
-  const banner      = document.getElementById("abModeBanner");
-  const heading     = document.getElementById("abReviewHeading");
-  const hint        = document.getElementById("abReviewHint");
-  const stableGate  = document.getElementById("abStableGate");
-  const notesField  = document.getElementById("abNotesField");
-  const approveBtn  = document.getElementById("btnAbApprove");
-  const checkbox    = document.getElementById("abDiffAcknowledge");
-
-  if (mode === "prototype") {
-    banner.innerHTML = `<div class="ab-mode-banner ab-mode-prototype" data-tip="This project is in Prototype mode — minimal friction; changes ship fast">🚀 Prototype mode — fast path active</div>`;
-    if (heading) heading.textContent = "Session Complete — Ship It?";
-    if (hint) hint.textContent = "Prototype mode: no diff review required. Click Ship It to apply changes and continue.";
-    if (stableGate) stableGate.classList.add("hidden");
-    if (notesField) notesField.classList.add("hidden");
-    if (approveBtn) { approveBtn.textContent = "✓ Ship It"; approveBtn.classList.add("ab-btn-prototype"); approveBtn.disabled = false; }
-
-  } else if (mode === "stable") {
-    banner.innerHTML = `<div class="ab-mode-banner ab-mode-stable" data-tip="This project is in Stable mode — review the diff before approving">🔒 Stable mode — review required</div>`;
-    if (heading) heading.textContent = "Session Complete — Review Required";
-    if (hint) hint.textContent = "Stable mode: view the diff before approving. Check the box below to confirm you've reviewed the changes.";
-    if (stableGate) stableGate.classList.remove("hidden");
-    if (notesField) notesField.classList.remove("hidden");
-    if (approveBtn) { approveBtn.textContent = "✓ Mark Done"; approveBtn.disabled = !(checkbox?.checked); }
-    if (checkbox) {
-      checkbox.onchange = () => { if (approveBtn) approveBtn.disabled = !checkbox.checked; };
-    }
-
-  } else {
-    // dev (default)
-    banner.innerHTML = "";
-    if (heading) heading.textContent = "Session Complete";
-    if (hint) hint.textContent = "Claude finished the terminal session. View Diff to see what changed. If the changes look good and Claude committed, mark it Done. If you need more work, add notes and re-run.";
-    if (stableGate) stableGate.classList.add("hidden");
-    if (notesField) notesField.classList.remove("hidden");
-    if (approveBtn) { approveBtn.textContent = "✓ Mark Done"; approveBtn.classList.remove("ab-btn-prototype"); approveBtn.disabled = false; }
-  }
-}
 
 function _startAbPoller(taskId) {
   _stopAbPoller();
@@ -4557,9 +4509,28 @@ function _abWireEvents() {
     } catch (err) { alert("Reset failed: " + err.message); }
   };
 
+  document.getElementById("btnAbContinue").onclick = async () => {
+    if (!_abCurrentTask) return;
+    const notes = document.getElementById("abReviewNotes")?.value?.trim();
+    try {
+      if (notes) await api.agentBench.addMessage(_abCurrentTask.id, { role: "user", content: notes });
+      await api.agentBench.resetTask(_abCurrentTask.id);
+      const task = await api.agentBench.getTask(_abCurrentTask.id);
+      _abCurrentTask = task;
+      document.getElementById("abReviewNotes").value = "";
+      const statusEl = document.getElementById("abDetailStatus");
+      if (statusEl) { statusEl.className = _abStatusClass(task.status); statusEl.textContent = _abStatusLabel(task.status); }
+      _abUpdateRunControls(task);
+    } catch (err) { alert("Error: " + err.message); }
+  };
+
+  document.getElementById("btnAbMarkDone").onclick = () => {
+    document.getElementById("btnAbBack").click();
+  };
+
   document.getElementById("btnAbEnable").onclick = async () => {
     try {
-      await api.agentBench.updateConfig({ enabled: true, require_human_review: true, allowed_adapters: ["manual"] });
+      await api.agentBench.updateConfig({ enabled: true, allowed_adapters: ["manual"] });
       await loadAgentBench();
     } catch (err) { alert("Error: " + err.message); }
   };
@@ -4833,23 +4804,13 @@ function _abWireEvents() {
   document.getElementById("btnAbDoctor").onclick = _runDoctor;
 
   document.getElementById("btnAbSettings").onclick = async () => {
-    let cfg = { enabled: true, allow_dev_device_deploy: false, require_human_review: true, allowed_adapters: ["manual"], claude_tool_mode: "full" };
+    let cfg = { enabled: true, allow_dev_device_deploy: false, allowed_adapters: ["manual"], claude_tool_mode: "full" };
     try { cfg = await api.agentBench.getConfig(); } catch (_) {}
     const mode = cfg.claude_tool_mode || "full";
     openModal("Agent Bench Settings", `
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
         <input type="checkbox" id="abSetEnabled" ${cfg.enabled ? "checked" : ""}
           data-tip="Enable or disable the Agent Bench feature entirely"> Enabled
-      </label>
-      <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;margin-bottom:12px;cursor:pointer">
-        <input type="checkbox" id="abSetReview" ${cfg.require_human_review ? "checked" : ""}
-          data-tip="When checked: agent changes wait for your review before being committed. When unchecked: changes are auto-committed the moment the agent finishes (auto-apply mode)." style="margin-top:2px">
-        <span>
-          Require review before applying changes<br>
-          <span style="font-size:11px;color:var(--color-text-muted)">
-            Uncheck to enable <strong>auto-apply</strong> — changes commit immediately when the agent finishes, no diff review needed
-          </span>
-        </span>
       </label>
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
         <input type="checkbox" id="abSetDevDeploy" ${cfg.allow_dev_device_deploy ? "checked" : ""}
@@ -4883,14 +4844,13 @@ function _abWireEvents() {
       <p style="font-size:11px;color:var(--color-text-muted);margin-top:10px">Changes take effect on the next task run — no restart needed.</p>
     `, [
       { label: "Save", cls: "btn btn-primary", action: async () => {
-        const enabled = document.getElementById("abSetEnabled").checked;
-        const require_human_review = document.getElementById("abSetReview").checked;
+        const enabled              = document.getElementById("abSetEnabled").checked;
         const allow_dev_device_deploy = document.getElementById("abSetDevDeploy").checked;
-        const adaptersRaw = document.getElementById("abSetAdapters").value.trim();
-        const allowed_adapters = adaptersRaw ? adaptersRaw.split(",").map(s => s.trim()).filter(Boolean) : ["manual"];
-        const claude_tool_mode = document.querySelector('input[name="abToolMode"]:checked')?.value || "full";
+        const adaptersRaw          = document.getElementById("abSetAdapters").value.trim();
+        const allowed_adapters     = adaptersRaw ? adaptersRaw.split(",").map(s => s.trim()).filter(Boolean) : ["manual"];
+        const claude_tool_mode     = document.querySelector('input[name="abToolMode"]:checked')?.value || "full";
         try {
-          await api.agentBench.updateConfig({ enabled, require_human_review, allow_dev_device_deploy, allowed_adapters, claude_tool_mode });
+          await api.agentBench.updateConfig({ enabled, allow_dev_device_deploy, allowed_adapters, claude_tool_mode });
           closeModal();
           await loadAgentBench();
         } catch (err) { alert("Error: " + err.message); }
@@ -4993,161 +4953,6 @@ function _abWireEvents() {
       if (btn) { const orig = btn.textContent; btn.textContent = "Copied!"; setTimeout(() => btn.textContent = orig, 1500); }
     } catch (err) { alert("Could not copy: " + err.message); }
   };
-
-  document.getElementById("btnAbViewDiff").onclick = async () => {
-    if (!_abCurrentTask) return;
-    const needsReview = _abCurrentTask.status === "awaiting_review";
-    try {
-      const { diffs, note } = await api.agentBench.getDiff(_abCurrentTask.id);
-      if (!diffs.length) {
-        const msg = note
-          ? `<div class="empty-state" style="font-size:13px;line-height:1.6">${note}</div>`
-          : '<div class="empty-state">No file changes recorded for the latest run.</div>';
-        openModal("Diff", msg, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
-        return;
-      }
-
-      // Build per-file diff blocks with Accept/Reject checkboxes
-      const html = diffs.map((d, i) => {
-        const lines = d.diff.split("\n").map(line => {
-          const cls = line.startsWith("+") && !line.startsWith("+++") ? "add"
-                    : line.startsWith("-") && !line.startsWith("---") ? "del"
-                    : line.startsWith("@@") ? "hdr" : "ctx";
-          return `<div class="ab-diff-line ${cls}">${line.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>`;
-        }).join("");
-        const checkId = `diff_accept_${i}`;
-        return `<div class="ab-diff-file" id="diff_file_${i}" style="margin-bottom:10px">
-          <div class="ab-diff-file-header" style="display:flex;align-items:center;gap:10px">
-            ${needsReview ? `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex-shrink:0" data-tip="Check to keep this file change, uncheck to revert it">
-              <input type="checkbox" id="${checkId}" checked style="width:14px;height:14px;accent-color:var(--color-accent)">
-              <span style="font-family:monospace;font-size:9px;letter-spacing:.06em">KEEP</span>
-            </label>` : ""}
-            <span class="ab-diff-status-${d.status}">${d.status.toUpperCase()}</span>
-            <span style="font-family:monospace;font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.path}</span>
-          </div>
-          <div class="ab-diff-content">${lines}</div>
-        </div>`;
-      }).join("");
-
-      const reviewButtons = needsReview ? [
-        { label: "✓ Apply Selected", cls: "btn btn-primary", action: async () => {
-          const rejectPaths = diffs
-            .filter((_, i) => !document.getElementById(`diff_accept_${i}`)?.checked)
-            .map(d => d.path);
-          const notes = document.getElementById("abReviewNotes")?.value?.trim() || null;
-          try {
-            await api.agentBench.review(_abCurrentTask.id, {
-              decision: "approved", notes, reject_paths: rejectPaths,
-            });
-            closeModal();
-            const task = await api.agentBench.getTask(_abCurrentTask.id).catch(() => _abCurrentTask);
-            _abCurrentTask = task;
-            const statusEl = document.getElementById("abDetailStatus");
-            if (statusEl) { statusEl.className = _abStatusClass(task.status); statusEl.textContent = _abStatusLabel(task.status); }
-            _abUpdateRunControls(task);
-          } catch (err) { alert("Review failed: " + err.message); }
-        }},
-        { label: "↩ Revert All", cls: "btn btn-secondary", action: async () => {
-          if (!confirm("Revert ALL file changes from this run?")) return;
-          const notes = document.getElementById("abReviewNotes")?.value?.trim() || null;
-          try {
-            await api.agentBench.review(_abCurrentTask.id, {
-              decision: "needs_changes", notes, reject_paths: diffs.map(d => d.path),
-            });
-            closeModal();
-            const task = await api.agentBench.getTask(_abCurrentTask.id).catch(() => _abCurrentTask);
-            _abCurrentTask = task;
-            _abUpdateRunControls(task);
-          } catch (err) { alert("Revert failed: " + err.message); }
-        }},
-      ] : [];
-
-      openModal(`Diff — ${diffs.length} file(s) changed`,
-        `${needsReview ? '<p style="font-size:11px;color:var(--color-text-muted);margin-bottom:10px">Uncheck any file to revert that change. Click <strong>Apply Selected</strong> to approve the rest.</p>' : ""}
-        <div style="max-height:460px;overflow-y:auto">${html}</div>`,
-        [...reviewButtons, { label: "Close", cls: "btn btn-secondary", action: closeModal }],
-        { wide: true },
-      );
-    } catch (err) { alert("Error: " + err.message); }
-  };
-
-  const _abDoReview = async (decision) => {
-    if (!_abCurrentTask) return;
-    const notes = document.getElementById("abReviewNotes").value.trim();
-    try {
-      await api.agentBench.review(_abCurrentTask.id, { decision, notes: notes || null });
-      document.getElementById("abReviewNotes").value = "";
-      const task = await api.agentBench.getTask(_abCurrentTask.id).catch(() => _abCurrentTask);
-      _abCurrentTask = task;
-      const statusEl = document.getElementById("abDetailStatus");
-      if (statusEl) { statusEl.className = _abStatusClass(task.status); statusEl.textContent = _abStatusLabel(task.status); }
-      _abUpdateRunControls(task);
-
-      // After approval of a firmware or port-to-hub task, show build + OTA guidance
-      if (decision === "approved" && ["firmware-feature", "port-to-hub", "bug-fix"].includes(task.template)) {
-        _showNextStepsFirmware(task);
-      }
-      // After any approval, check if agent created/modified quarantined workers
-      if (decision === "approved") {
-        _checkQuarantineLift(task);
-      }
-    } catch (err) { alert("Error: " + err.message); }
-  };
-
-  async function _checkQuarantineLift(task) {
-    const paths = JSON.parse(task.allowed_paths || "[]");
-    const workerNames = paths
-      .map(p => p.match(/^workers\/([^/]+)\/?$/)?.[1])
-      .filter(Boolean);
-    if (!workerNames.length) return;
-    const workers = await api.workers.list().catch(() => []);
-    const quarantined = workers.filter(w => workerNames.includes(w.name) && w.quarantine);
-    if (!quarantined.length) return;
-    openModal("Quarantined Workers Detected", `
-      <p>The following worker(s) created or modified by this task are still <strong>quarantined</strong>:</p>
-      <ul style="margin:10px 0 12px 18px">
-        ${quarantined.map(w => `<li><strong>${w.name}</strong> — <code>workers/${w.name}/worker.yaml</code></li>`).join("")}
-      </ul>
-      <p style="font-size:13px">Quarantined workers can be tested but cannot run production jobs. Review the generated code, then lift quarantine to enable them.</p>
-      <p style="font-size:12px;color:var(--color-text-muted);margin-top:8px">Lifting quarantine sets <code>quarantine: false, trusted: true</code> in the worker YAML.</p>
-    `, [
-      { label: "Lift Quarantine", cls: "btn btn-primary", action: async () => {
-        try {
-          for (const w of quarantined) {
-            await api.workers.setQuarantine(w.name, false);
-          }
-          closeModal();
-        } catch (err) { alert("Error: " + err.message); }
-      }},
-      { label: "Keep Quarantined", cls: "btn btn-secondary", action: closeModal },
-    ]);
-  }
-
-  function _showNextStepsFirmware(task) {
-    openModal("Changes Approved — Next Steps", `
-      <div class="ab-next-steps">
-        <h4>✓ Agent changes approved. Here's how to get firmware onto your device:</h4>
-        <ol>
-          <li><strong>Build the firmware</strong> — open the project's <code>firmware/</code> folder in a terminal and run:<br>
-            <code>pio run -e esp32dev</code><br>
-            The compiled binary will be at <code>.pio/build/&lt;env&gt;/firmware.bin</code>.</li>
-          <li><strong>Upload to the hub catalog</strong> — go to <strong>OTA / Firmware → + Upload Firmware</strong>, select the <code>.bin</code> file, set the board and version, choose channel <em>dev</em>.</li>
-          <li><strong>Push to device</strong> — click <strong>Push to Device</strong> on the catalog entry and select your paired ESP32. The hub sends the binary over WiFi.</li>
-          <li><strong>Monitor</strong> — watch Serial output (<code>pio device monitor</code>) to confirm the new firmware boots and behaves as expected.</li>
-        </ol>
-        <p style="margin-top:10px;font-size:12px;color:var(--color-text-muted)">
-          PlatformIO not installed? Run <strong>Agent Bench → Doctor → Install</strong> to add it from the portal.
-        </p>
-      </div>
-    `, [
-      { label: "Go to OTA", cls: "btn btn-primary", action: () => { closeModal(); showView("ota"); } },
-      { label: "Close", cls: "btn btn-secondary", action: closeModal },
-    ]);
-  }
-
-  document.getElementById("btnAbApprove").onclick  = () => _abDoReview("approved");
-  document.getElementById("btnAbChanges").onclick  = () => _abDoReview("needs_changes");
-  document.getElementById("btnAbReject").onclick   = () => _abDoReview("rejected");
 
   // Status filter buttons
   document.getElementById("abFilterRow").addEventListener("click", async (e) => {

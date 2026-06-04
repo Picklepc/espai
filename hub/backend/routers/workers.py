@@ -10,7 +10,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..config import POLICIES_DIR, WORKERS_DIR
+from ..config import POLICIES_DIR, ROOT, WORKERS_DIR
+from .. import git_helper
 from ..registry.loader import scan_folder
 from ..reg_files import (FileWrite, NewItemRequest,
                           delete_item, list_files, read_file,
@@ -47,46 +48,6 @@ def get_worker(worker_name: str):
     raise HTTPException(404, f"Worker {worker_name!r} not found")
 
 
-@router.patch("/{worker_name}/quarantine")
-def set_worker_quarantine(worker_name: str, quarantine: bool = True):
-    """
-    Set the quarantine flag in a worker's YAML manifest.
-    Pass quarantine=false to lift quarantine after reviewing agent-generated code.
-    """
-    if not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", worker_name):
-        raise HTTPException(400, "Invalid worker name")
-    all_workers = scan_folder(WORKERS_DIR, "worker")
-    worker = next(
-        (w for w in all_workers if w.get("name") == worker_name or w.get("_folder") == worker_name),
-        None,
-    )
-    if not worker:
-        raise HTTPException(404, f"Worker {worker_name!r} not found")
-
-    folder = worker.get("_folder", worker_name)
-    yaml_path = WORKERS_DIR / folder / "worker.yaml"
-    if not yaml_path.exists():
-        raise HTTPException(404, f"worker.yaml not found for {worker_name!r}")
-
-    import yaml as _yaml
-    try:
-        with open(yaml_path, encoding="utf-8") as fh:
-            data = _yaml.safe_load(fh) or {}
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to read worker.yaml: {exc}")
-
-    data["quarantine"] = quarantine
-    if not quarantine:
-        data["trusted"] = True
-
-    try:
-        with open(yaml_path, "w", encoding="utf-8") as fh:
-            _yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to write worker.yaml: {exc}")
-
-    return {"worker": worker_name, "quarantine": quarantine, "trusted": not quarantine}
-
 
 @router.get("/{worker_name}/compat")
 def worker_compat(worker_name: str):
@@ -99,7 +60,6 @@ def worker_compat(worker_name: str):
     - requirements.txt installed (import test for first-party packages)
     - sandbox.preferred: docker → Docker available?
     - permission policy: declared permissions within policy caps
-    - quarantine state
     """
     all_workers = scan_folder(WORKERS_DIR, "worker")
     worker = next(
@@ -112,12 +72,6 @@ def worker_compat(worker_name: str):
     issues:    list[str] = []
     satisfied: list[str] = []
     policy = _load_policy()
-
-    # Quarantine
-    if worker.get("quarantine"):
-        issues.append("Worker is quarantined — set trusted: true in worker.yaml to enable")
-    else:
-        satisfied.append("not quarantined")
 
     # Entrypoint
     worker_dir   = Path(worker["_path"])
@@ -178,9 +132,6 @@ def test_worker(worker_name: str, body: WorkerTestRequest):
     )
     if not worker:
         raise HTTPException(404, f"Worker {worker_name!r} not found")
-
-    if worker.get("quarantine"):
-        raise HTTPException(403, f"Worker {worker_name!r} is quarantined — set trusted: true to test")
 
     policy = _load_policy()
     violations = check_permissions(worker, policy)
@@ -278,7 +229,10 @@ def read_worker_file(worker_name: str, file_path: str):
 
 @router.put("/{worker_name}/files/{file_path:path}")
 def write_worker_file(worker_name: str, file_path: str, body: FileWrite):
-    return write_file(WORKERS_DIR, _worker_folder(worker_name), file_path, body)
+    result = write_file(WORKERS_DIR, _worker_folder(worker_name), file_path, body)
+    folder = _worker_folder(worker_name)
+    git_helper.git_commit(ROOT, f"edit: workers/{folder}/{file_path}")
+    return result
 
 
 @router.post("/{worker_name}/files/{file_path:path}")

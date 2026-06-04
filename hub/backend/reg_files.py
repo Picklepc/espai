@@ -152,7 +152,6 @@ sandbox:
   native_allowed: true
 entrypoint: main.py
 requirements: requirements.txt
-quarantine: true
 """, encoding="utf-8")
 
     (folder / "main.py").write_text(f'''\

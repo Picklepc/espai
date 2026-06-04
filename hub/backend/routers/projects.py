@@ -921,7 +921,7 @@ def project_files(project_id: str):
         return {"project_id": project_id, "files": []}
     files = []
     for f in sorted(proj_dir.rglob("*")):
-        if f.is_file() and ".pio" not in str(f):
+        if f.is_file() and ".pio" not in str(f) and ".git" not in f.parts:
             rel = f.relative_to(proj_dir).as_posix()
             files.append({"path": rel, "size_bytes": f.stat().st_size})
     return {"project_id": project_id, "root": str(proj_dir), "files": files}
@@ -1371,6 +1371,22 @@ def project_git_log(project_id: str, limit: int = 40):
     proj_dir = PROJECTS_DIR / project_id
     commits = git_helper.git_log(proj_dir, limit=min(limit, 200))
     return {"project_id": project_id, "commits": commits, "is_repo": git_helper.is_repo(proj_dir)}
+
+
+class GitRollbackBody(BaseModel):
+    sha: str
+
+
+@router.post("/{project_id}/git/rollback")
+def project_git_rollback(project_id: str, body: GitRollbackBody):
+    """Roll back the project working tree to a specific commit (git reset --hard)."""
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.exists():
+        raise HTTPException(404, "Project not found")
+    result = git_helper.git_rollback(proj_dir, body.sha)
+    if not result["ok"]:
+        raise HTTPException(400, result["error"])
+    return result
 
 
 @router.post("/{project_id}/regenerate-context")

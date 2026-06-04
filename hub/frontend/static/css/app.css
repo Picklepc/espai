@@ -633,6 +633,60 @@ code {
 
 .file-list { display: flex; flex-direction: column; gap: 5px; }
 
+/* ── Git repository card (shown above file list) ──────────────────────── */
+.git-repo-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-card-border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.git-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: var(--color-card-alt, var(--color-card));
+  border-bottom: 1px solid var(--color-card-border);
+}
+.git-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  letter-spacing: .04em;
+}
+.git-commits-list { padding: 2px 0; }
+.git-commit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--color-card-border);
+}
+.git-commit-row:last-child { border-bottom: none; }
+.git-hash {
+  font-size: 10px;
+  color: var(--color-accent);
+  white-space: nowrap;
+  font-family: monospace;
+  min-width: 48px;
+}
+.git-msg {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+.git-age {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  min-width: 50px;
+  text-align: right;
+}
+
 .file-row {
   display: flex;
   justify-content: space-between;

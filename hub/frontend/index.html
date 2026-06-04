@@ -246,9 +246,9 @@
         <div id="worker-list-view">
           <header class="view-header">
             <h1>Workers</h1>
-            <button class="btn btn-primary" id="btnNewWorker" data-tip="Scaffold a new Python worker — creates worker.yaml + main.py stub, quarantined until reviewed">＋ New Worker</button>
+            <button class="btn btn-primary" id="btnNewWorker" data-tip="Scaffold a new Python worker — creates worker.yaml + main.py stub">＋ New Worker</button>
           </header>
-          <p class="view-desc">Sandboxed Python modules that run on the hub to process events. Each worker declares filesystem and network permissions — new workers are quarantined until you review and approve the code.</p>
+          <p class="view-desc">Sandboxed Python modules that run on the hub to process events. Each worker declares filesystem and network permissions. Changes are tracked in git — roll back any worker change from the project's History view.</p>
           <div class="registry-grid" id="workerList">
             <div class="empty-state">Loading…</div>
           </div>
@@ -427,12 +427,7 @@
               <button class="btn btn-primary"   id="btnAbNewTask"  data-tip="Create a new task — describe what to build and the agent will write the code">+ New Task</button>
             </div>
           </header>
-          <p class="view-desc">Describe a task in plain language and let an AI agent write the code, submit a diff, and await your review. Works for firmware features, hub code, recipes, and bug fixes. Run <strong>Doctor</strong> first to confirm your tools are ready.</p>
-          <div id="abAutoApplyBanner" class="hidden" style="margin-bottom:10px;padding:8px 12px;background:rgba(26,175,196,.08);border:1px solid rgba(26,175,196,.25);border-radius:6px;font-size:12px;align-items:center;gap:8px" data-tip="Auto-apply is ON — completed tasks are committed automatically without a review step. Toggle in Settings.">
-            <span style="color:var(--color-accent)">⚡</span>
-            <span><strong>Auto-apply ON</strong> — tasks apply and commit automatically when the agent finishes. No review step.</span>
-            <button class="btn btn-secondary btn-sm" id="btnAbAutoApplyOff" style="margin-left:auto" data-tip="Turn off auto-apply and require manual review of each diff">Turn off</button>
-          </div>
+          <p class="view-desc">Describe a task in plain language and let an AI agent write the code and commit the changes directly. Works for firmware features, hub code, recipes, and bug fixes. Use the project's <strong>📋 History</strong> button or the <strong>🎯 Flash</strong> shortcut in git log to roll back any change. Run <strong>Doctor</strong> first to confirm your tools are ready.</p>
           <div class="ab-filter-row" id="abFilterRow">
             <button class="ab-filter active" data-status=""               data-tip="Show all tasks">All</button>
             <button class="ab-filter" data-status="draft"                 data-tip="Tasks created but not yet run">Draft</button>
@@ -462,7 +457,6 @@
             </div>
             <div style="display:flex;gap:8px">
               <button class="btn btn-secondary btn-sm" id="btnAbViewPrompt" data-tip="View the full system prompt sent to the agent for this task">View Prompt</button>
-              <button class="btn btn-secondary btn-sm" id="btnAbViewDiff"   data-tip="View file changes made during the last agent run">View Diff</button>
               <button class="btn btn-secondary btn-sm" id="btnAbReset"      data-tip="Reset a stuck running task back to draft so it can be re-run" style="display:none">↺ Reset</button>
               <button class="btn btn-danger    btn-sm" id="btnAbDelete"     data-tip="Permanently delete this task and all its runs and messages">Delete</button>
             </div>
@@ -511,32 +505,21 @@
               <div id="abAdapterDesc" class="ab-adapter-desc"></div>
             </div>
 
-            <!-- Right: review panel -->
-            <div id="abReviewPanel" class="ab-review-panel hidden">
-              <!-- Mode banner — swapped by JS based on project approval mode -->
-              <div id="abModeBanner"></div>
-              <h3 class="section-heading" id="abReviewHeading">Session Complete</h3>
-              <p id="abReviewHint" style="font-size:12px;color:var(--color-text-muted);margin:0 0 12px">
-                Claude finished the terminal session. View Diff to see what changed.
-                If the changes look good and Claude committed, mark it Done.
-                If you need more work, add notes and re-run — Claude will pick up where it left off.
+            <!-- Right: completion panel — shown when task is approved or needs_changes -->
+            <div id="abCompletionPanel" class="ab-review-panel hidden">
+              <h3 class="section-heading" id="abCompletionHeading">Done ✓</h3>
+              <p id="abCompletionHint" style="font-size:12px;color:var(--color-text-muted);margin:0 0 14px;line-height:1.6">
+                Changes applied and committed to git. Open the project's
+                <strong>📋 History</strong> to review what changed, or use the
+                <strong>🎯 Flash</strong> shortcut in History to roll back a firmware build.
               </p>
-              <!-- Stable mode: diff acknowledgement gate -->
-              <div id="abStableGate" class="hidden" style="margin-bottom:12px">
-                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"
-                       data-tip="Check this after viewing the diff — required before approving in Stable mode">
-                  <input type="checkbox" id="abDiffAcknowledge">
-                  I have reviewed the diff and the changes look correct
-                </label>
-              </div>
               <div class="form-field" id="abNotesField">
-                <label data-tip="Notes for the next session — Claude will see these and continue from here">Notes for next session (optional)</label>
-                <textarea id="abReviewNotes" rows="3" placeholder="e.g. Looks good but the upload step failed — please also add OTA push logic…"></textarea>
+                <label data-tip="Notes for the next session — the agent will read these and continue from here">Notes for next run (optional)</label>
+                <textarea id="abReviewNotes" rows="3" placeholder="e.g. The upload step failed — also add OTA push logic…"></textarea>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn ab-btn-approve" id="btnAbApprove" data-tip="Mark this task done — changes are committed in git">&#x2713; Mark Done</button>
-                <button class="btn ab-btn-changes" id="btnAbChanges" data-tip="Open another terminal session with your notes — Claude continues the conversation">&#x21BA; Continue in Terminal</button>
-                <button class="btn ab-btn-reject"  id="btnAbReject"  data-tip="Discard this run — task is closed without applying any changes">&#x2715; Reject</button>
+                <button class="btn btn-primary"   id="btnAbContinue" data-tip="Run another agent session — the agent will continue from where it left off">↺ Continue</button>
+                <button class="btn btn-secondary" id="btnAbMarkDone" data-tip="Mark this task as complete and return to the task list">✓ Mark Complete</button>
               </div>
             </div>
           </div>

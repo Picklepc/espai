@@ -57,6 +57,7 @@ const api = {
     topology:      (id)            => apiFetch(`/api/projects/${id}/topology`),
     setTopology:   (id, body)      => apiFetch(`/api/projects/${id}/topology`,             { method: "PUT",    body: JSON.stringify(body) }),
     gitLog:            (id, n)   => apiFetch(`/api/projects/${id}/git/log${n ? "?limit=" + n : ""}`),
+    gitRollback:       (id, sha) => apiFetch(`/api/projects/${id}/git/rollback`, { method: "POST", body: JSON.stringify({ sha }) }),
     approvalMode:      (id)      => apiFetch(`/api/projects/${id}/approval-mode`),
     setApprovalMode:   (id, mode)=> apiFetch(`/api/projects/${id}/approval-mode?mode=${encodeURIComponent(mode)}`, { method: "PUT" }),
     // File editor
@@ -99,8 +100,7 @@ const api = {
     delete:        (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}`, { method: "DELETE" }),
     test:          (n, body)  => apiFetch(`/api/workers/${encodeURIComponent(n)}/test`, { method: "POST", body: JSON.stringify(body) }),
     compat:        (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/compat`),
-    setQuarantine: (n, state) => apiFetch(`/api/workers/${encodeURIComponent(n)}/quarantine?quarantine=${state}`, { method: "PATCH" }),
-    files:         (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/files`),
+files:         (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/files`),
     readFile:      (n, path)  => apiFetch(`/api/workers/${encodeURIComponent(n)}/files/${path}`),
     writeFile:     (n, path, c) => apiFetch(`/api/workers/${encodeURIComponent(n)}/files/${path}`, { method: "PUT",  body: JSON.stringify({ content: c }) }),
     createFile:    (n, path, c) => apiFetch(`/api/workers/${encodeURIComponent(n)}/files/${path}`, { method: "POST", body: JSON.stringify({ content: c || "" }) }),

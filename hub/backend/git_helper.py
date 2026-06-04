@@ -5,6 +5,7 @@ Silently no-ops when git is unavailable — the hub works without it.
 import glob
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -119,6 +120,22 @@ def get_head_sha(proj_dir: Path) -> str | None:
         return r.stdout.strip() if r.returncode == 0 else None
     except Exception:
         return None
+
+
+def git_rollback(proj_dir: Path, sha: str) -> dict:
+    """Reset the working tree to the state at commit sha (git reset --hard). Returns ok/error."""
+    git = _find_git()
+    if not git or not is_repo(proj_dir):
+        return {"ok": False, "error": "Not a git repository"}
+    if not re.match(r"^[0-9a-f]{4,40}$", sha):
+        return {"ok": False, "error": "Invalid commit hash"}
+    try:
+        r = _run(git, proj_dir, "reset", "--hard", sha)
+        if r.returncode == 0:
+            return {"ok": True, "sha": sha, "output": r.stdout.strip()}
+        return {"ok": False, "error": (r.stderr or r.stdout).strip()}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def git_log(proj_dir: Path, limit: int = 40) -> list[dict]:
