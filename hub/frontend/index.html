@@ -428,6 +428,11 @@
             </div>
           </header>
           <p class="view-desc">Describe a task in plain language and let an AI agent write the code, submit a diff, and await your review. Works for firmware features, hub code, recipes, and bug fixes. Run <strong>Doctor</strong> first to confirm your tools are ready.</p>
+          <div id="abAutoApplyBanner" class="hidden" style="margin-bottom:10px;padding:8px 12px;background:rgba(26,175,196,.08);border:1px solid rgba(26,175,196,.25);border-radius:6px;font-size:12px;align-items:center;gap:8px" data-tip="Auto-apply is ON — completed tasks are committed automatically without a review step. Toggle in Settings.">
+            <span style="color:var(--color-accent)">⚡</span>
+            <span><strong>Auto-apply ON</strong> — tasks apply and commit automatically when the agent finishes. No review step.</span>
+            <button class="btn btn-secondary btn-sm" id="btnAbAutoApplyOff" style="margin-left:auto" data-tip="Turn off auto-apply and require manual review of each diff">Turn off</button>
+          </div>
           <div class="ab-filter-row" id="abFilterRow">
             <button class="ab-filter active" data-status=""               data-tip="Show all tasks">All</button>
             <button class="ab-filter" data-status="draft"                 data-tip="Tasks created but not yet run">Draft</button>

@@ -265,16 +265,18 @@ Cleanup, polish, and M18/M19/M20 follow-ons before the 0.4.0 Matter release.
 - [x] **Worker sync on every startup** — `_sync_workers()` in `espai.py`; per-worker version-aware copy; installs missing workers, overwrites only when bundle version is strictly higher than installed; runs every startup (not sentinel-gated); preserves user-modified workers with matching or higher version
 - [x] **Project-scoped worker lookup** — `_resolve_worker()` in `runner.py`; checks `projects/{project_id}/workers/{name}/` before global `workers/`; `project_id` sourced from job `inputs` dict; enables per-project worker customisation without breaking other projects
 
-### Pending (0.3.x targets)
-- [ ] **Fleet view sleep indicator** — show `💤 {n}s` badge on fleet device cards when `sleep_interval_s > 0`; allows distinguishing sleeping nodes from offline ones
-- [ ] **NVS-configurable awake window** — firmware reads `awake_s` from NVS Preferences (key `awake_s`, default 5); hub checkin response includes `awake_window_s` field; device saves it to NVS; new `awake_window_s` column in `devices` table; editable in fleet device detail
-- [ ] **Link service to project** (M20) — "⚙ Link Project" in service edit modal; `ServicePatch.project_id` field; hub queries projects list for picker; shows project name badge on linked service tile; double-clicking badge opens project detail
-- [ ] **Service health polling** (M20) — background thread in `services.py` started at hub launch; pings pinned services every 60 s with a HEAD or TCP probe; stores result in new `reachable BOOLEAN` column; services view and home grid show green/red dot per tile
-- [ ] **`app-url` uses stored slug** — `project_app_url` reads `slug` column directly instead of re-deriving via `_safe_slug(name)`; removes the one divergence point
-- [ ] **Remove dead `_origOpenSvcEdit`** — line 822 of `app.js` captures an unused reference; delete it
-- [x] **Git-tagged OTA rollback** (M18) — completed; see M18 entry above
-- [x] **Firmware CI builds** (M19) — completed; see M19 entry above
-- [ ] **RELEASE_CHECKLIST.md** — add Section 4/5 items for M17–M22 features; update version strings to 0.3.x
+### Completed in 0.3.x
+- [x] **Fleet view sleep indicator** — `💤 {n}s` badge on fleet cards when `sleep_interval_s > 0`; tooltip shows wake interval (0.3.1)
+- [x] **NVS-configurable awake window** — `awake_window_s` column; hub returns it in checkin; firmware reads/writes `awake_s` NVS key; 💤 fleet button opens sleep settings modal (0.3.1)
+- [x] **Link service to project** (M20) — `ServicePatch.project_id`; async edit modal loads project list; Linked Project picker in edit modal (0.3.1)
+- [x] **Service health polling** (M20) — `reachable INTEGER` column; TCP ping background thread (60 s); green/red dot on pinned tiles (0.3.1)
+- [x] **`app-url` uses stored slug** — reads `slug` column directly (0.3.1)
+- [x] **Remove dead `_origOpenSvcEdit`** — removed in 0.3.1
+- [x] **Git-tagged OTA rollback** (M18) — `git_sha` in firmware.json; 🎯 Flash button in git log view (0.3.2)
+- [x] **Firmware CI builds** (M19) — PlatformIO matrix job, three board envs, attached to GitHub Release (0.3.2)
+- [x] **RELEASE_CHECKLIST.md** — updated for 0.3.1 with all M17–M22 items (0.3.1)
+- [ ] **Codex CLI adapter first-run login** — `_codex_authenticated()` check; Doctor shows Codex login button; `list_adapters` returns auth state; run_task pre-checks auth and offers login instead of failing
+- [ ] **Auto-apply UX** — prominent indicator in Agent Bench main view when auto-apply is ON; clearer settings label; not just buried in settings modal
 
 ## Milestone 23 — Matter Bridge (hub-hosted) — target: v0.4.0
 

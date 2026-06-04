@@ -242,6 +242,7 @@ const api = {
     deleteTask:    (id)         => apiFetch(`/api/agent-bench/tasks/${id}`,         { method: "DELETE" }),
     resetTask:     (id)         => apiFetch(`/api/agent-bench/tasks/${id}/reset`,   { method: "POST" }),
     listRuns:      (taskId)     => apiFetch(`/api/agent-bench/runs${taskId ? "?task_id=" + taskId : ""}`),
-    install:       (tool)       => apiFetch(`/api/agent-bench/install/${encodeURIComponent(tool)}`, { method: "POST" }),
+    install:       (tool)       => apiFetch(`/api/agent-bench/install/${encodeURIComponent(tool)}`,   { method: "POST" }),
+    uninstall:     (tool)       => apiFetch(`/api/agent-bench/uninstall/${encodeURIComponent(tool)}`, { method: "POST" }),
   },
 };

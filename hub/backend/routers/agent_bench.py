@@ -637,8 +637,22 @@ def _claude_authenticated() -> bool:
         home / ".claude" / ".credentials.json",
         home / ".claude" / "credentials.json",
         home / ".config" / "claude" / "credentials.json",
-        # Windows AppData path
         pathlib.Path(os.environ.get("APPDATA", "")) / "Claude" / "credentials.json",
+    ]
+    return any(p.exists() and p.stat().st_size > 10 for p in candidates)
+
+
+def _codex_authenticated() -> bool:
+    """Check whether the Codex CLI has usable credentials.
+    Accepts either an OPENAI_API_KEY env var or a stored credentials file."""
+    if os.environ.get("OPENAI_API_KEY", "").strip():
+        return True
+    import pathlib
+    home = pathlib.Path.home()
+    candidates = [
+        home / ".openai" / "credentials.json",
+        home / ".config" / "openai" / "credentials.json",
+        pathlib.Path(os.environ.get("APPDATA", "")) / "OpenAI" / "credentials.json",
     ]
     return any(p.exists() and p.stat().st_size > 10 for p in candidates)
 
@@ -656,20 +670,24 @@ def agent_doctor():
     }
     claude_installed = tools["claude"]["found"]
     claude_authed    = claude_installed and _claude_authenticated()
+    codex_installed  = tools["codex"]["found"]
+    codex_authed     = codex_installed and _codex_authenticated()
     adapters_ready = {
         "manual": {
             "ready": True,
             "install_hint": None,
         },
         "codex-cli": {
-            "ready": tools["codex"]["found"],
-            "install_hint": _KNOWN_ADAPTERS["codex-cli"]["install_hint"],
+            "ready":         codex_installed and codex_authed,
+            "install_hint":  _KNOWN_ADAPTERS["codex-cli"]["install_hint"],
+            "installed":     codex_installed,
+            "authenticated": codex_authed,
         },
         "claude-code-cli": {
-            "ready": claude_installed and claude_authed,
-            "install_hint": _KNOWN_ADAPTERS["claude-code-cli"]["install_hint"],
+            "ready":         claude_installed and claude_authed,
+            "install_hint":  _KNOWN_ADAPTERS["claude-code-cli"]["install_hint"],
             "authenticated": claude_authed,
-            "installed": claude_installed,
+            "installed":     claude_installed,
         },
     }
     return {
@@ -746,6 +764,44 @@ def install_tool(tool_name: str):
     }
 
 
+_UNINSTALLABLE = {
+    "codex":  {"display_name": "OpenAI Codex CLI",  "cmd_fn": lambda npm: [npm, "uninstall", "-g", "@openai/codex"],             "needs_npm": True, "check": "codex"},
+    "claude": {"display_name": "Claude Code CLI",   "cmd_fn": lambda npm: [npm, "uninstall", "-g", "@anthropic-ai/claude-code"], "needs_npm": True, "check": "claude"},
+    "pio":    {"display_name": "PlatformIO",         "cmd_fn": lambda _:   [sys.executable, "-m", "pip", "uninstall", "platformio", "-y"], "check": "pio"},
+}
+
+
+@router.post("/uninstall/{tool_name}")
+def uninstall_tool(tool_name: str):
+    """Uninstall a supported tool (pio, codex, claude)."""
+    _require_enabled()
+    if tool_name not in _UNINSTALLABLE:
+        raise HTTPException(400, f"'{tool_name}' cannot be uninstalled from the portal. Supported: {', '.join(_UNINSTALLABLE)}")
+
+    meta = _UNINSTALLABLE[tool_name]
+    npm: str | None = None
+    if meta.get("needs_npm"):
+        npm = _find_npm()
+        if not npm:
+            return {"ok": False, "tool": tool_name, "output": "npm not found — cannot uninstall npm package", "exit_code": 1, "now_found": False}
+
+    cmd = meta["cmd_fn"](npm)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=str(ROOT))
+        output  = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        success = proc.returncode == 0
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "tool": tool_name, "output": "Uninstall timed out.", "exit_code": -1, "now_found": True}
+    except Exception as exc:
+        return {"ok": False, "tool": tool_name, "output": str(exc), "exit_code": -1, "now_found": True}
+
+    check_key = meta["check"]
+    detected = _detect_tool(check_key)
+    return {"ok": success, "tool": tool_name, "display_name": meta["display_name"],
+            "output": output, "exit_code": proc.returncode,
+            "now_found": detected["found"], "version": detected.get("version")}
+
+
 # ── Adapter endpoints ─────────────────────────────────────────────────────────
 
 @router.get("/adapters")
@@ -758,6 +814,11 @@ def list_adapters():
             detected = _detect_tool(meta["cli_command"])
             info["installed"] = detected["found"]
             info["detected_version"] = detected.get("version")
+            # Expose auth state so the frontend can show login prompts
+            if key == "claude-code-cli":
+                info["authenticated"] = info["installed"] and _claude_authenticated()
+            elif key == "codex-cli":
+                info["authenticated"] = info["installed"] and _codex_authenticated()
         else:
             info["installed"] = True
             info["detected_version"] = None
@@ -1088,7 +1149,7 @@ def run_task(task_id: str, data: RunCreate):
             "message": "Copy the prompt to your agent, then paste the response as a message.",
         }
 
-    # CLI adapters — locate binary using the same augmented PATH the Doctor uses
+    # CLI adapters — locate binary
     meta = _KNOWN_ADAPTERS[adapter]
     cli_cmd = meta.get("cli_command")
     augmented_path = os.pathsep.join([os.environ.get("PATH", "")] + _extra_tool_dirs())

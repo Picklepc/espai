@@ -4209,6 +4209,25 @@ async function loadAgentBench() {
 
   disabledEl.classList.add("hidden");
   detailEl.classList.add("hidden");
+
+  // Auto-apply banner — visible when require_human_review is OFF
+  const autoApplyBanner = document.getElementById("abAutoApplyBanner");
+  if (autoApplyBanner) {
+    const autoOn = config.require_human_review === false;
+    autoApplyBanner.style.display = autoOn ? "flex" : "none";
+  }
+
+  // "Turn off" button in the banner
+  const turnOffBtn = document.getElementById("btnAbAutoApplyOff");
+  if (turnOffBtn) {
+    turnOffBtn.onclick = async () => {
+      try {
+        await api.agentBench.updateConfig({ ..._abConfig, require_human_review: true });
+        _abConfig.require_human_review = true;
+        if (autoApplyBanner) autoApplyBanner.style.display = "none";
+      } catch (err) { alert("Error: " + err.message); }
+    };
+  }
   listEl.classList.remove("hidden");
 
   await _abLoadTaskList();
@@ -4362,10 +4381,30 @@ async function _abSetupAdapterSelect() {
   for (const a of adapters) {
     const opt = document.createElement("option");
     opt.value = a.name;
-    opt.textContent = a.display_name + (a.installed === false ? " — not installed" : "");
+    const needsLogin = a.installed && a.authenticated === false;
+    opt.textContent = a.display_name
+      + (a.installed === false ? " — not installed" : "")
+      + (needsLogin ? " — needs login" : "");
     if (a.installed === false) opt.disabled = true;
     sel.appendChild(opt);
   }
+
+  // Auth hint below the select — updates when selection changes
+  let authHintEl = document.getElementById("abAdapterAuthHint");
+  if (!authHintEl) {
+    authHintEl = document.createElement("p");
+    authHintEl.id = "abAdapterAuthHint";
+    authHintEl.style.cssText = "font-size:11px;color:var(--color-warning);margin-top:4px;min-height:14px";
+    sel.parentNode?.appendChild(authHintEl);
+  }
+  const _updateAuthHint = () => {
+    const chosen = adapters.find(a => a.name === sel.value);
+    authHintEl.textContent = (chosen?.installed && chosen?.authenticated === false)
+      ? "⚠ Not logged in — open Doctor → Login to " + (sel.value === "claude-code-cli" ? "Claude" : "Codex")
+      : "";
+  };
+  sel.addEventListener("change", _updateAuthHint);
+  _updateAuthHint();
   if (_abCurrentTask?.adapter_id) sel.value = _abCurrentTask.adapter_id;
   const updateDesc = () => { if (desc) desc.textContent = _ADAPTER_DESCRIPTIONS[sel.value] || ""; };
   sel.removeEventListener("change", sel._descHandler);
@@ -4629,18 +4668,22 @@ function _abWireEvents() {
       return;
     }
 
+    const _PORTAL_UNINSTALLABLE = new Set(["pio", "codex", "claude"]);
     const toolRows = Object.entries(d.tools || {}).map(([name, info]) => {
       const ok = info.found;
-      const canInstall = !ok && _PORTAL_INSTALLABLE.has(name);
+      const canInstall   = !ok && _PORTAL_INSTALLABLE.has(name);
+      const canUninstall = ok  && _PORTAL_UNINSTALLABLE.has(name);
       const installBtn = canInstall
-        ? `<button class="btn btn-secondary btn-sm doctor-install-btn" data-tool="${name}" style="margin-left:auto">Install</button>` : "";
+        ? `<button class="btn btn-secondary btn-sm doctor-install-btn" data-tool="${name}" style="margin-left:auto" data-tip="Install ${name} via npm or pip">Install</button>` : "";
+      const uninstallBtn = canUninstall
+        ? `<button class="btn btn-secondary btn-sm doctor-uninstall-btn" data-tool="${name}" style="margin-left:auto;opacity:.7" data-tip="Uninstall ${name}">Remove</button>` : "";
       const hint = !ok && !canInstall && info.install_hint
         ? `<div class="doctor-hint"><code>${info.install_hint}</code></div>` : "";
       return `<div class="doctor-row" data-tool="${name}">
         <span class="doctor-icon ${ok ? "ok" : "miss"}">${ok ? "✓" : "✗"}</span>
         <span class="doctor-name">${name}</span>
         <span class="doctor-val">${ok ? (info.version || "found") : '<span style="color:var(--color-danger)">not found</span>'}</span>
-        ${installBtn}
+        ${installBtn}${uninstallBtn}
       </div>${hint}`;
     }).join("");
 
@@ -4668,45 +4711,76 @@ function _abWireEvents() {
       </div>${hint}`;
     }).join("");
 
-    const claudeInfo    = d.adapters_ready?.["claude-code-cli"] || {};
+    const claudeInfo      = d.adapters_ready?.["claude-code-cli"] || {};
     const claudeInstalled = claudeInfo.installed ?? claudeInfo.ready ?? false;
     const claudeAuthed    = claudeInfo.authenticated ?? false;
+    const codexInfo       = d.adapters_ready?.["codex-cli"] || {};
+    const codexInstalled  = codexInfo.installed ?? codexInfo.ready ?? false;
+    const codexAuthed     = codexInfo.authenticated ?? false;
 
-    const authNote = claudeInstalled && !claudeAuthed
-      ? `<p style="font-size:12px;color:var(--color-warning);margin-top:14px;line-height:1.6">
-           ⚠ Claude Code is installed but <strong>not logged in</strong>.
-           Click <strong>Login to Claude</strong> below — on Docker/headless, copy the URL shown and open it in your browser.
-         </p>`
-      : "";
+    const authNotes = [
+      claudeInstalled && !claudeAuthed
+        ? `<p style="font-size:12px;color:var(--color-warning);margin-top:10px;line-height:1.6">
+             ⚠ <strong>Claude Code</strong> installed but not logged in.
+             Click <strong>Login to Claude</strong> below — on Docker copy the URL shown into your browser.
+           </p>` : "",
+      codexInstalled && !codexAuthed
+        ? `<p style="font-size:12px;color:var(--color-warning);margin-top:6px;line-height:1.6">
+             ⚠ <strong>Codex CLI</strong> installed but not authenticated.
+             Set <code>OPENAI_API_KEY</code> in <code>.env</code> or click <strong>Login to Codex</strong> below.
+           </p>` : "",
+    ].join("");
+
+    const _openToolTerminal = (cmd, title) => {
+      _hideDoctorTooltip(); closeModal();
+      showView("terminal");
+      setTimeout(async () => {
+        try {
+          const s = await api.terminal.create({ title });
+          _termAttach(s.id, s.title);
+          setTimeout(() => {
+            if (_termSessions[s.id]?.ws?.readyState === 1)
+              _termSessions[s.id].ws.send(cmd + "\n");
+          }, 800);
+        } catch (_) {}
+      }, 150);
+    };
+
+    const _uninstallTool = async (tool, label) => {
+      if (!confirm(`Uninstall ${label}? This removes the global npm package.`)) return;
+      _hideDoctorTooltip(); closeModal();
+      try {
+        const r = await api.agentBench.uninstall(tool);
+        openModal("Uninstalled", `<pre style="font-size:11px;white-space:pre-wrap;max-height:300px;overflow-y:auto">${r.output || "(no output)"}</pre>
+          <p style="font-size:12px;color:${r.now_found ? "var(--color-warning)" : "var(--color-success)"};margin-top:8px">
+            ${r.now_found ? `⚠ ${label} still detected — may need a shell restart` : `✓ ${label} removed`}
+          </p>`, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      } catch (err) { alert("Uninstall failed: " + err.message); }
+    };
 
     openModal("Agent Bench Doctor", `
       <p class="doctor-section-label">Tools</p>
       ${toolRows}
       <p class="doctor-section-label" style="margin-top:16px">Adapters</p>
       ${adapterRows}
-      ${authNote}
+      ${authNotes}
     `, [
-      ...(claudeInstalled ? [{
-        label: claudeAuthed ? "Re-login to Claude" : "Login to Claude",
-        cls: "btn btn-secondary",
-        tip: claudeAuthed
-          ? "Re-authenticate Claude Code CLI — opens a terminal with 'claude login'"
-          : "Authenticate Claude Code CLI — opens a terminal with 'claude login'; on Docker copy the URL shown into your browser",
-        action: () => {
-          _hideDoctorTooltip(); closeModal();
-          showView("terminal");
-          setTimeout(async () => {
-            try {
-              const s = await api.terminal.create({ title: "Claude Login" });
-              _termAttach(s.id, s.title);
-              setTimeout(() => {
-                if (_termSessions[s.id]?.ws?.readyState === 1)
-                  _termSessions[s.id].ws.send("claude login\n");
-              }, 800);
-            } catch (_) {}
-          }, 150);
-        }
-      }] : []),
+      ...(claudeInstalled ? [
+        { label: "Launch Claude", cls: "btn btn-secondary",
+          tip: "Open Claude Code CLI in the terminal — no flags, first run provisions for login",
+          action: () => _openToolTerminal("claude", "Claude Code") },
+        { label: "Uninstall Claude", cls: "btn btn-secondary",
+          tip: "Run npm uninstall -g @anthropic-ai/claude-code",
+          action: () => _uninstallTool("claude", "Claude Code CLI") },
+      ] : []),
+      ...(codexInstalled ? [
+        { label: "Launch Codex", cls: "btn btn-secondary",
+          tip: "Open Codex CLI in the terminal — no flags, first run provisions for login",
+          action: () => _openToolTerminal("codex", "Codex CLI") },
+        { label: "Uninstall Codex", cls: "btn btn-secondary",
+          tip: "Run npm uninstall -g @openai/codex",
+          action: () => _uninstallTool("codex", "OpenAI Codex CLI") },
+      ] : []),
       { label: "Close", cls: "btn btn-secondary", action: () => { _hideDoctorTooltip(); closeModal(); } },
     ]);
 
@@ -4745,6 +4819,15 @@ function _abWireEvents() {
         ]);
       });
     });
+
+    // Wire Uninstall buttons
+    document.querySelectorAll(".doctor-uninstall-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const tool = btn.dataset.tool;
+        const labels = { claude: "Claude Code CLI", codex: "OpenAI Codex CLI", pio: "PlatformIO" };
+        await _uninstallTool(tool, labels[tool] || tool);
+      });
+    });
   }
 
   document.getElementById("btnAbDoctor").onclick = _runDoctor;
@@ -4758,9 +4841,15 @@ function _abWireEvents() {
         <input type="checkbox" id="abSetEnabled" ${cfg.enabled ? "checked" : ""}
           data-tip="Enable or disable the Agent Bench feature entirely"> Enabled
       </label>
-      <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
+      <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;margin-bottom:12px;cursor:pointer">
         <input type="checkbox" id="abSetReview" ${cfg.require_human_review ? "checked" : ""}
-          data-tip="Require you to approve the diff before any changes are applied"> Require human review before merge
+          data-tip="When checked: agent changes wait for your review before being committed. When unchecked: changes are auto-committed the moment the agent finishes (auto-apply mode)." style="margin-top:2px">
+        <span>
+          Require review before applying changes<br>
+          <span style="font-size:11px;color:var(--color-text-muted)">
+            Uncheck to enable <strong>auto-apply</strong> — changes commit immediately when the agent finishes, no diff review needed
+          </span>
+        </span>
       </label>
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
         <input type="checkbox" id="abSetDevDeploy" ${cfg.allow_dev_device_deploy ? "checked" : ""}
