@@ -637,3 +637,145 @@ The `GET /tasks/{id}/messages` and `POST /tasks/{id}/message` API already exists
 ### D1 — Doctor launch buttons for Claude and Codex
 
 - [ ] Next to the installed status for `claude` and `codex`, add a "Launch ›" button that opens a PTY terminal session running that tool in the project root
+
+---
+
+## M29 — Device NVS Config Bridge — target: v0.4.x
+
+### Background and Security Model
+
+The ESP32 `set_config` command already writes strings to NVS (`Preferences` namespace `"espai"`),
+but three gaps make it unusable for live settings like screen rotation:
+
+1. **No callback** — the value is written to flash but nothing re-applies it. `rotation=2` written
+   while running doesn't call `tft.setRotation(2)` — it only takes effect on reboot.
+2. **Write-only from hub** — the hub cannot read current NVS values and cannot pre-populate a
+   settings form with live device state.
+3. **No schema** — the hub doesn't know what keys are valid, what types they accept, or what values
+   are allowed.
+
+**Critical constraint:** ESP32 NVS in the `"espai"` namespace stores WiFi credentials
+(`sta_ssid`, `sta_pass`) alongside operational settings. A generic read-all API would expose
+passwords. The bridge must **never** expose credentials — not even partially.
+
+### NVS Key Categories (non-negotiable design boundary)
+
+The platform recognises three categories of NVS data. The firmware developer explicitly places
+each key in the correct category at registration time. The hub enforces these categories strictly.
+
+| Category | Examples | Hub can read? | Hub can write? | Visible in UI? |
+|---|---|---|---|---|
+| **Operational** — device behaviour, display, thresholds | `rotation`, `brightness`, `temp_alert_c` | Yes | Yes | Current value shown |
+| **Injected secret** — credentials pushed from hub | `api_key`, `webhook_token`, `device_pin` | Never | Yes (one-way) | `●●●●●●` + "Update" only |
+| **Platform-managed** — WiFi creds, ESPAI internals | `sta_ssid`, `sta_pass`, `sleep_s`, `awake_s` | Never | Never via config API | Not in config API at all |
+
+**Platform-managed keys** (`sta_ssid`, `sta_pass`, `sleep_s`, `awake_s`, any key prefixed
+`espai_`) are owned by the platform and provision firmware flow. The hub enforces a server-side
+blocklist of these key names and returns 403 for any read or write request targeting them.
+
+**Injected secrets** give the hub a secure one-way push channel for API keys the device needs
+but the hub must not be able to retrieve. The hub stores only a write-timestamp and a
+`secret_set: true` flag — never the actual value. The device `/api/config` endpoint omits
+secret values from its response entirely.
+
+### Firmware API
+
+```cpp
+// ── Registration flags ──────────────────────────────────────────────────────
+#define ESPAI_CONFIG_OPERATIONAL  0   // readable and writable from hub (default)
+#define ESPAI_CONFIG_SECRET       1   // hub can write but NEVER read back
+
+// ── Register a configurable NVS setting ────────────────────────────────────
+// Call once per setting in setup() before connectWifi().
+// Callback fires at boot (reading NVS) AND on every set_config command.
+//
+// Operational example:
+//   espai_register_config("rotation", "int", "0",
+//     "Screen rotation: 0=0° 1=90° 2=180° 3=270°",
+//     [](const char* v) { tft.setRotation(atoi(v)); });
+//
+// Injected secret example:
+//   espai_register_config("api_key", "string", "",
+//     "External API key — write-only from hub",
+//     [](const char* v) { myService.setKey(v); },
+//     ESPAI_CONFIG_SECRET);
+//
+// Type tokens: "string" | "int" | "float" | "bool"
+typedef void (*espai_config_cb_t)(const char* new_value);
+
+void espai_register_config(
+    const char*        key,
+    const char*        type,
+    const char*        default_val,
+    const char*        description,
+    espai_config_cb_t  on_change = nullptr,
+    uint8_t            flags     = ESPAI_CONFIG_OPERATIONAL
+);
+```
+
+- `espai_init_config()` called once in `setup()`: reads each registered key from NVS, writes
+  the compiled-in default if absent, calls the callback — device applies all settings from NVS
+  at startup without duplicate code paths.
+- `set_config` command handler (upgraded): after writing NVS, calls the registered callback
+  immediately — **no reboot required**. Keys on the platform blocklist are rejected with a NACK.
+- `GET /api/config` on device: returns only `ESPAI_CONFIG_OPERATIONAL` keys and current values.
+  Secret and platform-managed keys are omitted entirely — not even shown as `null`.
+- `/api/manifest` `"config"` array: lists all registered keys with `type`, `default`,
+  `description`, and `"secret": true` for `ESPAI_CONFIG_SECRET` registrations.
+
+### Hub Backend
+
+- `device_config` table: `(device_id, key, value, secret_set_at, updated)` — `value` is NULL for
+  secret keys; `secret_set_at` records when a secret was last pushed (timestamp only, no value).
+- `device_config_schema` table (or JSON column on `devices`): schema snapshot from last manifest.
+- Hub-side blocklist: `["sta_ssid", "sta_pass", "sleep_s", "awake_s", "awake_w"]` plus any key
+  matching `/^espai_/`. Read or write requests for blocklisted keys return 403.
+- `GET /api/devices/{id}/config` — proxies to device `GET /api/config`; caches operational values;
+  device unreachable → DB fallback with `"offline": true` flag; never returns secret values.
+- `PUT /api/devices/{id}/config` `{ "key": "rotation", "value": "2" }` — blocklist check;
+  sends `set_config` command; for operational keys, caches value in DB.
+- `PUT /api/devices/{id}/config/bulk` — same for multiple keys in one call.
+- `GET /api/devices/{id}/config/schema` — schema from last manifest checkin.
+- Checkin handler: on manifest with `"config"` array, upsert schema; upsert operational values.
+
+### Hub Frontend
+
+- **Device card "⚙ Settings" panel** (Fleet view, paired devices only): schema-driven form from
+  `GET /api/devices/{id}/config/schema`. Operational keys: input type matched to declared type
+  (select for small int ranges with description hints, toggle for bool, number input for float,
+  text for string). Secret keys: `●●●●●●` display with "Update" button opening a write-only
+  modal (input not pre-populated; no read-back). "Save" calls bulk config endpoint. Values
+  pre-loaded from `GET /api/devices/{id}/config`. Offline: shows cached values with
+  "● offline — changes queued" badge; writes queue as commands with TTL.
+- **Project detail device settings**: same panel under linked device section.
+- `api.devices.getConfig(id)`, `api.devices.setConfig(id, key, value)`,
+  `api.devices.bulkConfig(id, values)`, `api.devices.configSchema(id)` in `api.js`.
+
+### Explicit non-goals
+
+- Does **not** expose WiFi credentials, sleep intervals, or any `espai_` platform-managed key.
+- Does **not** allow reading back injected secrets — once pushed, they are permanently write-only.
+- Does **not** let the hub discover or enumerate keys it was not explicitly told about by the
+  device's own manifest.
+- Does **not** replace the provision firmware WiFi credential flow.
+
+### Checklist
+
+- [ ] `ESPAI_CONFIG_OPERATIONAL` / `ESPAI_CONFIG_SECRET` flag constants in seed firmware
+- [ ] `espai_register_config(key, type, default, description, callback, flags)` — builds in-memory schema
+- [ ] `espai_init_config()` — boot-time NVS read + default write + callback dispatch; called in setup()
+- [ ] `set_config` command: call registered callback after NVS write; NACK blocklisted keys
+- [ ] `GET /api/config` on ESP32: operational keys only; secrets and platform keys omitted entirely
+- [ ] `/api/manifest` `"config"` array with `secret: true` flag per secret key
+- [ ] Hub-side blocklist enforced in all `PUT /api/devices/{id}/config` handlers
+- [ ] `device_config` and `device_config_schema` tables + migration
+- [ ] `GET /api/devices/{id}/config` — proxy + DB fallback; never return secret values
+- [ ] `PUT /api/devices/{id}/config` — single key write; blocklist check; operational cache
+- [ ] `PUT /api/devices/{id}/config/bulk` — batch write
+- [ ] `GET /api/devices/{id}/config/schema` — schema from manifest
+- [ ] Checkin handler: upsert schema + operational values from manifest
+- [ ] `api.devices.getConfig/setConfig/bulkConfig/configSchema` in `api.js`
+- [ ] Device card "⚙ Settings" panel: operational keys as live form; secrets as write-only update buttons
+- [ ] Project detail: settings panel under linked device section
+- [ ] Offline mode: cached values with "offline" badge; writes queued as commands with TTL
+- [ ] `agents/rules.md`: document config categories, blocklist, and that secrets are write-only
