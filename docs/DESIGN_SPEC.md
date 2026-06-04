@@ -857,9 +857,9 @@ In `POST /api/projects/{id}/data`, after storing the payload: if the project has
 
 ---
 
-## 25. Current Build State (as of 2026-06-04) — v0.3.0
+## 25. Current Build State (as of 2026-06-04) — v0.4.3
 
-Milestones 0–19 (partial) complete. Key shipped capabilities:
+Milestones 0–28 complete. Key shipped capabilities:
 
 - Full fleet registry with mDNS auto-discovery, subnet scan, pairing token flow
 - **Multi-node project model** — `project_nodes` table, per-node roles, topology, app_type, reverse device→projects lookup
@@ -891,14 +891,28 @@ Milestones 0–19 (partial) complete. Key shipped capabilities:
 - **Integration template workers** — tasmota-poller, shelly-poller, wled-controller, zigbee2mqtt-bridge, jellyfin-poller, http-poller
 - **Worker sync on startup** — per-worker version-aware copy; new workers land on update without reinstall
 - **Project-scoped workers** — `projects/{id}/workers/{name}/` takes precedence over global worker for job mode
+- **Hub → device command channel** — `device_commands` table; enqueue/poll/ack/TTL; `espai_poll_commands()` in seed firmware
+- **Binary media upload** — `POST /api/projects/{id}/media`; quota guard; `espai_upload_jpeg()` helper in seed firmware
+- **Cron scheduler** — 5-field cron expressions on rules; `system.clock` events; timezone-aware via `schedule_tz`
+- **Data aggregation API** — `GET /api/projects/{id}/data/aggregate` (avg/min/max/sum/count/last; 1m–1d buckets)
+- **Spatial/GPS model** — `lat`/`lng` columns; spatial index; `/data/spatial`, `/track`, geofence-check endpoints
+- **Geofence events** — `geofences` table; push hook fires `geofence.enter` / `geofence.exit` events to rules engine
+- **Bulk offline data upload** — `POST /api/projects/{id}/data/bulk`; up to 500 readings per call; SD card drain pattern
+- **Rule rate limiting** — `max_fires_per_hour` on rules; `rule_fires` table; rolling 60-min window check
+- **Matter bridge** — hub-hosted Node.js aggregator (`hub/matter/bridge.mjs`); 7 device types; QR commissioning; state map + command action editors; per-device endpoints; inferred device type
+- **Port-to-hub porting workflow** — 4-phase structured agent task with copy-paste provision snippets; ESPAI.md integration patterns section
 
-**Release roadmap:**
-- **0.3.x** — polish, cleanup, M18/M19/M20 follow-ons, debugging, quality pass
-- **0.4.0** — Matter bridge (M23) + device type mapping (M24); hub-hosted aggregator; one commissioning for all opted-in projects; see Section 24
+**Shipped in 0.4.x:**
+- **M23** — Matter bridge (hub-hosted Node.js aggregator; 7 device types; QR commissioning; Google Home / HomeKit / Alexa)
+- **M24** — Matter device type mapping UI (state map editor, command action editor, inferred device type, per-device endpoints)
+- **M25a/b** — Binary media upload (`espai_upload_jpeg()`) + hub→device command channel (`espai_poll_commands()`)
+- **M26a/b/c** — Cron scheduler + timezone support + data aggregation API + spatial/GPS model + geofence events
+- **M27** — Bulk offline data upload (`POST /api/projects/{id}/data/bulk`)
+- **M28** — Rule rate limiting (`max_fires_per_hour`)
+- Port-to-hub porting workflow: 4-phase structured task + provision snippets embedded in ESPAI.md
 
-**Open priorities (0.3.x):**
-- Service health polling + link service to project (M20 follow-ons)
-- Git-branch OTA rollback (M18 follow-on)
-- Firmware CI builds in release pipeline (M19)
-- Docker sidecar runner for workers (M6)
-- Linux `.deb` package (M19)
+**Open priorities (0.5.x):**
+- Matter device scenes (Scenes cluster for lighting/plug endpoints)
+- Docker sidecar runner for workers
+- Firmware CI builds in release pipeline
+- Linux `.deb` package

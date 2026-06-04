@@ -65,7 +65,7 @@ espai.py          CLI entry point
 
 Key API prefixes: `/api/devices`, `/api/projects`, `/api/recipes`, `/api/workers`,
 `/api/cards`, `/api/ota`, `/api/jobs`, `/api/events`, `/api/rules`, `/api/design`,
-`/api/agent-bench`, `/api/terminal`, `/api/meta`
+`/api/matter`, `/api/agent-bench`, `/api/terminal`, `/api/meta`
 
 ---
 
@@ -109,6 +109,39 @@ the device is asleep.
 const { devices } = await fetch(`/api/projects/${PROJECT_ID}/data/latest`).then(r=>r.json());
 ```
 
+**Bulk upload (offline buffer drain):**
+```cpp
+// POST /api/projects/{id}/data/bulk
+// Body: { "readings": [ { "payload": {...}, "device_id": "...", "timestamp": "..." } ] }
+// Accepts up to 500 readings per call — timestamps may be from the past.
+```
+
+---
+
+## Firmware Helpers (seed firmware)
+
+These functions are available in `firmware/seed/src/main.cpp` and should be used in all ESP32 projects. Reference the seed source directly — never copy-paste without understanding the full implementation.
+
+| Function | Purpose |
+|---|---|
+| `hubCheckin(hubUrl)` | POST device identity to hub; receives back `sleep_interval_s` and `awake_window_s`; persists to NVS |
+| `espai_upload_jpeg(hubUrl, projectId, buf, len, deviceId, tags)` | Upload JPEG buffer to hub media store as multipart/form-data; returns HTTP status |
+| `espai_poll_commands(hubUrl)` | Poll `GET /api/devices/{id}/commands/pending`; self-throttles via `ESPAI_CMD_POLL_MS` (default 2 s); dispatches and acks built-in commands (`reboot`, `set_config`, `run_ota_check`) |
+| `espai_register_cmd_handler(fn)` | Register a user callback for custom command types; called before built-in handlers |
+| `enterDeepSleep(seconds)` | Clean WiFi disconnect, RTC timer wakeup, `esp_deep_sleep_start()` |
+| `startFallbackAP()` | Start `ESPAI-{node_id_suffix}` hotspot when STA connection fails |
+| `connectWifi()` | Read credentials from NVS first, fall back to `WIFI_SSID` build flag, then AP mode |
+
+**Build flag:** `ESPAI_CMD_POLL_MS` — override command poll interval (default 2000 ms).
+
+**Deep sleep pattern:**
+```cpp
+// In setup(): read sleepIntervalS from NVS; call hubCheckin() to sync from hub
+// In loop(): after awakeWindowS seconds, call enterDeepSleep(sleepIntervalS)
+if (sleepIntervalS > 0 && millis() > (uint32_t)(awakeWindowS * 1000))
+    enterDeepSleep(sleepIntervalS);
+```
+
 ---
 
 ## Docker / Router Deployment
@@ -148,7 +181,7 @@ Use `ESPAI_PREINSTALL` env var or mount a `worker-requirements.txt` instead.
 
 - **No secrets in Git.** Credentials via build flags or NVS only.
 - **OTA**: pairing + board compat + SHA-256 checksum + audit log required.
-- **Workers**: quarantined by default; policy-capped; no silent trust elevation.
+- **Workers**: policy-capped permissions; git rollback for version control; no silent trust elevation.
 - **Agents**: dev lane only; no access to `secrets/`, `data/`, `backups/`,
   `firmware/seed/`, `firmware/provision/`; no release promotion.
 

@@ -38,12 +38,15 @@ Build a custom local app to replace a vendor cloud dashboard — for your thermo
 - Custom ESP32 firmware scaffold — PlatformIO projects, per-project build flags, OTA delivery
 - API integration scaffold — HTTP polling, MQTT subscription, WebSocket workers out of the box
 - Device discovery — mDNS browse, subnet scan, manual IP add, pairing token flow
-- Hub data store — ESP32 and integration workers push readings; web cards pull them back
+- Hub data store — time-series push/pull, bulk offline upload, spatial/GPS queries, geofence events
 - Python workers — image processing, telemetry, protocol bridging, event generation
 - Reusable UI cards, device recipes, design themes, and Python worker definitions
 - OTA with SHA-256 verification, board compatibility check, staged rollout, and rollback
-- Agent Bench — run Claude autonomously on project tasks; diff view for review before applying
-- Local event bus, rules engine, MQTT output, browser push notifications
+- Agent Bench — run Claude autonomously on project tasks; git rollback for review
+- Local event bus, rules engine (cron + timezone, rate limiting), MQTT output, browser push
+- Hub → device command channel — enqueue commands, device polls and acks
+- Media store — binary file upload from firmware (`espai_upload_jpeg()`), gallery, quota guard
+- **Matter bridge** — hub-hosted aggregator; commission once, every opted-in project appears in Google Home, HomeKit, and Alexa automatically
 - Per-project Git history and code editor built into the hub
 - Docker appliance (ARM64) for always-on router or NAS deployment
 - Windows tray app and installer; Linux AppImage

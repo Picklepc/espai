@@ -12,15 +12,21 @@
 │  HUB  (always-on LAN host)                                          │
 │  FastAPI :7888 · SQLite WAL · WebSocket broker · mDNS browse        │
 │  Vanilla JS SPA · Static project web apps at /app/{slug}/           │
-│  Worker subprocess pool · Theme scheduler · MQTT optional output     │
+│  Worker subprocess pool · Cron scheduler · MQTT optional output     │
+│  Matter bridge (Node.js :5580) · Command channel · Media store      │
 └──────────────────┬──────────────────────────────────────────────────┘
                    │  HTTP / WebSocket (LAN)
        ┌───────────┴──────────┐          ┌───────────────────────────┐
        │   WORKERS            │          │   NODES  (ESP32-class)    │
        │  Python subprocesses │          │  Arduino / PlatformIO     │
-       │  quarantined default │          │  REST API on port 80      │
-       │  policy-capped perms │          │  mDNS · OTA · AP fallback │
+       │  policy-capped perms │          │  REST API on port 80      │
+       │  git rollback        │          │  mDNS · OTA · AP fallback │
        └──────────────────────┘          └───────────────────────────┘
+                                                    │  Matter (fabric)
+                                         ┌──────────┴────────────────┐
+                                         │  Google Home / HomeKit /  │
+                                         │  Alexa  (Matter fabric)   │
+                                         └───────────────────────────┘
 ```
 
 ---
@@ -40,7 +46,9 @@
 | `workers/permissions.py` | Validates worker permissions against policy caps; sanitizes env; sets process priority |
 | `discovery/mdns.py` | mDNS browse for `_ESPAI-node._tcp.local`; on-found callback upserts into DB |
 | `discovery/scanner.py` | 64-worker ThreadPoolExecutor subnet probe; registers responding ESPAI nodes |
-| `rules/engine.py` | Evaluates rules on every event publish; dispatches log/run_worker/webhook/theme_change |
+| `rules/engine.py` | Evaluates rules on every event publish; rate-limit check via `rule_fires` table; dispatches log/run_worker/webhook/theme_change/send_command |
+| `rules/scheduler.py` | Cron scheduler — fires `system.clock` events; timezone-aware via `schedule_tz`; 5-field cron parser |
+| `matter_bridge.py` | Matter bridge process manager; spawns `hub/matter/bridge.mjs`; thin HTTP client to bridge API on port 5580 |
 | `theme_scheduler.py` | Time-based and event-based theme switching; evaluates every 60 s |
 | `mqtt_publisher.py` | Optional paho-mqtt output; publishes all events to `{prefix}/events/{type}` |
 | `ws_broker.py` | `ConnectionManager`; `broadcast_event_sync()` thread-safe bridge via captured asyncio loop |
@@ -51,7 +59,12 @@
 |---|---|
 | `/api/devices` | Fleet registry, mDNS/scan/manual discovery, pairing token flow |
 | `/api/projects` | Project CRUD, file API, theme overrides, data store, context regeneration |
-| `/api/projects/{id}/data` | Time-series push (ESP32) + latest/history pull (web app) |
+| `/api/projects/{id}/data` | Time-series push + bulk offline upload + latest/history pull + spatial query |
+| `/api/projects/{id}/geofences` | Geofence polygon CRUD; push hook fires `geofence.enter` / `geofence.exit` |
+| `/api/projects/{id}/matter` | Per-project Matter config (device type, state map, command actions, per-device mode) |
+| `/api/projects/{id}/media` | Binary file upload/download (images, audio); quota-guarded; `espai_upload_jpeg()` compatible |
+| `/api/matter` | Matter bridge control (start/stop/sync/status/qrcode) + command webhook |
+| `/api/devices/{id}/commands` | Hub→device command channel: enqueue, poll, ack, TTL expiry |
 | `/api/recipes` | Recipe YAML registry, validation, export (share_policy), compat check |
 | `/api/workers` | Worker YAML registry, job dispatch, quarantine control, test harness, compat |
 | `/api/cards` | Card YAML registry |
@@ -72,8 +85,10 @@
 ### Database (`data/ESPAI.db`, SQLite WAL)
 
 Key tables: `devices`, `projects`, `ota_log`, `jobs`, `events`, `pairing_tokens`, `rules`,
-`project_data`, `project_data_cache`, `agent_tasks`, `agent_runs`, `agent_artifacts`,
-`agent_reviews`, `agent_permissions`, `agent_task_messages`.
+`rule_fires`, `project_data`, `project_data_cache`, `project_nodes`, `project_media`,
+`geofences`, `device_commands`, `local_services`, `hub_settings`,
+`agent_tasks`, `agent_runs`, `agent_artifacts`, `agent_reviews`, `agent_permissions`,
+`agent_task_messages`.
 
 `get_conn()` is a context manager — **always commits on clean exit, rolls back on exception.
 Never call `conn.commit()` inside a `with get_conn()` block.**
@@ -211,8 +226,8 @@ Fleet device cards show "⬆ Flash" for paired devices.
   `firmware/seed/`, `firmware/provision/`, `secrets/`, `data/`, `backups/`,
   `*.private.yaml`, `*.private.json`, `.env`, `captures/private/`
 - All runs logged in `agent_runs` with snapshot before/after.
-- Workers created by agents start quarantined — human lifts via "Lift Quarantine" prompt
-  on approval, or `PATCH /api/workers/{name}/quarantine?quarantine=false`.
+- Workers created by agents are subject to the same permission policy caps as all workers.
+  Changes are tracked in git — rollback via `POST /api/workers/{name}/git/rollback`.
 - Release promotion, pairing state, and OTA targeting are human-only actions.
 
 ---

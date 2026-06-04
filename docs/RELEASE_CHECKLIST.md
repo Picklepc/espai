@@ -26,10 +26,10 @@ The checklist as it appears in the repo reflects the **most recently completed r
 
 ## 1. Version and Packaging
 
-- [ ] `VERSION` file matches the intended tag — `0.3.1`
+- [ ] `VERSION` file matches the intended tag — `0.4.3`
 - [ ] `hub/backend/__init__.py` imports `VERSION` correctly — reads dynamically from `VERSION` file
 - [ ] `GET /api/status` returns `version`, `uptime`, `device_count`
-- [ ] `espai.spec` datas: `hub/frontend/`, `recipes/`, `workers/`, `cards/`, `design/`, `agents/`, `agent-bench/`, `policies/`, `schemas/`, `VERSION`
+- [ ] `espai.spec` datas: `hub/frontend/`, `hub/matter/`, `recipes/`, `workers/`, `cards/`, `design/`, `agents/`, `agent-bench/`, `policies/`, `schemas/`, `VERSION`
 - [ ] `requirements.txt` has `zeroconf`, `fastapi`, `uvicorn`, `pydantic`
 - [ ] `requirements-bundle.txt` has `pystray`, `Pillow`, `pywinpty`/`ptyprocess`, `paho-mqtt`, `zeroconf`, `pyinstaller`
 - [ ] `.github/workflows/release.yml` triggers on `v*.*.*` tag push
@@ -57,14 +57,16 @@ The checklist as it appears in the repo reflects the **most recently completed r
 
 ## 3. Database Integrity
 
-- [ ] All 18 tables present in `init_db()`: `devices`, `projects`, `ota_log`, `jobs`, `events`, `pairing_tokens`, `rules`, `agent_tasks`, `agent_task_messages`, `agent_runs`, `agent_artifacts`, `agent_reviews`, `agent_permissions`, `project_nodes`, `project_data`, `project_data_cache`, `local_services`, `hub_settings`
+- [ ] All 22+ tables present in `init_db()`: `devices`, `projects`, `ota_log`, `jobs`, `events`, `pairing_tokens`, `rules`, `rule_fires`, `agent_tasks`, `agent_task_messages`, `agent_runs`, `agent_artifacts`, `agent_reviews`, `agent_permissions`, `project_nodes`, `project_data`, `project_data_cache`, `project_media`, `geofences`, `device_commands`, `local_services`, `hub_settings`
 - [ ] `_migrate()` additive — all `ALTER TABLE ADD COLUMN`, no destructive changes
 - [ ] `device_type TEXT DEFAULT 'esp32'` column present in `projects` after `_migrate()`
-- [ ] Fresh `init_db()` against empty DB — no errors, all tables created
+- [ ] `schedule`, `schedule_tz`, `max_fires_per_hour` columns present in `rules` after `_migrate()`
+- [ ] `lat`, `lng` columns present in `project_data` after `_migrate()`
 - [ ] `sleep_interval_s` and `awake_window_s` columns present in `devices` after `_migrate()`
 - [ ] `reachable INTEGER` column present in `local_services` after `_migrate()`
-- [ ] `_migrate()` against 0.3.0 DB — no errors, all expected columns present (manual test)
-- **Note:** `_migrate()` has duplicate slug migration blocks — backfill in second block is unreachable if first block ran. Pre-existing issue, slug is backfilled lazily. Not blocking.
+- [ ] Fresh `init_db()` against empty DB — no errors, all tables created
+- [ ] `_migrate()` against 0.4.0 DB — no errors, all expected columns present (manual test)
+- **Note:** `_migrate()` has duplicate slug migration blocks — backfill in second block is unreachable if first block ran. Pre-existing issue, not blocking.
 
 ---
 
@@ -102,6 +104,16 @@ The checklist as it appears in the repo reflects the **most recently completed r
 - [ ] `GET /api/matter/qrcode` → 404 when bridge not running; QR object when running
 - [ ] `GET /api/projects/{id}/matter` → returns matter config keys with defaults
 - [ ] `PUT /api/projects/{id}/matter` with `matter_enabled:true` → persists; bridge syncs if running
+- [ ] `PUT /api/projects/{id}/matter` with invalid `matter_device_type` → 400 with valid-types list
+- [ ] `PUT /api/projects/{id}/matter` with `matter_endpoint_per_device:true` → bridge registers per-device endpoints
+- [ ] `POST /api/projects/{id}/data/bulk` with `{ readings: [{payload, device_id?, timestamp?}] }` → stores all; returns `{ stored, skipped }`
+- [ ] `POST /api/projects/{id}/data/bulk` with 501 readings → 413
+- [ ] `GET /api/projects/{id}/geofences` → list
+- [ ] `POST /api/projects/{id}/geofences` → creates zone; push with `_location` crossing boundary → event fired
+- [ ] `DELETE /api/projects/{id}/geofences/{id}` → removed
+- [ ] `POST /api/rules/` with `max_fires_per_hour: 2` → rule throttled after 2 fires in 60 min
+- [ ] `POST /api/rules/` with `schedule_tz: "America/Chicago"` → cron fires at correct local time
+- [ ] Worker subprocess has `ESPAI_HUB_URL` in environment
 
 ---
 
@@ -132,14 +144,18 @@ The checklist as it appears in the repo reflects the **most recently completed r
 - [ ] Mobile logo: transparent-background PNG renders on all themes — manual test
 - [ ] Favicon shows in browser tab — manual test
 - [ ] Fleet, Projects, OTA, Design, Agent Bench, Services views render without JS errors — manual test
-- [ ] Worker quarantine auto-lift modal — manual test
-- [ ] Diff view Accept/Reject checkboxes — manual test
 - [ ] Services view: Discover scan finds LAN services, categorises them — manual test
 - [ ] Services view: Pin a service → reachable dot appears; Stop the service → dot turns red within 60 s — manual test
 - [ ] Services view: Edit modal shows Label, Category, Linked Project fields — manual test
 - [ ] Matter nav item visible; clicking opens Matter bridge view — manual test
 - [ ] Matter view: Start Bridge / Stop Bridge buttons work; QR panel appears when running and uncommissioned — manual test
-- [ ] Project detail: Matter section shows toggle, device type selector, label; Save persists — manual test
+- [ ] Project detail: Matter section shows toggle, device type, label, per-device toggle; Save persists — manual test
+- [ ] Matter state map editor appears when project has hub data; dropdowns match device type attributes — manual test
+- [ ] Matter command action editor shows for commandable device types; action type and value save correctly — manual test
+- [ ] Matter inferred device type hint appears when hub data keys match a known pattern — manual test
+- [ ] New Rule modal: Rate limit input present; rule with `max_fires_per_hour:2` stops firing after 2 fires — manual test
+- [ ] New Rule modal: system.clock event type shows cron + timezone inputs — manual test
+- [ ] Bulk data upload: `api.projects.dataBulk(id, readings)` stores all readings correctly — manual test
 - [ ] New project (Web scaffold): `web/index.html`, `web/hub-api.js`, `web/app.json` created; save a web file → browser auto-reloads via WebSocket — manual test
 - [ ] Fleet device card: sleeping device shows 💤 badge with interval; 💤 button opens sleep settings modal — manual test
 - [ ] Sleep settings: save new `sleep_interval_s` → checkin response returns it → firmware NVS updated (verify via serial log) — manual test
@@ -159,7 +175,7 @@ python espai.py serve
 - [ ] Hub starts clean, no import errors in first 10 s
 - [ ] Fake node appears in Fleet after scan or manual IP add
 - [ ] Pairing flow: initiate → confirm → device marked paired
-- [ ] `GET /api/status` returns `"version": "0.3.1"`
+- [ ] `GET /api/status` returns `"version": "0.4.3"`
 - [ ] Recipe validate: `example-bms` returns no errors
 - [ ] Theme switch: CSS vars update without page reload
 - [ ] Project create (ESP32 type) → `firmware/` folder present, `integration/` absent
@@ -178,7 +194,7 @@ python espai.py serve
 - [ ] Tray → Stop/Start/Restart — icon state updates correctly
 - [ ] Tray → Start at Login — registry key persists
 - [ ] First-run scaffold populates `~/Documents/ESPAI/` (check `.espai-initialized`)
-- [ ] `iscc /DMyAppVersion=0.3.1 installer\espai.iss` → `ESPAI-Setup-0.3.1.exe`
+- [ ] `iscc /DMyAppVersion=0.4.3 installer\espai.iss` → `ESPAI-Setup-0.4.3.exe`
 - [ ] Installer: no elevation, installs to `%LOCALAPPDATA%\Programs\ESPAI`
 - [ ] Uninstaller cleans up registry key
 
@@ -198,7 +214,7 @@ python espai.py serve
 
 - [ ] `docker compose up -d` starts container, health check passes within `start_period: 20s`
 - [ ] `GET /api/status` reachable at `http://<router-ip>:7888/api/status`
-- [ ] Response contains `"version": "0.3.1"`
+- [ ] Response contains `"version": "0.4.3"`
 - [ ] mDNS discovery finds ESP32 nodes (`network_mode: host`)
 - [ ] Data persists across `docker compose restart` (SSD bind-mounts: `data/`, `projects/`, `firmware-catalog/`)
 - [ ] `claude --version` works inside container (`latest` and `workers` variants)
@@ -227,10 +243,11 @@ python espai.py serve
 
 ### 8e. Registry
 
-- [ ] `docker pull ghcr.io/picklepc/espai:0.2.9` succeeds on amd64
-- [ ] `docker pull ghcr.io/picklepc/espai:0.2.9` succeeds on arm64 (verify on router)
+- [ ] `docker pull ghcr.io/picklepc/espai:0.4.3` succeeds on amd64
+- [ ] `docker pull ghcr.io/picklepc/espai:0.4.3` succeeds on arm64 (verify on router)
 - [ ] Floating tags updated: `:latest`, `:workers`, `:slim`
-- [ ] Version-pinned tags present: `:0.3.1`, `:0.2.9-workers`, `:0.2.9-slim`, `:0.2`, `:0.2-workers`, `:0.2-slim`
+- [ ] Version-pinned tags present: `:0.4.3`, `:0.4.3-workers`, `:0.4.3-slim`
+- [ ] Matter bridge: `npm install` in `hub/matter/` runs during Docker build (verify in Dockerfile)
 
 ---
 
@@ -239,25 +256,22 @@ python espai.py serve
 - [ ] `build-windows` job passes
 - [ ] `build-linux` job passes
 - [ ] `build-docker` job passes — multi-arch image pushed to `ghcr.io`
-- [ ] Release artifacts attached: `ESPAI-Setup-0.2.9.exe` + `ESPAI-0.2.9-x86_64.AppImage`
+- [ ] Release artifacts attached: `ESPAI-Setup-0.4.3.exe` + `ESPAI-0.4.3-x86_64.AppImage`
 - [ ] GitHub Release page created with correct tag and release notes auto-generated from git log
 
 ---
 
-## 10. Known Open Items (not blocking 0.2.9)
+## 10. Known Open Items (not blocking 0.4.3)
 
 Document in release notes:
 
-- Firmware CI builds not wired — no pre-built `.bin` artifacts in release yet (see PROJECT_TASK_LIST.md Milestone 19)
+- Firmware CI builds not wired — no pre-built `.bin` artifacts in release yet
 - Docker sidecar worker runner not implemented — subprocesses only
-- Caddy/mDNS project routing not wired — `Open App` falls back to device IP
-- Git-branch rollback for OTA not implemented
-- Cross-domain path inheritance for agent tasks not implemented
 - Linux AppImage only CI-tested on ubuntu-latest x86_64
-- Theme selector card not yet implemented
 - `_migrate()` duplicate slug migration block — backfill unreachable on upgrade path (cosmetic, not data-loss)
-- M20 follow-ons: "Link service to project" button and background service health polling not yet implemented
-- M3 sleep/wake: 5 s awake window before deep sleep is a fixed constant — should be NVS-configurable in a future release
+- Matter bridge requires Node.js 18+ on the hub host — gracefully disabled if absent
+- Matter device scenes (Scenes cluster) not yet implemented — scoped to 0.5.x
+- Multi-device Matter endpoints cleanup: removing stale single-project endpoints on mode switch is best-effort
 
 ---
 
@@ -266,10 +280,10 @@ Document in release notes:
 | Check | Result | Notes |
 |---|---|---|
 | Code + security review | pending | |
-| DB migration dry-run (0.3.0 → 0.3.1) | pending | Manual test on router |
+| DB migration dry-run (0.4.0 → 0.4.3) | pending | Manual test on router |
 | API smoke test | pending | |
 | UI smoke test | pending | Manual |
 | Windows packaging | pending | CI |
 | Docker (ARM64) | pending | Deploy to router after CI |
-| Tag pushed | pending | `v0.3.1` |
+| Tag pushed | pending | `v0.4.3` |
 | CI green | pending | Check Actions |
