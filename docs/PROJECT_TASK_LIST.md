@@ -299,6 +299,75 @@ Frictionless worker development with proper lifecycle controls, git history, and
 - [x] **Worker startup policy UI** — ⏱ Manual / 🔁 Auto-start toggle button on service worker cards; calls `PATCH /api/workers/{name}` to update YAML
 - [x] **`_sync_workers()` preserves user `enabled`/`startup`** — reads user values before rmtree; writes them back into fresh YAML after copy if they differ from bundle defaults
 
+## Milestone 25 — Device Communication Layer — target: v0.4.x
+
+Two features identified in `docs/MOONSHOTS.md` as the highest-leverage additions to the platform. Together they unlock 11 of the 15 moonshot projects and lift the platform score from 4.8/10 to ~8.3/10.
+
+### M25a — Binary / File Upload from Device (score impact: -2.0 removed)
+
+Devices need to POST binary payloads — camera frames, audio clips, log files — to the hub for hub-side processing. Today the data push API accepts JSON only.
+
+- [ ] `POST /api/projects/{id}/data/upload` — multipart/form-data endpoint accepting a binary file + optional JSON metadata; stores to `data/media/{project_id}/{timestamp}-{uuid}.{ext}`; returns file ID + URL
+- [ ] `GET /api/projects/{id}/media` — list uploaded files with metadata (size, type, timestamp, file_id)
+- [ ] `GET /api/projects/{id}/media/{file_id}` — serve the raw file (for hub-side card display)
+- [ ] `DELETE /api/projects/{id}/media/{file_id}` — delete a media file
+- [ ] Media storage quota guard — configurable `ESPAI_MEDIA_MAX_MB` env var (default 2048); reject uploads over limit with 507
+- [ ] ESP32 firmware helper — `espai_upload_jpeg(hub_url, project_id, buf, len)` C++ function in seed firmware
+- [ ] Worker input: accept `file_id` as an input field; worker fetches the file from hub media store before processing
+- [ ] `api.projects.uploadMedia(id, file, metadata)` in api.js
+- [ ] Media gallery section in project detail — thumbnail grid for image files; audio player for .wav/.mp3
+
+### M25b — Hub → Device Command Channel (score impact: -1.5 removed)
+
+Hub needs to push real-time commands to ESP32 devices. Today all communication is device-initiated (device calls hub). Commands include: run a script, change a setting, trigger an action (unlock door, start motor, adjust setpoint).
+
+Design: device polls `GET /api/devices/{id}/commands` on a 1-5s interval and receives a queue of pending commands; hub enqueues via `POST /api/devices/{id}/commands`. Alternatively: WebSocket push if device supports it.
+
+- [ ] `commands` DB table — `id, device_id, command_type, payload, created, delivered_at, acked_at`
+- [ ] `POST /api/devices/{id}/commands` — enqueue a command for a device; body `{ command_type, payload, ttl_seconds }`
+- [ ] `GET /api/devices/{id}/commands/pending` — device polls this; returns undelivered commands; marks them as delivered
+- [ ] `POST /api/devices/{id}/commands/{cmd_id}/ack` — device confirms execution; marks acked
+- [ ] `GET /api/devices/{id}/commands` — hub view: full command history with delivery/ack status
+- [ ] TTL enforcement — background task removes undelivered commands past TTL; logs as missed
+- [ ] ESP32 seed firmware — poll loop every 2s; fetch pending commands; dispatch to registered handlers; POST ack
+- [ ] Command types (built-in): `set_config` (update a device config key), `reboot`, `run_ota_check`, `user_action` (arbitrary JSON payload for firmware handlers)
+- [ ] Rules engine action: `send_command` — new action type that enqueues a command to a device when a rule fires
+- [ ] UI: "Send Command" button on device detail panel; command history tab showing delivery status
+
+## Milestone 26 — Data Platform Extensions — target: v0.4.x
+
+Analytics capabilities needed by automation and ML projects identified in MOONSHOTS.md.
+
+### M26a — Scheduled Recipe / Rule Triggers (Cron)
+
+Currently rules only fire on events. Time-based automation (daily irrigation, hourly prediction run, nightly report) requires cron-style scheduling.
+
+- [ ] `schedule` field on rules — `{ cron: "0 6 * * *", timezone: "America/Chicago" }` triggers rule at that time even with no event
+- [ ] Lightweight cron evaluator in `hub/backend/rules/scheduler.py` — background thread; checks schedule every 60s; fires synthetic `system.clock` events that the rules engine processes normally
+- [ ] UI: "Scheduled" rule type in New Rule modal — cron expression input with human-readable preview
+- [ ] `GET /api/rules/upcoming` — next 5 scheduled fire times per scheduled rule (for UI preview)
+
+### M26b — Data Aggregation API
+
+Time-series queries beyond raw fetch: averages, sums, resampling for charting and ML input.
+
+- [ ] `GET /api/projects/{id}/data/aggregate?field=temperature&fn=avg&bucket=1h&since=7d` — returns bucketed aggregate: `[{ bucket, value, count }]`
+- [ ] Supported functions: `avg`, `min`, `max`, `sum`, `count`, `last`
+- [ ] Bucket sizes: `1m`, `5m`, `15m`, `1h`, `6h`, `1d`
+- [ ] Implemented as SQLite window function query (no extra storage needed)
+- [ ] `api.projects.dataAggregate(id, params)` in api.js
+- [ ] Chart.js card scaffolding — hub-hosted web app card template that calls aggregate API and renders multi-series line/bar chart
+
+### M26c — Spatial / GPS Data Model
+
+Location-tagged data and geofence rules for projects with GPS-enabled nodes.
+
+- [ ] `location` metadata field on data push — `{ lat, lng, alt, accuracy_m }` stored alongside JSON payload in new `data_location` column
+- [ ] `GET /api/projects/{id}/data/spatial?lat=&lng=&radius_m=` — return data points within radius
+- [ ] Geofence rule condition — `{ type: "geofence_breach", polygon: [[lat,lng],...], device_id }` fires when a device exits/enters the polygon
+- [ ] Map card template — hub-hosted web app card with Leaflet.js; plots latest device positions; shows sensor value as marker label
+- [ ] `GET /api/projects/{id}/track` — returns chronological position trail for a device (lat/lng/timestamp)
+
 ## Milestone 23 — Matter Bridge (hub-hosted) — target: v0.4.0
 
 The ESPAI hub acts as a **Matter bridge** (aggregator device). Commission it once to Google Home, HomeKit, or Alexa — every ESPai project that opts in appears as a first-class device in that ecosystem automatically. No Matter stack on the ESP32 or other device required.

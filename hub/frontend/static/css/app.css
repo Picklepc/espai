@@ -290,9 +290,10 @@ html, body {
 
 .reg-card-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
 
-.reg-card-quarantined {
-  border-color: rgba(240, 168, 32, 0.5);
-  background: rgba(240, 168, 32, 0.04);
+.reg-card-disabled {
+  opacity: .7;
+  border-color: var(--color-card-border);
+  border-style: dashed;
 }
 
 .quarantine-banner {
