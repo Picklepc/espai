@@ -95,13 +95,17 @@ def _migrate(conn) -> None:
     proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
     if "slug" not in proj_cols:
         conn.execute("ALTER TABLE projects ADD COLUMN slug TEXT")
-        # Backfill existing projects
         rows = conn.execute("SELECT id, name FROM projects").fetchall()
         for row in rows:
             conn.execute(
                 "UPDATE projects SET slug=? WHERE id=?",
                 (_to_hostname(row[1]), row[0]),
             )
+
+    # Add device_type — governs scaffold, ESPAI.md content, and agent templates
+    proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    if "device_type" not in proj_cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN device_type TEXT DEFAULT 'esp32'")
 
 
 def init_db() -> None:

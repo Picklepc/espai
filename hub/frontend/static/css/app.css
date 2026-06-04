@@ -764,6 +764,11 @@ code {
     margin-top: 0;
     height: 100vh;
   }
+
+  /* Push view title clear of the fixed hamburger (left:14px + ~40px button = ~54px) */
+  .view-header {
+    padding-left: 58px;
+  }
 }
 
 /* ── Packages section ─────────────────────────────────────────────────────── */

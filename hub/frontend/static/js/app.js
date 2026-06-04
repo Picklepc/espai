@@ -162,12 +162,27 @@ async function _openAgentTaskModal(ctx = {}) {
 
   // Load project options only when no context (full form)
   let projOptsHTML = '<option value="">— no project —</option>';
+  let projects = [];
   if (!hasContext) {
-    let projects = [];
     try { projects = await api.projects.list(); } catch (_) {}
     projOptsHTML = ['<option value="">— no project —</option>',
       ...projects.map(p => `<option value="${p.id}">${p.name}</option>`)].join("");
   }
+
+  // Determine device_type for template filtering
+  let _filterDeviceType = "esp32";
+  if (context_type === "project" && context_id) {
+    const proj = projects.find(p => p.id === context_id)
+      || (await api.projects.get(context_id).catch(() => null));
+    if (proj) _filterDeviceType = proj.device_type || "esp32";
+  }
+
+  // Load filtered templates
+  let _templates = [];
+  try { _templates = await api.agentBench.listTemplates(_filterDeviceType); } catch (_) {}
+  const tmplOptsHTML = _templates.map(t =>
+    `<option value="${t.id}">${t.name}${t.description ? " — " + t.description.slice(0, 60) : ""}</option>`
+  ).join("");
 
   const contextBanner = hasContext ? `
     <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;
@@ -199,15 +214,8 @@ async function _openAgentTaskModal(ctx = {}) {
       <textarea id="abNewDesc" rows="${hasContext ? 4 : 5}" placeholder="${_templatePlaceholders["firmware-feature"]}"></textarea>
     </div>
     <div class="form-field">
-      <label data-tip="Tells the agent which codebase area to focus on">Template</label>
-      <select id="abNewTemplate">
-        <option value="firmware-feature">firmware-feature — ESP32 code</option>
-        <option value="hub-feature">hub-feature — hub backend or API</option>
-        <option value="port-to-hub">port-to-hub — mirror device to hub + ESP32 fallback</option>
-        <option value="recipe-feature">recipe-feature — YAML data pipeline</option>
-        <option value="bug-fix">bug-fix — diagnose and fix</option>
-        <option value="custom">custom — no constraints</option>
-      </select>
+      <label data-tip="Tells the agent which codebase area to focus on — filtered by the selected project type">Template</label>
+      <select id="abNewTemplate">${tmplOptsHTML}</select>
     </div>
     ${!hasContext ? `
     <div class="form-field">
@@ -266,6 +274,26 @@ async function _openAgentTaskModal(ctx = {}) {
     const upd = () => { ta.placeholder = _templatePlaceholders[sel.value] || _templatePlaceholders["custom"]; };
     sel.addEventListener("change", upd);
     upd();
+  }
+
+  // Re-filter templates when project selection changes (full form only)
+  const projSel = document.getElementById("abNewProject");
+  if (projSel && sel) {
+    projSel.addEventListener("change", async () => {
+      const pid = projSel.value;
+      let dt = "esp32";
+      if (pid) {
+        const p = projects.find(x => x.id === pid);
+        dt = (p && p.device_type) || "esp32";
+      }
+      try {
+        const tl = await api.agentBench.listTemplates(dt);
+        sel.innerHTML = tl.map(t =>
+          `<option value="${t.id}">${t.name}${t.description ? " — " + t.description.slice(0, 60) : ""}</option>`
+        ).join("");
+        if (ta) ta.placeholder = _templatePlaceholders[sel.value] || _templatePlaceholders["custom"];
+      } catch (_) {}
+    });
   }
 }
 
@@ -1277,10 +1305,13 @@ async function loadProjects() {
     const card = el("div", "reg-card");
     card.style.cursor = "pointer";
     const devCount = Array.isArray(p.devices) ? p.devices.length : 0;
+    const dtLabel = { esp32: "ESP32", integration: "integration", hybrid: "hybrid" }[p.device_type] || "esp32";
+    const dtTip   = { esp32: "ESP32 firmware project — PlatformIO scaffold included", integration: "API integration project — polls or subscribes to an external device or service", hybrid: "Hybrid project — ESP32 firmware + API integration" }[p.device_type] || "ESP32 project";
     card.innerHTML = `
       <div class="reg-card-title">${p.name}</div>
       <div class="reg-card-sub">${p.description || ""}</div>
       <div class="tag-row">
+        <span class="tag" data-tip="${dtTip}">${dtLabel}</span>
         <span class="tag">${devCount} device${devCount !== 1 ? "s" : ""}</span>
         <span class="tag">${timeAgo(p.created)}</span>
       </div>
@@ -2153,12 +2184,28 @@ document.getElementById("btnNewProject").onclick = () => {
       <label data-tip="Passed to the agent as context — describe the project purpose so the agent understands what it is building">Description (optional)</label>
       <textarea id="newProjDesc" rows="3" placeholder="e.g. PIR-based motion detection node — detects movement, blinks the onboard LED, and publishes a device.motion event to the hub"></textarea>
     </div>
+    <div class="form-field">
+      <label data-tip="Determines the project scaffold and which agent templates are offered">Project Type</label>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer" data-tip="Custom ESP32 firmware — PlatformIO scaffold and C++ starter included">
+          <input type="radio" name="newProjType" value="esp32" checked> ESP32 Node
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer" data-tip="Hub worker that polls or subscribes to an existing device or service — no custom firmware">
+          <input type="radio" name="newProjType" value="integration"> API Integration
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer" data-tip="ESP32 firmware acting as a BLE/serial bridge, plus a hub integration worker">
+          <input type="radio" name="newProjType" value="hybrid"> Hybrid Bridge
+        </label>
+      </div>
+    </div>
   `, [
     { label: "Create", cls: "btn btn-primary", action: async () => {
       const name = document.getElementById("newProjName").value.trim();
       const desc = document.getElementById("newProjDesc").value.trim();
+      const typeEl = document.querySelector('input[name="newProjType"]:checked');
+      const device_type = typeEl ? typeEl.value : "esp32";
       if (!name) return;
-      await api.projects.create({ name, description: desc || null });
+      await api.projects.create({ name, description: desc || null, device_type });
       closeModal();
       loadProjects();
     }},

@@ -8,34 +8,45 @@
 
 ## 1. What ESPAI Is
 
-ESPAI is a **local-first ESP32 fleet management and edge-processing platform**.
-It runs entirely on your LAN — no cloud dependency, no subscription. A Python
-FastAPI hub provides fleet oversight, persistent storage, a worker pipeline, and
-a vanilla JS dashboard. ESP32-class nodes run minimal firmware, report in via
-HTTP, and receive OTA updates. Python workers process data (images, sensor
-streams, etc.) as background jobs.
+ESPAI is a **local-first platform for replacing cloud apps with custom LAN-hosted
+applications**. It runs entirely on your LAN — no cloud dependency, no subscription,
+no data leaving your network. A Python FastAPI hub is the always-on control plane:
+it manages custom ESP32 firmware nodes, integrates with any WiFi device through its
+local API, runs Python workers as background jobs, and hosts per-project web apps
+that replace the vendor cloud dashboard.
+
+**Three project types** determine the scaffold and agent behavior:
+
+| Type | What it does |
+|---|---|
+| `esp32` | Custom firmware on an ESP32 node (PlatformIO, C++). Hub stores readings, delivers OTA. |
+| `integration` | Hub worker that polls or subscribes to an existing WiFi device or service via its local API. No custom firmware. |
+| `hybrid` | ESP32 acting as a BLE/serial bridge, plus a hub integration worker that consumes the bridge. |
 
 The guiding philosophy: **the hub is a resource platform, not just a dashboard.**
-ESP32 hardware measures and actuates; the hub stores, aggregates, schedules, and
-serves. Keep firmware lean; push complexity to the hub.
+Whether the data source is custom ESP32 firmware or a Shelly plug's HTTP API, the
+hub stores, aggregates, schedules, and serves. Keep firmware lean; push complexity
+to the hub. For integration projects, keep workers stateless and credential-free.
 
 ---
 
 ## 2. Execution Zones
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  HUB  (this machine — always on)                                 │
-│  FastAPI  · SQLite  · Worker runner  · mDNS  · WebSocket broker  │
-│  Vanilla JS dashboard · Static project web apps                  │
-└──────────────┬───────────────────────────────────────────────────┘
-               │  HTTP / WebSocket (LAN)
-       ┌───────┴──────────┐           ┌──────────────────┐
-       │   WORKERS        │           │   NODES (ESP32)  │
-       │  Python subproc  │           │  Arduino/PIO     │
-       │  quarantined     │           │  mDNS · OTA      │
-       │  by default      │           │  WebServer :80   │
-       └──────────────────┘           └──────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  HUB  (this machine — always on)                                         │
+│  FastAPI  · SQLite  · Worker runner  · mDNS  · WebSocket broker          │
+│  Vanilla JS dashboard · Static project web apps · LAN service registry   │
+└──────┬──────────────────────────┬────────────────────────────────────────┘
+       │  subprocess              │  HTTP / WebSocket / MQTT / BLE (LAN)
+┌──────┴──────────┐    ┌──────────┴───────┐    ┌──────────────────────────┐
+│   WORKERS       │    │  NODES (ESP32)   │    │  LAN DEVICES             │
+│  Python subproc │    │  Arduino/PIO     │    │  Any WiFi device with    │
+│  quarantined    │    │  mDNS · OTA      │    │  a local API — Shelly,   │
+│  by default     │    │  WebServer :80   │    │  Tasmota, cameras, NAS,  │
+│  polls/bridges  │    │  offline fallback│    │  thermostats, media      │
+│  LAN devices    │    │                  │    │  servers, routers, etc.  │
+└─────────────────┘    └──────────────────┘    └──────────────────────────┘
 ```
 
 **Hub** — everything in `hub/`. FastAPI + SQLite + vanilla JS. Always on, always
@@ -43,10 +54,17 @@ reachable at `http://espai.local:7888/` (or the machine IP).
 
 **Workers** — Python scripts in `workers/`. Executed as subprocesses by the hub's
 job runner. Quarantined by default; policy-gated; optionally Docker-isolated (TODO).
+For integration projects, workers are the primary logic layer — they poll or
+subscribe to LAN devices and push readings to the hub data store.
 
 **Nodes** — ESP32-class devices flashed with PlatformIO firmware. Expose a REST
 API on port 80. Communicate with the hub over the local network. Must function
 independently when the hub is unreachable.
+
+**LAN Devices** — any third-party WiFi hardware with a local HTTP, MQTT, WebSocket,
+Modbus, or proprietary API. ESPAI treats these as data sources and control targets
+without requiring any firmware changes to the device. Integration project workers
+bridge them into the hub data store.
 
 ---
 

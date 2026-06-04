@@ -1,0 +1,80 @@
+schema: ESPAI.task-template.v1
+id: api-integration
+name: "API Integration"
+description: >
+  Build or extend an integration between the ESPAI hub and an external
+  device or service — HTTP polling, MQTT subscription, WebSocket stream,
+  Modbus, BLE bridge via ESP32, or reverse-engineered proprietary API.
+applicable_types: [integration, hybrid]
+
+default_allowed_paths:
+  - "projects/{project_id}/"
+  - "workers/"
+  - "recipes/"
+  - "cards/"
+
+acceptance_criteria_template:
+  - "Integration worker runs without errors and pushes data to the hub"
+  - "No credentials, IPs, or tokens hardcoded — all via environment variables"
+  - "Error handling covers network timeouts and API failures gracefully"
+  - "Dashboard card created for the primary data the integration exposes"
+  - "Recipe created if the integration implements a reusable pipeline pattern"
+
+prompt_prefix: |
+  You are building an API integration for an ESPAI project. This project has
+  NO ESP32 custom firmware — all logic lives in hub workers that talk to the
+  target device or service over its existing API.
+
+  ## Integration patterns available
+
+  ### HTTP polling (one-shot or cron)
+  Use for devices with a REST API (Enphase, Ecobee, garage door openers,
+  Rachio irrigation, IP cameras, NAS devices, etc.)
+  ```python
+  import requests, os
+  def run(inputs):
+      resp = requests.get(f"{os.environ['DEVICE_URL']}/api/status", timeout=5)
+      data = resp.json()
+      return {"state": data, "events": [{"type": "device.update", "data": data}]}
+  ```
+
+  ### MQTT subscription (persistent service)
+  Use for devices that publish to an MQTT broker (Tasmota, Zigbee2MQTT,
+  Home Assistant, custom firmware, etc.) Set mode: service in worker.yaml.
+  ```python
+  import paho.mqtt.client as mqtt, os, json
+  def on_message(client, userdata, msg):
+      data = json.loads(msg.payload)
+      push_to_hub(data)
+  client = mqtt.Client()
+  client.connect(os.environ.get("MQTT_HOST", "localhost"))
+  client.subscribe(os.environ.get("MQTT_TOPIC", "devices/#"))
+  client.on_message = on_message
+  client.loop_forever()
+  ```
+
+  ### Reverse-engineered / BLE / proprietary
+  For devices without a documented API: analyse traffic (Wireshark, BLE
+  scanner, APK decompile) to find the protocol, then build a worker that
+  speaks it. Use the Bash tool to download and decompile APKs if needed.
+
+  ## Credential management
+  Credentials go in the project `.env` file only — never in source code.
+  Read via `os.environ.get("KEY_NAME")`. Document required env vars in
+  `integration/config.yaml`.
+
+  ## Service mode (persistent connections)
+  For MQTT, WebSocket, or BLE connections that must stay open, add
+  `mode: service` to worker.yaml. The hub supervisor restarts on crash.
+
+  ## Do NOT
+  - Write any ESP32 firmware (this project has none)
+  - Use `pio run` (PlatformIO is not relevant here)
+  - Hardcode credentials, IPs, or device addresses
+
+suggested_context_questions:
+  - "What is the target device or service? What protocol does it use?"
+  - "Does the device have a documented API, or does it need reverse engineering?"
+  - "Should this be a one-shot polling worker or a persistent service connection?"
+  - "What data fields are most important to expose in the dashboard card?"
+  - "Are there any rate limits or authentication quirks to be aware of?"

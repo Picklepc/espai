@@ -2,6 +2,7 @@ schema: ESPAI.task-template.v1
 id: hub-feature
 name: "Hub Feature"
 description: "Add or modify a hub backend endpoint or frontend view"
+applicable_types: [esp32, integration, hybrid]
 default_allowed_paths:
   - "hub/backend/routers/"
   - "hub/backend/"

@@ -213,6 +213,7 @@ const api = {
   // Agent Bench
   agentBench: {
     getConfig:     ()           => apiFetch("/api/agent-bench/config"),
+    listTemplates: (deviceType) => apiFetch(`/api/agent-bench/templates?device_type=${deviceType || "esp32"}`),
     updateConfig:  (body)       => apiFetch("/api/agent-bench/config",    { method: "POST", body: JSON.stringify(body) }),
     doctor:        ()           => apiFetch("/api/agent-bench/doctor"),
     listAdapters:  ()           => apiFetch("/api/agent-bench/adapters"),

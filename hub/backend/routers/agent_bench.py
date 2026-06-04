@@ -532,6 +532,38 @@ _CLAUDE_TOOL_MODES: dict[str, list[str]] = {
 }
 
 
+# ── Template list endpoint ────────────────────────────────────────────────────
+
+@router.get("/templates")
+def list_templates(device_type: str = "esp32"):
+    """
+    Return task templates applicable to the given device_type.
+    Templates without applicable_types are shown for all types.
+    """
+    import yaml as _yaml
+    templates_dir = AGENT_BENCH_DIR / "task-templates"
+    result = []
+    for p in sorted(templates_dir.glob("*.yaml")):
+        try:
+            tmpl = _yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        applicable = tmpl.get("applicable_types")
+        if applicable and device_type not in applicable:
+            continue
+        result.append({
+            "id":          tmpl.get("id", p.stem),
+            "name":        tmpl.get("name", p.stem),
+            "description": tmpl.get("description", ""),
+            "applicable_types": applicable or ["esp32", "integration", "hybrid"],
+        })
+    # Always include 'custom'
+    if not any(t["id"] == "custom" for t in result):
+        result.append({"id": "custom", "name": "Custom", "description": "Free-form task",
+                       "applicable_types": ["esp32", "integration", "hybrid"]})
+    return result
+
+
 # ── Config endpoints ──────────────────────────────────────────────────────────
 
 @router.get("/config")

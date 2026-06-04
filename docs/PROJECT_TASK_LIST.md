@@ -26,7 +26,7 @@
 - [x] design token loader (theme → CSS custom properties)
 - [x] local event bus scaffold (SQLite + SSE stream)
 - [x] worker runner (subprocess executor, quarantine check, timeout enforcement)
-- [x] project folder structure (files, firmware, config per project — scaffold on create, files API)
+- [x] project folder structure (workers/, captures/, notes.md, ESPAI.md, .gitignore — scaffold on create, files API; firmware/ added for esp32/hybrid projects; integration/ added for integration/hybrid projects — see M13 device_type)
 
 ## Milestone 3 — ESP32 Seed Firmware
 - [x] /api/manifest endpoint
@@ -38,7 +38,7 @@
 - [x] unique node ID (SHA-256 of MAC — no raw MAC stored)
 - [x] mDNS advertisement (_ESPAI-node._tcp.local)
 - [x] build-flag credential injection (no hardcoded secrets)
-- [ ] actual OTA binary receive + apply (TODO)
+- [x] actual OTA binary receive + apply — `Update.begin/write/end` + incremental SHA-256 verify in `firmware/seed/src/main.cpp`; reboot on success, error logged to Serial
 - [ ] sleep/wake checkin support (TODO)
 
 ## Milestone 4 — Discovery and Pairing
@@ -97,7 +97,7 @@
 - [x] worker-triggered events (runner publishes events[] from worker stdout; rules engine evaluates them automatically)
 
 ## Milestone 10 — Multi-Node Apps and Shared Services
-- [x] Multi-node project model — `project_nodes` table `(project_id, device_id, role, label, node_index)`; backfill migration from `projects.devices` JSON on startup; node roles: coordinator/sensor/actuator/gateway/observer/hub-agent/relay/node; topology: standalone/star/mesh/hub-spoke/pipeline/custom; app_type: firmware/hub/hybrid; topology/app_type stored in `.ESPAI-project.json`; backward-compat: `projects.devices` JSON kept in sync on all writes
+- [x] Multi-node project model — `project_nodes` table `(project_id, device_id, role, label, node_index)`; backfill migration from `projects.devices` JSON on startup; node roles: coordinator/sensor/actuator/gateway/observer/hub-agent/relay/node; topology: standalone/star/mesh/hub-spoke/pipeline/custom; `app_type: firmware/hub/hybrid` stored in `.ESPAI-project.json` as topology metadata — **distinct from `device_type`** (M13) which drives scaffold and agent template filtering; backward-compat: `projects.devices` JSON kept in sync on all writes
   - `GET/PUT/DELETE /api/projects/{id}/nodes/{device_id}` — per-node role management
   - `GET /api/projects/{id}/nodes` — list nodes with roles
   - `GET/PUT /api/projects/{id}/topology` — topology and app_type
@@ -126,7 +126,6 @@
 
 ## Milestone 13 — Agent Bench v2 (Contextual Tasks)
 
-### Completed this session
 - [x] Context-scoped tasks — `context_type` / `context_id` / `parent_task_id` columns in `agent_tasks` (additive migration)
 - [x] Seed and provision firmware path protection — agents blocked from touching `firmware/seed/` and `firmware/provision/`
 - [x] Inferred `allowed_paths` — backend derives paths from context (project → `projects/{id}/firmware/ + workers/`; worker → `workers/{name}/`; template YAML fallback; no manual entry required)
@@ -144,6 +143,7 @@
 - [ ] Cross-domain path inheritance — when a project task needs to create/modify a shared worker, prompt user to grant `workers/` access inline
 - [x] Worker quarantine auto-lift — after agent task approved, `_checkQuarantineLift` checks allowed_paths for worker folders, finds quarantined workers, shows modal with "Lift Quarantine" (calls `PATCH /api/workers/{name}/quarantine?quarantine=false`) or "Keep Quarantined"
 - [x] Agent Bench filter by context_type in sidebar — second filter row (All contexts / Project / Worker / Standalone); client-side filter applied after status-filter fetch
+- [x] **Project `device_type`** — `device_type TEXT DEFAULT 'esp32'` column in projects; `ProjectCreate.device_type` field; scaffold branches on type (`firmware/` for esp32/hybrid, `integration/` for integration/hybrid); `_generate_espai_md()` generates type-appropriate docs; `GET /api/agent-bench/templates?device_type=` filters templates by `applicable_types`; new `api-integration` task template; `applicable_types` on existing templates; type picker in new project modal; device type badge on project cards
 
 ## Milestone 14 — Registry Content Packs
 
@@ -225,3 +225,34 @@
 
 ### First-run experience
 - [x] **First-run scaffold** — `_first_run_scaffold()` in espai.py; when `sys.frozen` and `data/.espai-initialized` absent: copies content packs (recipes/workers/cards/design/agents/policies/schemas) from PyInstaller bundle (_MEIPASS) to exe dir; writes default .env; creates sentinel file; prints welcome message with paths
+
+## Milestone 20 — LAN Services Registry
+
+The hub maintains a persistent registry of every discovered or manually-added LAN service. This is the foundation of the "replace cloud apps" experience — a single pane of glass for all local devices and services.
+
+- [ ] **Services view** — dedicated "Services" tab in the dashboard; shows all `local_services` rows with icon, label, category (smart-home / media / network / tools / other), host, last-seen; pinned services float to top
+- [ ] **Pin / hide / label** — pin any discovered service to keep it visible; hide noisy entries; set a friendly label (e.g. "Living Room TV" instead of `192.168.1.55`); all stored in `local_services.pinned` / `.hidden` / `.label`
+- [ ] **Category auto-detect** — fingerprint discovered services by response headers, `<title>`, and path patterns; auto-assign category (Jellyfin → media, Tasmota → smart-home, pfSense → network, etc.)
+- [ ] **Link service to project** — "Link to Project" button on service card sets `local_services.project_id`; shows project badge on service; clicking opens project detail
+- [ ] **Service health polling** — background task pings pinned services every 60 s; updates `last_seen`; shows online/offline dot in the Services view
+
+## Milestone 21 — Integration Template Library
+
+Pre-built integration workers for the most common local-API devices. Each ships as a worker YAML + Python file in `workers/` so agents can extend them rather than starting from scratch.
+
+- [ ] **Tasmota** — HTTP `GET /cm?cmnd=Status%200`; toggle relay; push power/energy/temp readings to hub; `worker.yaml` with `TASMOTA_IP` env var
+- [ ] **Shelly** — gen1 (`/status`) and gen2 (`/rpc/Shelly.GetStatus`) auto-detect; power monitoring; relay control; webhook registration for push events
+- [ ] **WLED** — `/json/state` read + write; brightness, color, effect index; push effect change events
+- [ ] **Zigbee2MQTT** — MQTT subscribe to `zigbee2mqtt/#`; parse device payloads; push to hub data store per device; emit `device.update` events
+- [ ] **Jellyfin / Plex** — now-playing poller; session info; push `media.playing` / `media.stopped` events; webhook receiver for instant push
+- [ ] **Generic HTTP poller worker** — parameterized worker that takes `BASE_URL`, `POLL_PATH`, `AUTH_HEADER`, `POLL_INTERVAL_S` as inputs; no code required for simple REST devices; reusable base for quick integrations
+
+## Milestone 22 — Hub-Hosted Web App Framework
+
+Make it easy to build and deploy a full custom web app as the local replacement for a device's cloud dashboard. The app lives in `projects/{id}/web/` and is served at `/app/{slug}/`.
+
+- [ ] **Starter web app scaffold** — when a project is created, `web/index.html` is generated with: hub API base URL injected, project ID constant, data fetch + display boilerplate, auto-refresh on WebSocket events; different starter for esp32 vs integration vs hybrid
+- [ ] **Hub API client snippet** — `web/hub-api.js` copied into scaffold; thin wrapper around fetch with auth header injection, WebSocket reconnect, and helper for `data/latest`
+- [ ] **Live-reload in dev** — file watcher on `projects/{id}/web/**`; hub sends `reload` event over WebSocket when web files change; browser reloads automatically
+- [ ] **App manifest** — `web/app.json` describes the app (name, icon_url, theme_color, entry_point); hub reads it for the "🌐 Open App" button and LAN service registry entry
+- [ ] **Caddy auto-config** (links Milestone 17) — when a project has a web app, add `{slug}.local → /app/{slug}/` to the generated Caddyfile so the app is reachable at a friendly hostname without port numbers

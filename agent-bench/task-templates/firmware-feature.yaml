@@ -1,7 +1,8 @@
 schema: ESPAI.task-template.v1
 id: firmware-feature
 name: "Firmware Feature"
-description: "Add a new capability to a project's firmware. Requires a project context — paths are inferred from the project directory."
+description: "Add a new capability to an ESP32 project's firmware. Requires a project context — paths are inferred from the project directory."
+applicable_types: [esp32, hybrid]
 # No default_allowed_paths — paths are inferred from project context.
 # firmware/seed/ and firmware/provision/ are ALWAYS protected and must never appear here.
 default_allowed_paths: []

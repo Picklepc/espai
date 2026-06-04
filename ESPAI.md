@@ -1,10 +1,15 @@
 # ESPAI
 
-**Local-first ESP32 fleet management and edge-processing platform.**
+**Local-first platform for replacing cloud apps with custom LAN-hosted applications.**
 
 ESPAI runs entirely on your LAN. A Python FastAPI hub manages a fleet of ESP32
-nodes, runs Python workers as background jobs, hosts per-project web dashboards,
-and provides OTA firmware delivery. No cloud required.
+nodes, integrates with any WiFi device through its local API, runs Python workers
+as background jobs, hosts per-project web dashboards, and delivers OTA firmware.
+No cloud required — no subscription, no vendor lock-in, no data leaving your network.
+
+Build custom apps that talk directly to your devices the way a cloud app would,
+except everything runs on hardware you control: a router, a Raspberry Pi, a mini
+PC, or a Docker container on any always-on machine.
 
 ---
 
@@ -20,13 +25,14 @@ Open the dashboard: **http://localhost:7888/**
 
 ---
 
-## Three Execution Zones
+## Four Execution Zones
 
 | Zone | What runs there | Responsibility |
 |---|---|---|
 | **Hub** | FastAPI + SQLite + Vanilla JS | Storage, scheduling, dashboards, workers, OTA |
-| **Workers** | Python subprocesses | Image/video/telemetry processing, event generation |
-| **Nodes** | ESP32 Arduino firmware | Sensors, actuators, real-time control, offline fallback |
+| **Workers** | Python subprocesses | Integration polling, image/video processing, event generation |
+| **Nodes** | ESP32 Arduino firmware | Custom sensors, actuators, real-time control, offline fallback |
+| **LAN Devices** | Third-party WiFi hardware | Any device with a local API — smart plugs, cameras, thermostats, media servers, NAS, etc. |
 
 ---
 
@@ -153,7 +159,9 @@ Use `ESPAI_PREINSTALL` env var or mount a `worker-requirements.txt` instead.
 - **Add a hub feature**: new router in `hub/backend/routers/`, register in `main.py`.
 - **Add a worker**: `workers/{name}/manifest.yaml` + `{name}/entrypoint.py`.
 - **Add a recipe**: `recipes/{name}/recipe.yaml` following the recipe schema.
-- **Add a project**: hub UI or `POST /api/projects`; edit `projects/{id}/firmware/`.
+- **Add an ESP32 project**: hub UI → New Project (type: ESP32 Node); edit `projects/{id}/firmware/`.
+- **Add an integration project**: hub UI → New Project (type: API Integration); edit `projects/{id}/integration/poller.py`.
+- **Add a hybrid project**: hub UI → New Project (type: Hybrid Bridge); get both firmware and integration scaffolds.
 - **Simulate without hardware**: `python simulators/fake-node/fake_node.py`.
 
 See `docs/DESIGN_SPEC.md` for the complete design specification.
