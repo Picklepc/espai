@@ -287,6 +287,80 @@ def _first_run_scaffold():
     print(f"  ✦ ESPAI data directory: {USER_DIR}")
 
 
+def _parse_version(v: str) -> tuple:
+    """Convert '1.2.3' to (1, 2, 3) for comparison. Non-numeric parts become 0."""
+    parts = []
+    for p in str(v).strip().lstrip("v").split(".")[:3]:
+        try:
+            parts.append(int(p))
+        except ValueError:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _sync_workers() -> None:
+    """
+    Run on every startup (not gated by sentinel).
+
+    For each worker in the bundled workers/ directory:
+      - Copy it to USER_DIR/workers/ if it doesn't exist there yet.
+      - Overwrite it if the bundled version: field is strictly higher than
+        what is installed — preserving any user-modified worker that has a
+        matching or higher version.
+
+    This means new workers shipped in an update always land for existing users,
+    and bug-fixed workers are updated, but a user can pin their custom version
+    by bumping the version field in their local worker.yaml.
+    """
+    import yaml as _yaml
+
+    bundle = Path(getattr(sys, "_MEIPASS", str(INSTALL_DIR)))
+    src_root = bundle / "workers"
+    dst_root = USER_DIR / "workers"
+    if not src_root.exists():
+        return
+
+    dst_root.mkdir(parents=True, exist_ok=True)
+    installed, updated = [], []
+
+    for src_worker_dir in sorted(src_root.iterdir()):
+        if not src_worker_dir.is_dir():
+            continue
+        name = src_worker_dir.name
+        src_yaml = src_worker_dir / "worker.yaml"
+        if not src_yaml.exists():
+            continue
+
+        dst_worker_dir = dst_root / name
+
+        if not dst_worker_dir.exists():
+            shutil.copytree(str(src_worker_dir), str(dst_worker_dir))
+            installed.append(name)
+            continue
+
+        # Worker already exists — only overwrite if bundled version is newer
+        dst_yaml = dst_worker_dir / "worker.yaml"
+        try:
+            src_meta = _yaml.safe_load(src_yaml.read_text(encoding="utf-8")) or {}
+            dst_meta = _yaml.safe_load(dst_yaml.read_text(encoding="utf-8")) or {} if dst_yaml.exists() else {}
+            src_ver = _parse_version(src_meta.get("version", "0"))
+            dst_ver = _parse_version(dst_meta.get("version", "0"))
+        except Exception:
+            continue  # malformed YAML — leave it alone
+
+        if src_ver > dst_ver:
+            shutil.rmtree(str(dst_worker_dir))
+            shutil.copytree(str(src_worker_dir), str(dst_worker_dir))
+            updated.append(f"{name} ({'.'.join(str(x) for x in dst_ver)}→{'.'.join(str(x) for x in src_ver)})")
+
+    if installed:
+        print(f"  ✦ Installed new workers: {', '.join(installed)}")
+    if updated:
+        print(f"  ✦ Updated workers: {', '.join(updated)}")
+
+
 def _open_browser_delayed(url: str, delay: float = 2.0):
     """Open the dashboard in the default browser after a short startup delay."""
     import webbrowser
@@ -312,6 +386,14 @@ def cmd_serve(args):
     # First-run data scaffold (frozen / bundled installs only)
     if getattr(sys, "frozen", False):
         _first_run_scaffold()
+
+    # Sync bundled workers to user dir on every startup — installs new workers
+    # shipped in an update, and upgrades existing ones when the bundle is newer.
+    # Safe to run from source too (no-ops when bundle == user dir).
+    try:
+        _sync_workers()
+    except Exception as _exc:
+        print(f"  ⚠ Worker sync warning: {_exc}")
 
     # Pre-install worker deps before uvicorn starts.
     # Only runs when we are the final process — if a venv re-launch is about
@@ -409,8 +491,11 @@ def main():
     # Frozen exe with no arguments: auto-start tray so double-clicking the
     # installed exe silently brings up the hub with a tray icon.
     if getattr(sys, "frozen", False) and len(sys.argv) == 1:
-        if getattr(sys, "frozen", False):
-            _first_run_scaffold()
+        _first_run_scaffold()
+        try:
+            _sync_workers()
+        except Exception:
+            pass
         cmd_tray(argparse.Namespace(port=None))
         return
 

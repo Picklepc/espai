@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..config import POLICIES_DIR, WORKERS_DIR
+from ..config import POLICIES_DIR, PROJECTS_DIR, WORKERS_DIR
 from ..db import get_conn
 from ..registry.loader import scan_folder
 from ..rules.engine import evaluate_rules
@@ -87,17 +87,46 @@ def _fail_job(job_id: str, error: str) -> None:
         log.error("Failed to mark job %s as failed: %s", job_id, e)
 
 
+# ── Worker resolution ─────────────────────────────────────────────────────────
+
+def _resolve_worker(worker_name: str, project_id: str | None) -> dict | None:
+    """
+    Find a worker definition, preferring a project-scoped copy over the global one.
+
+    Resolution order:
+      1. projects/{project_id}/workers/{worker_name}/worker.yaml  (project-local)
+      2. workers/{worker_name}/worker.yaml                         (global template)
+
+    This lets users copy a global worker into their project folder and modify it
+    freely without affecting other projects that use the same global worker.
+    """
+    if project_id:
+        proj_worker_dir = PROJECTS_DIR / project_id / "workers" / worker_name
+        if (proj_worker_dir / "worker.yaml").exists():
+            local = scan_folder(proj_worker_dir, "worker")
+            match = next(
+                (w for w in local if w.get("name") == worker_name or w.get("_folder") == worker_name),
+                None,
+            )
+            if match:
+                log.debug("Using project-scoped worker %r for project %s", worker_name, project_id)
+                return match
+
+    global_workers = scan_folder(WORKERS_DIR, "worker")
+    return next(
+        (w for w in global_workers if w.get("name") == worker_name or w.get("_folder") == worker_name),
+        None,
+    )
+
+
 # ── Job mode ──────────────────────────────────────────────────────────────────
 
 def _run_job(job_id: str, worker_name: str, inputs: dict) -> None:
     global _running_count
     policy = _load_policy()
 
-    workers = scan_folder(WORKERS_DIR, "worker")
-    worker = next(
-        (w for w in workers if w.get("name") == worker_name or w.get("_folder") == worker_name),
-        None,
-    )
+    project_id = inputs.get("project_id") if isinstance(inputs, dict) else None
+    worker = _resolve_worker(worker_name, project_id)
     if not worker:
         _fail_job(job_id, f"Worker {worker_name!r} not found in registry")
         return

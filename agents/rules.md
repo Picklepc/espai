@@ -45,6 +45,11 @@ projects. Unmarked rules apply to all project types.
   is fine inside a worker but never inside a FastAPI route.
 - **Scope workers to one device or service** — one worker per integration target
   so they can be tested and quarantined independently.
+- **Use project-scoped workers for project-specific customisation** — global
+  workers in `workers/` are shared templates; every project that references them
+  runs the same code. To customise a worker for one project without affecting
+  others, copy it to `projects/{project_id}/workers/{name}/`. The job runner
+  checks there first and falls back to the global worker automatically.
 
 ---
 
