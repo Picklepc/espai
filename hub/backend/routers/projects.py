@@ -562,8 +562,14 @@ def _generate_espai_md(
     name: str,
     description: str | None,
     device_type: str = "esp32",
+    ported: bool = False,
 ) -> str:
-    """Return the per-project ESPAI.md context file, branched by device_type."""
+    """Return the per-project ESPAI.md context file, branched by device_type.
+
+    When ported=True (project was imported from a ZIP), an extra section is
+    appended with ESPAI integration patterns the agent can paste directly into
+    the ported firmware.
+    """
     node_name = _to_hostname(name)
     desc_line = (description or "").strip() or "New ESPAI project."
     type_label = {"esp32": "ESP32 Node", "integration": "API Integration",
@@ -708,6 +714,130 @@ file (gitignored). Never commit credentials. Read via `os.environ.get()`.
 - Full spec: `docs/DESIGN_SPEC.md`
 """
 
+    # ── Ported-project integration patterns ──────────────────────────────────
+    ported_section = f"""\
+## ESPAI Integration Patterns (ported project)
+
+These snippets reflect the exact ESPAI seed firmware API.  Copy them into the
+ported `main.cpp` rather than inventing your own HTTP patterns.
+
+### 1 — Data push (fire-and-forget, non-blocking)
+```cpp
+static uint32_t _lastPush = 0;
+void pushData(const String& jsonPayload) {{
+  if (millis() - _lastPush < 5000) return;   // max 1 push per 5 s
+  _lastPush = millis();
+  if (WiFi.status() != WL_CONNECTED || apMode) return;
+  HTTPClient http;
+  http.begin("http://espai.local:7888/api/projects/{project_id}/data");
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-ID", nodeId);
+  http.setTimeout(3000);           // never stall loop() more than 3 s
+  http.POST(jsonPayload);          // e.g. "{{\\"temperature\\":23.5}}"
+  http.end();
+}}
+```
+
+### 2 — Hub device checkin (node → hub identity + config sync)
+```cpp
+void hubCheckin() {{
+  if (WiFi.status() != WL_CONNECTED) return;
+  HTTPClient http;
+  http.begin(String(HUB_URL) + "/api/devices/checkin");
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(5000);
+  String body = "{{\\"id\\":\\"" + nodeId + "\\",\\"name\\":\\"" NODE_NAME "\\"," +
+                "\\"board\\":\\"esp32\\",\\"fw_version\\":\\"" FW_VERSION "\\"," +
+                "\\"ip\\":\\"" + WiFi.localIP().toString() + "\\"}}";
+  http.POST(body);
+  http.end();
+}}
+```
+Call once in `setup()` after WiFi connects; hub records the device and may
+return updated `sleep_interval_s`.
+
+### 3 — Command poll (self-throttled, non-blocking)
+```cpp
+void pollCommands() {{
+  static uint32_t _lastPoll = 0;
+  if (millis() - _lastPoll < 2000) return;
+  _lastPoll = millis();
+  if (WiFi.status() != WL_CONNECTED || apMode) return;
+
+  HTTPClient http;
+  http.begin(String(HUB_URL) + "/api/devices/" + nodeId + "/commands/pending");
+  if (http.GET() != 200) {{ http.end(); return; }}
+
+  JsonDocument doc;
+  deserializeJson(doc, http.getString());
+  http.end();
+
+  for (JsonObject cmd : doc["commands"].as<JsonArray>()) {{
+    String cmdId   = cmd["id"]           | "";
+    String cmdType = cmd["command_type"] | "";
+    // --- dispatch ---
+    if      (cmdType == "reboot")     {{ delay(200); ESP.restart(); }}
+    // else if (cmdType == "relay_on") {{ digitalWrite(RELAY_PIN, HIGH); }}
+    // --- ack ---
+    HTTPClient ack;
+    ack.begin(String(HUB_URL) + "/api/devices/" + nodeId + "/commands/" + cmdId + "/ack");
+    ack.addHeader("Content-Type", "application/json");
+    ack.POST("{{\\"result\\":{{\\"ok\\":true}}}}");
+    ack.end();
+  }}
+}}
+```
+
+### 4 — Watchdog + heap guard (add to setup() and loop())
+```cpp
+// setup():
+#include <esp_task_wdt.h>
+esp_task_wdt_init(30, true);   // 30 s watchdog, panic on timeout
+esp_task_wdt_add(NULL);        // watch main task
+Serial.printf("[heap] boot free=%u\\n", ESP.getFreeHeap());
+
+// loop() — first lines:
+esp_task_wdt_reset();
+if (ESP.getFreeHeap() < 20000) {{
+  Serial.println("[heap] critical — rebooting");
+  delay(100);
+  ESP.restart();
+}}
+```
+
+### 5 — WiFi reconnect without reboot
+```cpp
+// In loop(), after server.handleClient():
+if (!apMode && WiFi.status() != WL_CONNECTED) {{
+  static uint32_t _lastReconn = 0;
+  if (millis() - _lastReconn > 30000) {{
+    _lastReconn = millis();
+    Serial.println("[wifi] reconnecting...");
+    WiFi.reconnect();
+  }}
+}}
+```
+
+### 6 — platformio.ini credentials injection
+```ini
+[env:esp32dev]
+platform  = espressif32
+board     = esp32dev
+framework = arduino
+build_flags =
+    -D WIFI_SSID=\\"${{sysenv.ESPAI_WIFI_SSID}}\\"
+    -D WIFI_PASS=\\"${{sysenv.ESPAI_WIFI_PASS}}\\"
+    -D HUB_URL=\\"http://espai.local:7888\\"
+    -D HUB_PROJECT_ID=\\"{project_id}\\"
+    -D NODE_NAME=\\"{name}\\"
+    -D FW_VERSION=\\"1.0.0\\"
+lib_deps =
+    bblanchon/ArduinoJson @ ^7.0.0
+```
+Set `ESPAI_WIFI_SSID` and `ESPAI_WIFI_PASS` in your shell environment or in
+`.env` (gitignored) — never commit credentials.
+"""
+
     # Assemble based on type
     sections = [header, hub_api]
     if device_type == "esp32":
@@ -717,6 +847,8 @@ file (gitignored). Never commit credentials. Read via `os.environ.get()`.
     elif device_type == "hybrid":
         sections.append(esp32_section)
         sections.append(integration_section)
+    if ported:
+        sections.append(ported_section)
     sections += [structure, ref]
     return "\n---\n\n".join(sections)
 
@@ -1398,9 +1530,20 @@ def regenerate_project_context(project_id: str):
         raise HTTPException(404, f"Project {project_id!r} not found")
     proj_dir = PROJECTS_DIR / project_id
     proj_dir.mkdir(parents=True, exist_ok=True)
-    content = _generate_espai_md(project_id, row["name"], row["description"])
+    # Detect ported projects by the presence of a source/ directory (from import-zip)
+    ported = (proj_dir / "source").is_dir()
+    device_type = "esp32"
+    try:
+        meta = json.loads((proj_dir / ".ESPAI-project.json").read_text(encoding="utf-8"))
+        device_type = meta.get("device_type", "esp32")
+    except Exception:
+        pass
+    content = _generate_espai_md(
+        project_id, row["name"], row["description"],
+        device_type=device_type, ported=ported,
+    )
     (proj_dir / "ESPAI.md").write_text(content, encoding="utf-8")
-    return {"status": "ok", "path": str(proj_dir / "ESPAI.md")}
+    return {"status": "ok", "path": str(proj_dir / "ESPAI.md"), "ported": ported}
 
 
 # ── Project theme overrides ───────────────────────────────────────────────────
@@ -1560,14 +1703,222 @@ _ZIP_SKIP_PREFIXES = {                       # build artifacts / caches to drop
     "node_modules/", ".venv/", "venv/",
     "build/", "dist/",
 }
+def _build_port_task_description(
+    filename: str,
+    project_id: str,
+    project_name: str,
+    project_type: str,
+) -> str:
+    """
+    Build the rich 4-phase task description for an imported ZIP project.
+
+    Embeds real ESPAI provision code snippets so the agent knows exactly
+    what patterns to use when it rewrites main.cpp and platformio.ini.
+    """
+    pio_hint = {
+        "platformio": "PlatformIO project detected — `pio run` is the build command.",
+        "arduino":    "Arduino IDE project detected — convert to PlatformIO before building.",
+        "unknown":    "Build system unknown — identify before proceeding.",
+    }.get(project_type, project_type)
+
+    return f"""\
+Imported from **{filename}** ({pio_hint})
+
+Work through the four phases below **in order**.  Do not start Phase 3 until
+the Phase 1 audit table is written, and do not close the task until `pio run`
+passes clean.
+
+---
+
+## Phase 1 — Audit (read first, decide everything)
+
+Read **every** file under `source/`.  Then write a feature audit table in
+`projects/{project_id}/notes.md`:
+
+```
+| Feature | Where it lives now | Offload decision | Destination |
+|---|---|---|---|
+| BME280 read + publish | loop() every 5 s | Move to hub | hub worker |
+| Web dashboard (/dashboard) | local ESP32 web server | Move to hub | ESPAI card |
+| Relay toggle via HTTP | POST /relay/on | Keep on device | hardware-bound |
+| Cloud MQTT publish | loop() | Replace with push_data | hub push |
+```
+
+**Offload decision guide:**
+- **Move to hub** — network I/O, data transforms, dashboards, cloud API calls,
+  storage, scheduling, anything that needs more than ~20 KB heap
+- **Keep on device** — sub-100 ms latency requirements, GPIO control, ADC reads,
+  I2C/SPI peripherals, camera capture, BLE, hardware interrupts
+- **Remove** — features made redundant by ESPAI (local HTTP API, NTP sync,
+  cloud push that hub already handles)
+
+---
+
+## Phase 2 — Offload (build the hub side)
+
+For each "Move to hub" row in the audit table:
+
+- **Worker**: create `projects/{project_id}/workers/<name>/` with `worker.yaml`
+  + `main.py`.  Workers receive `push_data` events and can call any hub API.
+- **Rule**: create a rule in Agent Bench if the feature is event-triggered
+  (e.g. "when temperature > 30 → send_command relay_off").
+- **Card**: create a card in `cards/` for any visual dashboard that was served
+  locally from the ESP32 web server.
+
+Document each created artefact in `notes.md`.
+
+---
+
+## Phase 3 — Provision (rewrite the firmware)
+
+Replace `source/` logic with a thin ESPAI node.  The target shape of `main.cpp`
+after porting:
+
+```
+setup():
+  Serial.begin(115200)
+  nodeId = deriveNodeId()        // from MAC hash — never expose raw MAC
+  read sleepIntervalS from NVS
+  connectWifi() → fallback AP on timeout
+  startMDNS()
+  arm watchdog (30 s)
+  register only hardware-bound HTTP routes
+  hubCheckin()                   // post identity, retrieve hub-side config
+
+loop():
+  esp_task_wdt_reset()           // feed the dog
+  server.handleClient()
+  pushData()                     // non-blocking, millis-gated
+  espai_poll_commands()          // non-blocking, millis-gated
+  handleWifiReconnect()          // WiFi.reconnect() — no ESP.restart()
+```
+
+### Data push (copy-paste ready)
+```cpp
+// Fire-and-forget — never block in loop()
+static uint32_t lastPush = 0;
+void pushData(float value) {{
+  if (millis() - lastPush < 5000) return;
+  lastPush = millis();
+  if (WiFi.status() != WL_CONNECTED || apMode) return;
+  HTTPClient http;
+  http.begin("http://espai.local:7888/api/projects/{project_id}/data");
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-ID", nodeId);
+  http.setTimeout(3000);
+  http.POST("{{\\\"value\\\":" + String(value, 2) + "}}");
+  http.end();
+}}
+```
+
+### Hub device checkin (copy-paste ready)
+```cpp
+void hubCheckin() {{
+  if (WiFi.status() != WL_CONNECTED) return;
+  HTTPClient http;
+  http.begin(String(HUB_URL) + "/api/devices/checkin");
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(5000);
+  http.POST("{{\\\"id\\\":\\"" + nodeId + "\\",\\\"name\\":\\"" NODE_NAME "\\","
+            "\\\"board\\":\\"esp32\\",\\\"fw_version\\":\\"" FW_VERSION "\\","
+            "\\\"ip\\":\\"" + WiFi.localIP().toString() + "\\\"}}");
+  http.end();
+}}
+```
+
+### Command poll (copy-paste ready)
+```cpp
+void espai_poll_commands() {{
+  static uint32_t lastPoll = 0;
+  if (millis() - lastPoll < 2000) return;
+  lastPoll = millis();
+  if (WiFi.status() != WL_CONNECTED || apMode) return;
+  HTTPClient http;
+  http.begin(String(HUB_URL) + "/api/devices/" + nodeId + "/commands/pending");
+  if (http.GET() == 200) {{
+    JsonDocument doc;
+    deserializeJson(doc, http.getString());
+    for (JsonObject cmd : doc["commands"].as<JsonArray>()) {{
+      String t = cmd["command_type"] | "";
+      if (t == "reboot") {{ delay(200); ESP.restart(); }}
+      // add your command handlers here
+      HTTPClient ack;
+      ack.begin(String(HUB_URL) + "/api/devices/" + nodeId
+                + "/commands/" + String(cmd["id"] | "") + "/ack");
+      ack.addHeader("Content-Type", "application/json");
+      ack.POST("{{\\\"result\\\":{{\\\"ok\\\":true}}}}");
+      ack.end();
+    }}
+  }}
+  http.end();
+}}
+```
+
+### platformio.ini template
+```ini
+[env:esp32dev]
+platform  = espressif32
+board     = esp32dev
+framework = arduino
+build_flags =
+    -D WIFI_SSID=\\"${{sysenv.ESPAI_WIFI_SSID}}\\"
+    -D WIFI_PASS=\\"${{sysenv.ESPAI_WIFI_PASS}}\\"
+    -D HUB_URL=\\"http://espai.local:7888\\"
+    -D HUB_PROJECT_ID=\\"{project_id}\\"
+    -D NODE_NAME=\\"{project_name}\\"
+    -D FW_VERSION=\\"1.0.0\\"
+lib_deps =
+    bblanchon/ArduinoJson @ ^7.0.0
+```
+
+---
+
+## Phase 4 — Harden (make it bulletproof)
+
+Apply all of the following before marking the task complete:
+
+1. **Watchdog** — `esp_task_wdt_init(30, true)` in `setup()`; `esp_task_wdt_reset()` first line of `loop()`.  Add `#include <esp_task_wdt.h>`.
+2. **No blocking delays** — replace every `delay(N)` > 100 ms with a `millis()` timer.  Exception: one-shot delays after a reboot command.
+3. **Heap floor** — log `ESP.getFreeHeap()` on boot; add a heap guard in `loop()`:
+   ```cpp
+   if (ESP.getFreeHeap() < 20000) {{ Serial.println("[heap] critical"); delay(100); ESP.restart(); }}
+   ```
+4. **WiFi reconnect without reboot** — in `loop()`, if `!apMode && WiFi.status() != WL_CONNECTED`, call `WiFi.reconnect()` no more than once every 30 s.
+5. **AP fallback** — if `connectWifi()` fails after `WIFI_TIMEOUT_MS`, call `startFallbackAP()` and set `apMode = true`.  Hardware-bound routes must still work in AP mode.
+6. **Credentials** — confirm zero occurrences of literal SSID, password, IP, or MAC in any committed file.  All injected via `platformio.ini` `build_flags` from `${{sysenv.*}}`.
+7. **`pio run` clean** — build must pass with zero errors and zero warnings that indicate undefined behaviour.
+"""
+
+
 _PORT_CRITERIA = [
-    "All source files in source/ have been read and a porting plan summarised in notes.md",
-    "Hub workers created for any processing that moved off the ESP32",
+    # ── Phase 1: Audit ────────────────────────────────────────────────────────
+    "All source files in source/ read; feature audit table written to notes.md "
+    "(columns: feature, offload decision, destination)",
+
+    # ── Phase 2: Offload ─────────────────────────────────────────────────────
+    "Hub workers created for every feature classified as 'move to hub'",
+    "ESPAI recipes or rules created for any event-driven pipeline that moved off the ESP32",
     "Dashboard cards created for sensor data the firmware previously served locally",
-    "Firmware updated to use ESPAI hub checkin pattern (fire-and-forget HTTP POST)",
-    "Firmware falls back to AP mode and local operation when hub is unreachable",
-    "No hardcoded credentials, IPs, or MAC addresses remain in source",
-    "pio run passes with no errors in projects/{id}/firmware/",
+
+    # ── Phase 3: Provision ───────────────────────────────────────────────────
+    "Firmware main.cpp rewritten as a thin ESPAI node: WiFi connect, hub checkin, "
+    "data push loop, command poll, AP fallback — no legacy web server routes remain "
+    "unless they are genuinely hardware-bound",
+    "platformio.ini build_flags inject HUB_URL, HUB_PROJECT_ID, WIFI_SSID, WIFI_PASS "
+    "via ${sysenv.*} — no credentials or IPs hardcoded in source",
+    "Data push is fire-and-forget (http.setTimeout(3000); result code not awaited in main loop)",
+    "AP fallback mode starts ESPAI-{node_id} hotspot when STA connection fails after timeout",
+
+    # ── Phase 4: Harden ──────────────────────────────────────────────────────
+    "Watchdog timer (esp_task_wdt) armed in setup() with a 30 s timeout; "
+    "esp_task_wdt_reset() called every loop() iteration",
+    "No blocking call longer than 100 ms in loop() — delay() replaced with "
+    "millis()-based non-blocking timers",
+    "Heap monitored on boot and in loop(); ESP.restart() triggered if free heap "
+    "falls below 20 KB",
+    "WiFi drop handled by WiFi.reconnect() retry loop (no ESP.restart() on disconnect)",
+    "pio run passes with zero errors in projects/{id}/firmware/",
+    "No hardcoded credentials, IP addresses, or MAC addresses remain anywhere in source",
 ]
 
 
@@ -1665,25 +2016,25 @@ async def import_project_from_zip(
     # Register mDNS advertisement
     _mdns.register_project(slug, project_id)
 
+    # Write ESPAI.md with ported-project integration patterns
+    proj_dir = PROJECTS_DIR / project_id
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    espai_md = _generate_espai_md(
+        project_id, project_name, description or "",
+        device_type="esp32", ported=True,
+    )
+    (proj_dir / "ESPAI.md").write_text(espai_md, encoding="utf-8")
+
     # Auto-create draft porting task (best-effort — Agent Bench may be disabled)
     task_id = None
     try:
         task_id = str(uuid.uuid4())
         allowed = [f"projects/{project_id}/", "workers/", "recipes/", "cards/"]
-        task_desc = (
-            f"Imported from **{file.filename}** — detected as: **{project_type}**.\n\n"
-            "## Porting instructions\n\n"
-            "1. **Read** all files in `source/` — understand what the project does\n"
-            "2. **Summarise** your findings in `notes.md` (sensor types, endpoints, "
-            "web server routes, external services, heavy processing)\n"
-            "3. **Port web server routes** → hub workers in `projects/{id}/workers/` "
-            "or shared `workers/`\n"
-            "4. **Port sensor dashboards** → ESPAI cards in `cards/`\n"
-            "5. **Port pipelines** → ESPAI recipes in `recipes/`\n"
-            "6. **Update firmware** in `projects/{id}/firmware/` to replace local "
-            "web server with hub checkin calls — keep AP fallback for offline use\n"
-            "7. **Run `pio run`** in `projects/{id}/firmware/` and fix all errors\n"
-            "8. **Never hardcode** credentials, IPs, or MAC addresses\n"
+        task_desc = _build_port_task_description(
+            file.filename or "upload.zip",
+            project_id,
+            project_name,
+            project_type,
         )
         with get_conn() as conn:
             conn.execute(
