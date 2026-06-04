@@ -543,8 +543,8 @@ Added below the Agent Tasks section:
 
 Fine-grained control over how ESPai data maps to Matter attributes and how Matter commands route to device actions.
 
-- [ ] **State map editor in UI** — per-project UI for editing `matter_state_map`; shows current hub data keys (from last push) alongside the available Matter attribute names for the selected device type; drag-to-map or dropdown selectors
-- [ ] **Command action editor in UI** — per-project UI for `matter_command_actions`; dropdown for command type (On/Off, MoveToLevel, etc.); action type selector (call device API endpoint, publish event, run worker, set hub data)
-- [ ] **Inferred device type** — when a project's hub data keys match a known pattern (e.g. keys include `temperature` → suggest `temperature_sensor`; keys include `on_off` → suggest `on_off_plug`), pre-fill `matter_device_type` in the UI
-- [ ] **Multi-device projects** — for projects with multiple linked devices (multi-node), expose each device as a separate endpoint; `matter_endpoint_per_device: true` in project config
-- [ ] **Matter device scenes** — support Matter Scenes cluster for on_off_plug and lighting endpoints; map ESPai event types to scene IDs
+- [x] **State map editor in UI** — per-project UI showing hub data keys (from last push) alongside Matter attribute dropdowns per device type; saves `matter_state_map` on Save
+- [x] **Command action editor in UI** — per-project table of all commandable Matter commands for the selected device type; action type dropdown (Publish event / Device API / none) + value input; saves `matter_command_actions` on Save
+- [x] **Inferred device type** — when a project has hub data, keys are matched against `_MATTER_INFER` rules; a "💡 Suggested: X — Use" hint appears in the UI if the suggestion differs from the current selection
+- [ ] **Multi-device projects** — for projects with multiple linked devices (multi-node), expose each device as a separate endpoint; `matter_endpoint_per_device: true` in project config (0.4.3)
+- [ ] **Matter device scenes** — support Matter Scenes cluster for on_off_plug and lighting endpoints; map ESPai event types to scene IDs (0.5.x)

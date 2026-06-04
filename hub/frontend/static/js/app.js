@@ -1899,40 +1899,120 @@ function _openMediaUploadModal(projectId) {
   ]);
 }
 
+// ── Matter device type metadata ───────────────────────────────────────────────
+
+const _MATTER_ATTRS = {
+  on_off_plug:        ["on_off"],
+  dimmable_light:     ["on_off", "level"],
+  color_light:        ["on_off", "level", "hue", "sat"],
+  temperature_sensor: ["temperature"],
+  humidity_sensor:    ["humidity"],
+  occupancy_sensor:   ["occupancy"],
+  contact_sensor:     ["contact"],
+};
+
+const _MATTER_COMMANDS = {
+  on_off_plug:    ["on", "off", "toggle"],
+  dimmable_light: ["on", "off", "toggle", "move_to_level"],
+  color_light:    ["on", "off", "toggle", "move_to_level", "move_to_hue_saturation"],
+};
+
+const _MATTER_INFER = [
+  { keys: ["hue", "sat", "saturation"],                  type: "color_light" },
+  { keys: ["brightness", "level", "dim"],                type: "dimmable_light" },
+  { keys: ["on_off", "on", "power_on", "switch"],        type: "on_off_plug" },
+  { keys: ["temperature", "temp"],                       type: "temperature_sensor" },
+  { keys: ["humidity", "relative_humidity"],             type: "humidity_sensor" },
+  { keys: ["occupancy", "motion", "presence"],           type: "occupancy_sensor" },
+  { keys: ["contact", "open", "closed"],                 type: "contact_sensor" },
+];
+
+function _inferMatterType(hubKeys) {
+  const kset = new Set(hubKeys.map(k => k.toLowerCase()));
+  for (const rule of _MATTER_INFER) {
+    if (rule.keys.some(k => kset.has(k))) return rule.type;
+  }
+  return null;
+}
+
 // ── Project Matter section ────────────────────────────────────────────────────
 
 async function _renderProjectMatter(projectId) {
-  const toggle   = document.getElementById("projMatterToggle");
-  const cfgDiv   = document.getElementById("projMatterConfig");
-  const statusEl = document.getElementById("projMatterStatus");
-  const saveBtn  = document.getElementById("btnMatterSave");
+  const toggle    = document.getElementById("projMatterToggle");
+  const cfgDiv    = document.getElementById("projMatterConfig");
+  const statusEl  = document.getElementById("projMatterStatus");
+  const saveBtn   = document.getElementById("btnMatterSave");
+  const inferHint = document.getElementById("projMatterInferHint");
+  const smSection = document.getElementById("projMatterStateMapSection");
+  const smEditor  = document.getElementById("projMatterStateMapEditor");
+  const cmdSection= document.getElementById("projMatterCmdSection");
+  const cmdEditor = document.getElementById("projMatterCmdEditor");
   if (!toggle) return;
 
   let cfg;
+  try { cfg = await api.projects.getMatter(projectId); }
+  catch (_) { statusEl.textContent = "Matter config unavailable"; return; }
+
+  // Collect hub data keys from the latest push (best-effort)
+  let hubKeys = [];
   try {
-    cfg = await api.projects.getMatter(projectId);
-  } catch (_) {
-    statusEl.textContent = "Matter config unavailable";
-    return;
-  }
+    const latest = await api.projects.dataLatest(projectId);
+    const merged = {};
+    for (const d of (latest.devices || [])) {
+      const p = (typeof d.payload === "string") ? JSON.parse(d.payload) : (d.payload || {});
+      Object.assign(merged, p);
+    }
+    hubKeys = Object.keys(merged).filter(k => !k.startsWith("_"));
+  } catch (_) {}
 
   const dtSel   = document.getElementById("projMatterDeviceType");
   const labelIn = document.getElementById("projMatterLabel");
   const epEl    = document.getElementById("projMatterEndpointId");
 
   toggle.checked = !!cfg.matter_enabled;
-  if (dtSel)   dtSel.value   = cfg.matter_device_type   || "on_off_plug";
-  if (labelIn) labelIn.value = cfg.matter_label         || "";
+  if (dtSel)   dtSel.value   = cfg.matter_device_type || "on_off_plug";
+  if (labelIn) labelIn.value = cfg.matter_label       || "";
   if (epEl)    epEl.textContent = cfg.matter_endpoint_id ? `endpoint: ${cfg.matter_endpoint_id}` : "";
-
   cfgDiv.style.display = cfg.matter_enabled ? "" : "none";
 
+  // Bridge status badge
   const bridgeStatus = await api.matter.status().catch(() => null);
-  if (bridgeStatus && bridgeStatus.running) {
-    statusEl.textContent = bridgeStatus.commissioned ? "Bridge running · commissioned" : "Bridge running · not commissioned";
-  } else {
-    statusEl.textContent = "Bridge not running";
-  }
+  statusEl.textContent = (bridgeStatus && bridgeStatus.running)
+    ? (bridgeStatus.commissioned ? "Bridge running · commissioned" : "Bridge running · not commissioned")
+    : "Bridge not running";
+
+  // Inferred device type hint
+  const _refreshInferHint = () => {
+    if (!inferHint) return;
+    const suggested = _inferMatterType(hubKeys);
+    if (suggested && suggested !== dtSel.value && hubKeys.length) {
+      inferHint.style.display = "";
+      inferHint.innerHTML =
+        `💡 Suggested: <strong>${suggested}</strong> — matches hub data keys&nbsp;&nbsp;` +
+        `<button class="btn btn-secondary btn-sm" id="btnMatterUseInferred" ` +
+        `data-tip="Apply the suggested device type inferred from this project's hub data keys">Use</button>`;
+      document.getElementById("btnMatterUseInferred").onclick = () => {
+        dtSel.value = suggested;
+        inferHint.style.display = "none";
+        _renderMatterStateMap(smSection, smEditor, dtSel.value, hubKeys, cfg.matter_state_map || {});
+        _renderMatterCmdEditor(cmdSection, cmdEditor, dtSel.value, cfg.matter_command_actions || {});
+      };
+    } else {
+      inferHint.style.display = "none";
+    }
+  };
+  _refreshInferHint();
+
+  // Render state map and command editors
+  _renderMatterStateMap(smSection, smEditor, dtSel.value, hubKeys, cfg.matter_state_map || {});
+  _renderMatterCmdEditor(cmdSection, cmdEditor, dtSel.value, cfg.matter_command_actions || {});
+
+  // Re-render editors when device type changes
+  if (dtSel) dtSel.onchange = () => {
+    _refreshInferHint();
+    _renderMatterStateMap(smSection, smEditor, dtSel.value, hubKeys, {});
+    _renderMatterCmdEditor(cmdSection, cmdEditor, dtSel.value, {});
+  };
 
   toggle.onchange = async () => {
     cfgDiv.style.display = toggle.checked ? "" : "none";
@@ -1942,13 +2022,154 @@ async function _renderProjectMatter(projectId) {
   if (saveBtn) saveBtn.onclick = async () => {
     try {
       await api.projects.setMatter(projectId, {
-        matter_enabled:     toggle.checked,
-        matter_device_type: dtSel  ? dtSel.value   : cfg.matter_device_type,
-        matter_label:       labelIn? labelIn.value  : cfg.matter_label,
+        matter_enabled:         toggle.checked,
+        matter_device_type:     dtSel   ? dtSel.value   : cfg.matter_device_type,
+        matter_label:           labelIn ? labelIn.value  : cfg.matter_label,
+        matter_state_map:       _collectMatterStateMap(smEditor),
+        matter_command_actions: _collectMatterCmdActions(cmdEditor),
       });
       showToast("Matter settings saved");
     } catch (err) { alert(err.message); }
   };
+}
+
+// ── Matter state map editor ───────────────────────────────────────────────────
+
+function _renderMatterStateMap(section, container, deviceType, hubKeys, stateMap) {
+  if (!section || !container) return;
+  const attrs = _MATTER_ATTRS[deviceType] || [];
+  if (!hubKeys.length || !attrs.length) { section.style.display = "none"; return; }
+  section.style.display = "";
+  container.innerHTML = "";
+
+  const hdr = el("div");
+  hdr.style.cssText = "display:grid;grid-template-columns:1fr 18px 150px;gap:8px;font-size:11px;color:var(--color-text-muted);margin-bottom:4px";
+  hdr.innerHTML = "<span>Hub data key</span><span></span><span>Matter attribute</span>";
+  container.appendChild(hdr);
+
+  for (const key of hubKeys) {
+    const row = el("div");
+    row.style.cssText = "display:grid;grid-template-columns:1fr 18px 150px;gap:8px;align-items:center;margin-bottom:3px";
+    row.dataset.hubKey = key;
+
+    const keyLbl = el("span");
+    keyLbl.style.cssText = "font-family:monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+    keyLbl.textContent = key;
+
+    const arrow = el("span", "", "→");
+    arrow.style.color = "var(--color-text-muted)";
+
+    const sel = document.createElement("select");
+    sel.className = "input-sm";
+    sel.style.width = "150px";
+    sel.dataset.tip = `Choose which Matter attribute "${key}" maps to (leave blank to skip this key)`;
+
+    const skipOpt = document.createElement("option");
+    skipOpt.value = ""; skipOpt.textContent = "— skip —";
+    sel.appendChild(skipOpt);
+
+    for (const attr of attrs) {
+      const opt = document.createElement("option");
+      opt.value = attr; opt.textContent = attr;
+      sel.appendChild(opt);
+    }
+    const mapped = stateMap[key];
+    if (mapped && attrs.includes(mapped)) sel.value = mapped;
+
+    row.append(keyLbl, arrow, sel);
+    container.appendChild(row);
+  }
+}
+
+function _collectMatterStateMap(container) {
+  const map = {};
+  if (!container) return map;
+  for (const row of container.querySelectorAll("[data-hub-key]")) {
+    const sel = row.querySelector("select");
+    if (sel && sel.value) map[row.dataset.hubKey] = sel.value;
+  }
+  return map;
+}
+
+// ── Matter command action editor ──────────────────────────────────────────────
+
+function _renderMatterCmdEditor(section, container, deviceType, cmdActions) {
+  if (!section || !container) return;
+  const commands = _MATTER_COMMANDS[deviceType] || [];
+  if (!commands.length) { section.style.display = "none"; return; }
+  section.style.display = "";
+  container.innerHTML = "";
+
+  const hdr = el("div");
+  hdr.style.cssText = "display:grid;grid-template-columns:150px 110px 1fr;gap:8px;font-size:11px;color:var(--color-text-muted);margin-bottom:4px";
+  hdr.innerHTML = "<span>Matter command</span><span>Action</span><span>Value</span>";
+  container.appendChild(hdr);
+
+  for (const cmd of commands) {
+    const existing = cmdActions[cmd] || {};
+    const row = el("div");
+    row.style.cssText = "display:grid;grid-template-columns:150px 110px 1fr;gap:8px;align-items:center;margin-bottom:4px";
+    row.dataset.cmd = cmd;
+
+    const cmdLbl = el("span");
+    cmdLbl.style.cssText = "font-family:monospace;font-size:12px";
+    cmdLbl.textContent = cmd;
+
+    const typeSel = document.createElement("select");
+    typeSel.className = "input-sm";
+    typeSel.dataset.tip = `What ESPAI should do when Matter sends the "${cmd}" command`;
+    [["", "— none —"], ["event", "Publish event"], ["device_api", "Device API"]].forEach(([v, l]) => {
+      const opt = document.createElement("option");
+      opt.value = v; opt.textContent = l;
+      typeSel.appendChild(opt);
+    });
+    typeSel.value = existing.type || "";
+
+    const valIn = document.createElement("input");
+    valIn.type = "text";
+    valIn.className = "input-sm";
+    valIn.style.width = "100%";
+
+    const _sync = () => {
+      if (typeSel.value === "event") {
+        valIn.placeholder = "event_type  e.g. relay.on";
+        valIn.dataset.tip = "Event type to publish when this Matter command arrives";
+        valIn.value    = existing.event_type || "";
+        valIn.disabled = false;
+      } else if (typeSel.value === "device_api") {
+        valIn.placeholder = "endpoint  e.g. /api/relay/1/on";
+        valIn.dataset.tip = "Device HTTP endpoint to POST when this Matter command arrives";
+        valIn.value    = existing.endpoint || "";
+        valIn.disabled = false;
+      } else {
+        valIn.placeholder = "";
+        valIn.value    = "";
+        valIn.disabled = true;
+      }
+    };
+    _sync();
+    typeSel.onchange = _sync;
+
+    row.append(cmdLbl, typeSel, valIn);
+    container.appendChild(row);
+  }
+}
+
+function _collectMatterCmdActions(container) {
+  const actions = {};
+  if (!container) return actions;
+  for (const row of container.querySelectorAll("[data-cmd]")) {
+    const typeSel = row.querySelector("select");
+    const valIn   = row.querySelector("input");
+    if (!typeSel || !typeSel.value) continue;
+    const val = valIn ? valIn.value.trim() : "";
+    if (!val) continue;
+    if (typeSel.value === "event")
+      actions[row.dataset.cmd] = { type: "event",      event_type: val };
+    else if (typeSel.value === "device_api")
+      actions[row.dataset.cmd] = { type: "device_api", endpoint:   val };
+  }
+  return actions;
 }
 
 // ── Hub-level Matter view ─────────────────────────────────────────────────────
