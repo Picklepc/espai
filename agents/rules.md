@@ -200,3 +200,27 @@ env_required:
   - INTEGRATION_BASE_URL
   - INTEGRATION_API_KEY
 ```
+
+## Matter Bridge (M23 — hub-hosted, all project types)
+
+The Matter bridge runs as a Node.js process managed by `hub/backend/matter_bridge.py`. Agents working on Matter tasks should understand the following constraints:
+
+- **Never put Matter code on the ESP32** — the hub bridge handles all Matter protocol. The ESP32 continues using lightweight seed firmware and pushing hub data normally.
+- **Matter config lives in `.ESPAI-project.json`** — edit `matter_enabled`, `matter_device_type`, `matter_state_map`, and `matter_command_actions`. Never hardcode device IDs or endpoint IDs.
+- **Bridge HTTP API is on localhost:5580** — all Python interaction goes through `matter_bridge.py`, never by calling `bridge.mjs` directly.
+- **Data push is the sync path** — `matter_state_map` translates hub data keys to Matter attributes automatically on every `POST /api/projects/{id}/data`. Do not write separate sync logic.
+- **Commands route through `POST /api/matter/command`** — edit `matter_command_actions` in `.ESPAI-project.json` to add routing for a new Matter command. Do not add command-specific code to the bridge process.
+- **Node.js is required** — check `matter_bridge.is_running()` before attempting Matter operations. If Node.js is absent, the bridge is disabled silently.
+- **Fabric state is persistent** — `data/matter-storage/` holds commissioning keys. Never delete this directory; re-commissioning invalidates all paired ecosystems.
+
+### Device type → default state map reference
+
+| `matter_device_type` | Default `matter_state_map` keys |
+|---|---|
+| `on_off_plug` | `power_on`, `on`, `switch` → `on_off` |
+| `dimmable_light` | `on` → `on_off`, `brightness` → `level` |
+| `color_light` | `on` → `on_off`, `brightness` → `level`, `hue` → `hue`, `saturation` → `sat` |
+| `temperature_sensor` | `temperature`, `temp` → `temperature` (hub °C × 100 = Matter int16) |
+| `humidity_sensor` | `humidity`, `relative_humidity` → `humidity` (% × 100 = Matter uint16) |
+| `occupancy_sensor` | `occupancy`, `motion`, `presence` → `occupancy` |
+| `contact_sensor` | `contact`, `open` → `contact` |

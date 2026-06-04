@@ -791,7 +791,73 @@ All write endpoints sync `projects.devices` JSON for backward compat.
 
 ---
 
-## 24. Current Build State (as of 2026-05-29)
+## 24. Matter Bridge
+
+ESPAI acts as a **Matter bridge (aggregator)** — a single commissioned device that exposes every opted-in project as a Matter endpoint to Google Home, HomeKit, or Alexa. No Matter stack runs on the ESP32 or other physical device. Projects of any type (ESP32, integration, hybrid) can be exposed through the bridge.
+
+### Why hub-hosted instead of device-hosted
+
+Running Matter on an ESP32 (Tasmota-style) consumes ~2 MB flash and significant heap, limits the number of bridged endpoints, and restricts bridge coverage to devices that speak that firmware's sync protocol. The hub-hosted approach:
+
+- **ESP32 runs zero Matter code** — full flash/RAM available for project logic
+- **Any ESPai device is bridgeable** — ESP32 nodes, Shelly, WLED, Tasmota, Zigbee, custom HTTP devices
+- **No endpoint count limit** — hub hardware imposes no practical cap
+- **One commissioning** — add the hub bridge to Google Home once; all opted-in projects appear and update automatically as you add more
+
+### Commissioning model
+
+The bridge is commissioned using a QR code shown in the ESPai dashboard. After that single pairing event:
+- Each project with `matter_enabled: true` appears as a named endpoint in Google Home/HomeKit
+- New projects that enable Matter are registered dynamically (no re-commissioning)
+- Fabric state (cryptographic keys, peer IDs) is persisted to `data/matter-storage/`
+
+### Process architecture
+
+```
+hub/matter/bridge.mjs    (Node.js — matter.js SDK)
+    ↕  stdout/stderr      process lifecycle
+hub/backend/matter_bridge.py   (Python — process manager + HTTP client)
+    ↕  HTTP localhost:5580
+hub/backend/routers/matter.py  (FastAPI — REST API for UI + internal use)
+    ↕  called on every POST /api/projects/{id}/data push
+    ↕  called when project matter config changes
+hub/backend/routers/data.py    (background thread — non-blocking state sync)
+```
+
+The bridge exposes a local HTTP API (port `ESPAI_MATTER_PORT`, default 5580). Python calls it to register/remove devices and push state updates. The bridge calls back to `POST /api/matter/command` when Matter sends a command (on/off, brightness, etc.).
+
+### Project-level Matter config
+
+Stored in `.ESPAI-project.json`:
+
+```json
+{
+  "matter_enabled": false,
+  "matter_device_type": "on_off_plug",
+  "matter_label": "",
+  "matter_state_map": { "power_on": "on_off" },
+  "matter_command_actions": { "on": { "type": "event", "event_type": "relay.on" } },
+  "matter_endpoint_id": null
+}
+```
+
+`matter_device_type` options: `on_off_plug`, `dimmable_light`, `color_light`, `temperature_sensor`, `humidity_sensor`, `occupancy_sensor`, `contact_sensor`.
+
+`matter_state_map` maps hub data keys to Matter attribute names. Default maps are applied per device type if the field is empty (e.g. `temperature → temperature` for `temperature_sensor`).
+
+`matter_command_actions` maps Matter commands to ESPai actions: `type` can be `event` (publish to event bus), `device_api` (call device REST endpoint), `worker` (enqueue job), or `hub_data` (set hub data key).
+
+### Data push → bridge state sync
+
+In `POST /api/projects/{id}/data`, after storing the payload: if the project has `matter_enabled: true` and the bridge is running, apply the `matter_state_map` to the payload and call `matter_bridge.update_state()` in a background thread (fire-and-forget, never blocks the response).
+
+### Node.js dependency
+
+`hub/matter/package.json` specifies `@project-chip/matter-node.js@^0.10`. The Python layer checks for `node` on PATH before starting the bridge — if Node.js is absent, Matter silently stays disabled and the dashboard shows a "Node.js required" message. Docker `:latest` and `:workers` images already have Node.js; Windows users need Node.js 18+ installed separately.
+
+---
+
+## 25. Current Build State (as of 2026-06-04)
 
 Milestones 0–19 (partial) complete. Key shipped capabilities:
 
@@ -813,15 +879,23 @@ Milestones 0–19 (partial) complete. Key shipped capabilities:
 - PTY terminal (browser-based, WebSocket)
 - Project data store: push/pull API for ESP32 sensor readings
 - Simulators for all major node types
-- **Registry content packs** — BLE recipe, temperature/battery/motion-alert starter recipes; opencv-motion-tagger + ffmpeg-compressor workers; 6 cards (sensor-dashboard, ota-status, network-manager, device-log, status, trailcam-gallery) with card preview system
+- **Registry content packs** — BLE recipe, temperature/battery/motion-alert starter recipes; opencv-motion-tagger + ffmpeg-compressor workers; 6 integration workers (tasmota, shelly, wled, zigbee2mqtt, jellyfin, http-poller); 7 cards; card preview system
 - **In-hub code editor** (CodeMirror 5) — project files + registry items
 - Per-project Git version control with auto-commit on save
 - **Standalone packaging** — PyInstaller spec, frozen path detection, requirements-bundle.txt
+- **Project types** — `esp32`, `integration`, `hybrid`; type-branched scaffold, ESPAI.md, and agent templates
+- **Services view** — full LAN service registry; discover, pin, label, categorise; dedicated nav tab
+- **Caddy integration** — auto-generated Caddyfile for `{slug}.local` routing; download button in Projects view
+- **Web app scaffold** — type-specific `web/index.html` + `hub-api.js` + `app.json` on project create; live-reload via WebSocket
+- **Sleep/wake checkin** — `SLEEP_INTERVAL_S` build flag; hub-override via checkin response; `esp_deep_sleep()` after 5 s serve window
+- **Integration template workers** — tasmota-poller, shelly-poller, wled-controller, zigbee2mqtt-bridge, jellyfin-poller, http-poller
+- **Worker sync on startup** — per-worker version-aware copy; new workers land on update without reinstall
+- **Project-scoped workers** — `projects/{id}/workers/{name}/` takes precedence over global worker for job mode
 
-**Open priorities:**
+**Open priorities (M23+):**
+- **Matter bridge** (M23) — hub-hosted aggregator; one commissioning for all opted-in projects; see Section 24
+- **Matter device type mapping** (M24) — state map editor, command routing editor, inferred device types
 - Docker sidecar runner for workers
-- Caddy integration for `{project}.local` routing
-- Hotdog-or-not worker, file-manager card, theme color editor improvements
-- GitHub Actions release pipeline (windows + linux builds)
-- Diff view in agent review panel (per-file already done; show inline in review panel)
-- Secondary service advertisement (mDNS for project URLs)
+- Firmware CI builds in release pipeline
+- Service health polling for Services view (M20 follow-on)
+- Link service to project (M20 follow-on)

@@ -256,3 +256,182 @@ Make it easy to build and deploy a full custom web app as the local replacement 
 - [x] **Live-reload in dev** — `write_project_file` in `projects.py` broadcasts `project.web.reload` WebSocket event when any `web/` file is saved; `hub-api.js` `connectWS` handler reloads the page if the slug matches
 - [x] **App manifest** — `web/app.json` written on project create: `name`, `description`, `project_id`, `entry_point`, `theme_color`
 - [x] **Caddy auto-config** (links Milestone 17) — completed above; Caddyfile contains `{slug}.local` blocks for all projects
+
+## Milestone 23 — Matter Bridge (hub-hosted)
+
+The ESPAI hub acts as a **Matter bridge** (aggregator device). Commission it once to Google Home, HomeKit, or Alexa — every ESPai project that opts in appears as a first-class device in that ecosystem automatically. No Matter stack on the ESP32 or other device required.
+
+### Architecture
+
+```
+Google Home / HomeKit / Alexa
+    ↕  Matter (fabric — one QR-code commissioning)
+ESPai Hub — matter.js bridge process (hub/matter/bridge.mjs)
+    ↕  HTTP API (localhost:5580, ESPAI_MATTER_PORT)
+hub/backend/matter_bridge.py  ←→  hub/backend/routers/matter.py
+    ↕  called on every POST /api/projects/{id}/data push
+    ↕  called when project matter config changes
+ESP32 nodes  |  Shelly  |  WLED  |  Zigbee  |  any integration project
+```
+
+The bridge is a separate Node.js process managed by the Python hub. Python calls it via a local HTTP API. When Matter receives a command (toggle, brightness, etc.) the bridge POSTs it back to the hub webhook `POST /api/matter/command` for routing.
+
+### Bridge process — `hub/matter/bridge.mjs`
+
+**Dependencies** (in `hub/matter/package.json`):
+- `@project-chip/matter-node.js@^0.10` — Matter SDK for Node.js
+- `@project-chip/matter.js@^0.10` — core (pulled in transitively)
+
+**Bridge HTTP API** (port `ESPAI_MATTER_PORT`, default 5580):
+- `GET  /status` → `{ running, commissioned, passcode, discriminator, endpoints: [{id, name, device_type, reachable}] }`
+- `GET  /qrcode` → `{ qr_code, manual_pairing_code, svg }` (SVG is a 200×200 QR image)
+- `POST /devices` → `{ id, name, device_type, state }` — register or update endpoint; returns `{ endpoint_id }`
+- `PUT  /devices/:id/state` → `{ ...attributes }` — update endpoint state (on_off, level, temperature, etc.)
+- `DELETE /devices/:id` — remove endpoint
+- `POST /shutdown` — graceful shutdown
+
+**Device types supported** (Matter device type → clusters):
+| `device_type` | Matter type | Settable from hub | Commandable by Matter |
+|---|---|---|---|
+| `on_off_plug` | On/Off Plug-in Unit | `on_off: bool` | On, Off, Toggle |
+| `dimmable_light` | Dimmable Light | `on_off: bool`, `level: 0–254` | On, Off, MoveToLevel |
+| `color_light` | Color (XY) Light | `on_off`, `level`, `hue: 0–254`, `sat: 0–254` | On, Off, MoveToLevel, MoveToHueAndSaturation |
+| `temperature_sensor` | Temperature Sensor | `temperature: float °C` (stored as int16 × 100) | — (read-only) |
+| `humidity_sensor` | Humidity Sensor | `humidity: float %` (stored as uint16 × 100) | — (read-only) |
+| `occupancy_sensor` | Occupancy Sensor | `occupancy: bool` | — (read-only) |
+| `contact_sensor` | Contact Sensor | `contact: bool` | — (read-only) |
+
+**Commissioning**: On first start the bridge generates a random passcode (20 202 021 default, configurable via `ESPAI_MATTER_PASSCODE`) and discriminator (3840 default, `ESPAI_MATTER_DISCRIMINATOR`). Fabric state is persisted to `data/matter-storage/` via StorageBackendDisk so it survives restarts.
+
+**Command webhook**: When Matter sends a command, bridge POSTs to `http://localhost:{HUB_PORT}/api/matter/command` with body `{ device_id, command, args }`. Hub routes to the appropriate action (fire event, call device API, run worker).
+
+### Hub Python layer — `hub/backend/matter_bridge.py`
+
+Process manager + thin HTTP client:
+- `start()` — spawns `node bridge.mjs` as a subprocess; watches for `READY` stdout line; 15 s timeout; silently no-ops if Node.js is not installed (Matter is an optional feature)
+- `stop()` — sends `POST /shutdown`; waits for process exit (5 s); force-kills if needed
+- `is_running()` → bool
+- `get_status()` → calls `GET /status`
+- `get_qrcode()` → calls `GET /qrcode`
+- `register_device(device_id, name, device_type, initial_state)` → calls `POST /devices`
+- `update_state(device_id, state_dict)` → calls `PUT /devices/{id}/state`; non-blocking (threaded)
+- `remove_device(device_id)` → calls `DELETE /devices/{id}`
+- `sync_project(project_id)` → reads project `.ESPAI-project.json`, calls `register_device` or `remove_device`
+- `sync_all_projects()` → iterates all projects, calls `sync_project` for each matter-enabled one
+
+### Hub router — `hub/backend/routers/matter.py`
+
+- `GET  /api/matter/status` — bridge status + endpoint list; returns `{ enabled, running, commissioned, endpoints }`
+- `GET  /api/matter/qrcode` — QR code for commissioning; 404 if bridge not running
+- `POST /api/matter/bridge/start` — starts bridge process; returns status
+- `POST /api/matter/bridge/stop` — stops bridge process
+- `POST /api/matter/sync` — re-registers all matter-enabled projects with the bridge
+- `POST /api/matter/command` — webhook called by bridge when Matter sends a command; routes to event publish or device API call based on project `matter_command_actions` config
+
+### Per-project Matter config in `.ESPAI-project.json`
+
+```json
+{
+  "matter_enabled": false,
+  "matter_device_type": "on_off_plug",
+  "matter_label": "",
+  "matter_state_map": {},
+  "matter_command_actions": {},
+  "matter_endpoint_id": null
+}
+```
+
+- `matter_enabled` — whether this project is exposed as a Matter endpoint
+- `matter_device_type` — one of the supported types above
+- `matter_label` — display name in Google Home / HomeKit (defaults to project name)
+- `matter_state_map` — maps hub data keys to Matter attribute names, e.g. `{"power_on": "on_off", "dim": "level"}`. If empty, default maps are used per device type
+- `matter_command_actions` — maps Matter commands to ESPai actions, e.g. `{"on": {"type": "device_api", "endpoint": "/api/relay/1/on"}, "off": {"type": "event", "event_type": "relay.off"}}`
+- `matter_endpoint_id` — assigned by bridge on registration; stored for reference
+
+**Default state maps** (applied when `matter_state_map` is empty):
+- `on_off_plug`: `power_on → on_off`, `on → on_off`, `switch → on_off`
+- `dimmable_light`: `on → on_off`, `brightness → level`
+- `temperature_sensor`: `temperature → temperature`, `temp → temperature`
+- `humidity_sensor`: `humidity → humidity`, `relative_humidity → humidity`
+- `occupancy_sensor`: `occupancy → occupancy`, `motion → occupancy`, `presence → occupancy`
+- `contact_sensor`: `contact → contact`, `open → contact`, `closed → contact` (inverted)
+
+### Project Matter config endpoints in `projects.py`
+
+- `GET  /api/projects/{id}/matter` — reads `matter_*` keys from `.ESPAI-project.json`
+- `PUT  /api/projects/{id}/matter` — writes `matter_*` keys; if `matter_enabled` changes, calls `matter_bridge.sync_project()`
+
+### Data push hook in `data.py`
+
+In `push_data()`, after storing the payload:
+1. Check if bridge is running (`matter_bridge.is_running()`)
+2. Read project matter config (cached in memory, refresh on change)
+3. If `matter_enabled`, apply state map to payload, call `matter_bridge.update_state(project_id, mapped)` in a background thread
+
+### Hub startup / lifespan in `main.py`
+
+- On startup: call `matter_bridge.start()` only if `ESPAI_MATTER_AUTOSTART=true` env var is set (default: off — user enables via dashboard)
+- On shutdown: call `matter_bridge.stop()`
+- Add `matter.router` at `/api/matter`
+
+### Frontend — Matter section in project detail
+
+Added below the Agent Tasks section:
+
+```html
+<div id="projMatterSection" style="margin-top:28px">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+    <p class="section-heading" style="margin:0">Matter</p>
+    <label class="toggle-label">
+      <input type="checkbox" id="projMatterToggle">
+      <span data-tip="Expose this project as a Matter endpoint — appears in Google Home, HomeKit, and Alexa once the hub bridge is commissioned"></span>
+    </label>
+    <span id="projMatterStatus" style="font-size:12px;color:var(--color-text-muted)"></span>
+  </div>
+  <div id="projMatterConfig" style="display:none">
+    <!-- device type selector, label field, state map preview, endpoint ID -->
+  </div>
+</div>
+```
+
+**Hub-level Matter view** (new nav item or within a settings panel):
+- Bridge status (running / stopped / commissioned)
+- "Start Bridge" / "Stop Bridge" buttons
+- QR code display for commissioning (shown when bridge running but not yet commissioned)
+- Endpoint list (all registered projects)
+- `ESPAI_MATTER_AUTOSTART` toggle
+
+### Installation notes
+
+- `hub/matter/package.json` defines the Node.js deps; `npm install` runs in that directory
+- Docker `:latest` and `:workers` images already have Node.js — `npm install` runs on first bridge start
+- Windows: requires Node.js 18+ (already bundled with Claude Code install; or user installs separately)
+- BLE commissioning: requires Bluetooth hardware on the hub machine; IP commissioning (Matter 1.2+) works without BLE on the same LAN
+- Thread devices: require a Thread border router on the network; Wi-Fi Matter devices work without it
+
+### Pending items
+
+- [ ] `hub/matter/bridge.mjs` — Matter.js bridge process with HTTP API
+- [ ] `hub/matter/package.json` — `@project-chip/matter-node.js@^0.10`
+- [ ] `hub/matter/.gitignore` — ignore `node_modules/`, `matter-storage/`
+- [ ] `hub/backend/matter_bridge.py` — process manager + HTTP client
+- [ ] `hub/backend/routers/matter.py` — FastAPI router (status, qrcode, start/stop, sync, command webhook)
+- [ ] `hub/backend/routers/projects.py` — `GET/PUT /api/projects/{id}/matter` config endpoints
+- [ ] `hub/backend/routers/data.py` — hook `push_data` to call `matter_bridge.update_state` in background thread
+- [ ] `hub/backend/main.py` — register matter router; start/stop bridge in lifespan
+- [ ] `hub/frontend/index.html` — Matter section in project detail (toggle, device type, label, state map, endpoint ID)
+- [ ] `hub/frontend/static/js/api.js` — `api.matter.*` and `api.projects.getMatter/setMatter`
+- [ ] `hub/frontend/static/js/app.js` — `renderProjectMatter()` called from `openProject()`; hub Matter status view
+- [ ] Update `espai.spec` to include `hub/matter/` in bundle datas
+- [ ] Update Docker `Dockerfile` to run `npm install` in `hub/matter/` during build
+- [ ] Update `RELEASE_CHECKLIST.md` — add Matter smoke test section
+
+## Milestone 24 — Matter Device Type Mapping and Command Routing
+
+Fine-grained control over how ESPai data maps to Matter attributes and how Matter commands route to device actions.
+
+- [ ] **State map editor in UI** — per-project UI for editing `matter_state_map`; shows current hub data keys (from last push) alongside the available Matter attribute names for the selected device type; drag-to-map or dropdown selectors
+- [ ] **Command action editor in UI** — per-project UI for `matter_command_actions`; dropdown for command type (On/Off, MoveToLevel, etc.); action type selector (call device API endpoint, publish event, run worker, set hub data)
+- [ ] **Inferred device type** — when a project's hub data keys match a known pattern (e.g. keys include `temperature` → suggest `temperature_sensor`; keys include `on_off` → suggest `on_off_plug`), pre-fill `matter_device_type` in the UI
+- [ ] **Multi-device projects** — for projects with multiple linked devices (multi-node), expose each device as a separate endpoint; `matter_endpoint_per_device: true` in project config
+- [ ] **Matter device scenes** — support Matter Scenes cluster for on_off_plug and lighting endpoints; map ESPai event types to scene IDs
