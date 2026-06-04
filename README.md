@@ -2,7 +2,7 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/espai/espai?label=download&color=teal)](https://github.com/espai/espai/releases/latest)
 
-ESPAI is a local-first platform for replacing cloud apps with custom LAN-hosted applications — and for building and deploying custom ESP32 firmware projects.
+ESPAI is a local-first platform for replacing cloud apps with custom LAN-hosted applications — and for building and deploying custom projects with extended support for ESP32 firmware and development.
 
 Tagline: **A local space for custom connected device projects.**
 
@@ -42,7 +42,7 @@ Build a custom local app to replace a vendor cloud dashboard — for your thermo
 - Python workers — image processing, telemetry, protocol bridging, event generation
 - Reusable UI cards, device recipes, design themes, and Python worker definitions
 - OTA with SHA-256 verification, board compatibility check, staged rollout, and rollback
-- Agent Bench — run Claude autonomously on project tasks; git rollback for review
+- Agent Bench — run Claude and Codex autonomously on project tasks; git rollback for review
 - Local event bus, rules engine (cron + timezone, rate limiting), MQTT output, browser push
 - Hub → device command channel — enqueue commands, device polls and acks
 - Media store — binary file upload from firmware (`espai_upload_jpeg()`), gallery, quota guard
