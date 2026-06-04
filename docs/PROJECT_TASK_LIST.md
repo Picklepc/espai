@@ -779,3 +779,60 @@ void espai_register_config(
 - [ ] Project detail: settings panel under linked device section
 - [ ] Offline mode: cached values with "offline" badge; writes queued as commands with TTL
 - [ ] `agents/rules.md`: document config categories, blocklist, and that secrets are write-only
+
+### Standard wiring — making this seamless for all projects
+
+These three additions prevent M29 from being a per-project roadblock. Without them, every new
+project will re-invent the plumbing instead of calling the standard API.
+
+#### 1. Operational settings — agent and ESPAI.md wiring
+
+Without explicit guidance, agents will write custom settings pages in ESP32 firmware instead of
+using `espai_register_config()`.
+
+- [ ] `agents/rules.md` §ESP32: add a "Device settings" section showing the one-line registration
+  pattern with a display rotation example; state that custom settings pages are NOT required —
+  `espai_register_config()` + hub UI is the standard path for any user-tunable setting
+- [ ] `_generate_espai_md()` (projects.py): when project has `device_type=esp32` or `hybrid`,
+  include a "Device settings" snippet in the firmware section showing how to register operational
+  and secret config keys — agents receive this in every task prompt
+- [ ] `firmware/seed/src/main.cpp`: add two commented example calls to `espai_register_config()`
+  in `setup()` so the seed firmware itself demonstrates the pattern
+
+#### 2. Injected secrets — `secrets/` directory auto-push
+
+Without a source, injected secrets require manual hub UI entry every time a device re-provisions.
+The platform already has a `secrets/` directory pattern (gitignored) — wire secrets into it.
+
+**Flow:**
+```
+secrets/{device_id}/{key}     ← operator writes secret value here (gitignored)
+     ↓  (on device checkin, if device advertises key as ESPAI_CONFIG_SECRET)
+set_config command pushed      ← hub reads file, sends command, does NOT cache value
+     ↓
+Device NVS updated + callback fires
+```
+
+- [ ] Checkin handler: after upsertting config schema, scan `secrets/{device_id}/` for files
+  whose names match any `ESPAI_CONFIG_SECRET` key in the schema; if found, enqueue `set_config`
+  commands; do NOT store file contents in DB (one-way, zero hub-side retention)
+- [ ] `secrets/` directory: add a `README.md` (gitignored itself) explaining the convention;
+  add `secrets/**` to `.gitignore` if not already there
+- [ ] `agents/rules.md`: document that injected secrets are sourced from `secrets/{device_id}/`
+  — agents must never write secret values into source files, firmware, or project data; the
+  `secrets/` directory is the only sanctioned path
+- [ ] Hub UI: device "⚙ Settings" panel shows a note next to each secret key:
+  "Place value in `secrets/{device_id}/{key}` — auto-pushed on next checkin"
+
+#### 3. Platform-managed — already wired, document it explicitly
+
+`sta_ssid`/`sta_pass` flow through provision firmware. `sleep_s`/`awake_s` flow through the
+checkin response. No new code needed — but agents need to know this is handled.
+
+- [ ] `agents/rules.md`: add explicit note that WiFi credentials and sleep config are
+  platform-managed — agents must never attempt to use `espai_register_config()` for these keys
+  or construct custom WiFi credential flows; provision firmware + checkin response is the only
+  path
+- [ ] `.agent/ESP32_RULES.md`: add "Do not register `sta_ssid`, `sta_pass`, `sleep_s`,
+  `awake_s`, or any `espai_` prefixed key via `espai_register_config()` — these are
+  platform-managed and will be blocked"
