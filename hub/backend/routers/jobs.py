@@ -104,3 +104,22 @@ def purge_completed():
             "DELETE FROM jobs WHERE status IN ('done','failed','cancelled')"
         )
     return {"status": "purged"}
+
+
+@router.delete("/queued")
+def purge_queued():
+    """Remove all queued jobs — clears a stale backlog without affecting running or completed jobs."""
+    with get_conn() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM jobs WHERE status='queued'").fetchone()[0]
+        conn.execute("DELETE FROM jobs WHERE status='queued'")
+    return {"status": "purged", "count": n}
+
+
+@router.delete("/{job_id}")
+def delete_job(job_id: str):
+    """Delete a specific job record regardless of status."""
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM jobs WHERE id=?", (job_id,)).fetchone():
+            raise HTTPException(404, f"Job {job_id!r} not found")
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+    return {"deleted": job_id}

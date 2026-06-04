@@ -19,25 +19,59 @@
 
 set -e
 
-# ── Seed bundled content packs into empty bind-mounts ────────────────────────
-# When workers/, recipes/, or cards/ are bind-mounted from the NVMe they start
-# empty, hiding the bundled starters.  Copy them in on first run (sentinel guards
-# against overwriting user edits on subsequent restarts).
-SENTINEL=/app/data/.content-seeded
-if [ ! -f "$SENTINEL" ]; then
-    for dir in workers recipes cards; do
-        target="/app/${dir}"
-        # Only seed if the bind-mount exists but is empty (no subdirectories)
-        if [ -d "$target" ] && [ -z "$(find "$target" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)" ]; then
-            src="/app-bundled/${dir}"
-            if [ -d "$src" ]; then
-                echo "[ESPAI] Seeding ${dir}/ from bundled image content…"
-                cp -rn "${src}/." "${target}/" 2>/dev/null || true
+# ── Seed and update bundled content packs ────────────────────────────────────
+# Runs on every container start (idempotent):
+#   - New items missing from the bind-mount are always copied in.
+#   - Existing official items are updated when the bundled YAML version is newer.
+#   - User-configured fields (enabled, startup) are preserved on updates.
+# This replaces the old single-sentinel approach so pulling a new image
+# automatically delivers updated and new bundled workers/recipes/cards.
+
+_yaml_field() {
+    # Usage: _yaml_field <file> <field>  — returns first match, strips quotes
+    grep -m1 "^${2}:" "$1" 2>/dev/null | awk '{print $2}' | tr -d "\"'"
+}
+
+for dir in workers recipes cards; do
+    target="/app/${dir}"
+    src="/app-bundled/${dir}"
+    [ -d "$src" ] && [ -d "$target" ] || continue
+
+    for item_src in "$src"/*/; do
+        [ -d "$item_src" ] || continue
+        name=$(basename "$item_src")
+        item_dst="$target/$name"
+        yaml_src=$(ls "$item_src"*.yaml 2>/dev/null | head -1)
+        [ -n "$yaml_src" ] || continue
+
+        if [ ! -d "$item_dst" ]; then
+            # New item — seed it
+            echo "[ESPAI] Seeding new ${dir}/${name}…"
+            cp -r "$item_src" "$item_dst"
+        else
+            # Existing item — update if bundled version is newer
+            yaml_dst=$(ls "$item_dst/"*.yaml 2>/dev/null | head -1)
+            [ -n "$yaml_dst" ] || continue
+            src_ver=$(_yaml_field "$yaml_src" "version")
+            dst_ver=$(_yaml_field "$yaml_dst" "version")
+            if [ -n "$src_ver" ] && [ -n "$dst_ver" ] && [ "$src_ver" != "$dst_ver" ]; then
+                echo "[ESPAI] Updating ${dir}/${name} (${dst_ver} -> ${src_ver})…"
+                # Preserve user-configured fields
+                u_enabled=$(_yaml_field "$yaml_dst" "enabled")
+                u_startup=$(_yaml_field  "$yaml_dst" "startup")
+                tmp="${item_dst}.update.$$"
+                cp -r "$item_src" "$tmp"
+                new_yaml=$(ls "$tmp/"*.yaml 2>/dev/null | head -1)
+                if [ -n "$new_yaml" ]; then
+                    [ -n "$u_enabled" ] && sed -i "s/^enabled:.*/enabled: $u_enabled/" "$new_yaml"
+                    [ -n "$u_startup" ] && sed -i "s/^startup:.*/startup: $u_startup/" "$new_yaml"
+                fi
+                rm -rf "$item_dst"
+                mv "$tmp" "$item_dst"
             fi
         fi
     done
-    mkdir -p /app/data && touch "$SENTINEL"
-fi
+done
 
 # ── File-based preload ────────────────────────────────────────────────────────
 if [ -f /preload/requirements.txt ]; then

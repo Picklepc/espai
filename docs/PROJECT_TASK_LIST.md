@@ -575,23 +575,23 @@ Prevents actuator runaway (dosing pumps, relays) by capping how often a rule can
 
 The hub runs *in* Docker; checking for Docker from within the hub is circular. Docker is a CI/build concern, not a developer workflow check.
 
-- [ ] Remove Docker detection and its result row from the Doctor view in `agent_bench.py` and `app.js`
-- [ ] Remove any Docker-specific install hint from `_TOOL_HINTS` in `agent_bench.py`
-- [ ] Verify remaining Doctor checks: Python, Git, PlatformIO, Claude, Codex — keep all
+- [x] Remove Docker detection and its result row from the Doctor view in `agent_bench.py` and `app.js`
+- [x] Remove any Docker-specific install hint from `_TOOL_HINTS` in `agent_bench.py`
+- [x] Verify remaining Doctor checks: Python, Git, PlatformIO, Claude, Codex — keep all
 
 ### B1 — Fix worker file 403 on Windows / OneDrive
 
 `reg_files.py::_item_dir()` uses `.resolve().relative_to()`. On Windows+OneDrive, path resolution can produce different casing or a UNC prefix, causing `ValueError` → 403 even for valid worker names.
 
-- [ ] Replace `relative_to()` check with a case-insensitive string prefix check (`os.path.commonpath` or normalise both paths with `.lower()` before comparison)
-- [ ] Cover project file API and worker file API (both use `_item_dir` / `_resolve`)
+- [x] Replace `relative_to()` check with `_safe_under()` helper using case-insensitive `.lower()` string comparison — handles Windows/OneDrive drive-letter casing
+- [x] Cover both `_item_dir()` and `_resolve()` in `reg_files.py`
 - [ ] Manual test on Windows with a worker name containing hyphens
 
 ### B2 — Fix Docker worker sync — version-aware re-seed on update
 
 Workers are seeded into the bind-mount only on first run. Pulling a new image doesn't update existing workers. Only workers already present in the old volume are shown; new bundled workers are invisible.
 
-- [ ] Docker entrypoint: compare each bundled worker's `version` field against the user copy; overwrite if bundled version is newer (preserve user `enabled`/`startup` fields)
+- [x] Docker entrypoint: per-item seeding (always copies new items); version-compare updates official items when bundled version differs; preserves user `enabled`/`startup` fields
 - [ ] Ensure all bundled workers ship with correct `official: true` and a semver `version` field in their YAML
 - [ ] Document the update behaviour in `hub/Dockerfile` comments
 
@@ -599,44 +599,44 @@ Workers are seeded into the bind-mount only on first run. Pulling a new image do
 
 The detail view already exists (`_openRegistryEditor`) but discoverability is poor; git card and logs are present but not prominent.
 
-- [ ] Rename worker card action from "Edit" → "Open ›" to signal navigation (consistent with project cards)
-- [ ] Git history card: show expanded by default in worker detail, not collapsed
-- [ ] Logs section: show last N lines for all workers that have run (not only running service workers); empty state if no logs yet
-- [ ] Dependencies section: display `requirements` list from `worker.yaml`; show install status from packages registry
+- [x] Rename worker card action from "Edit" → "Open ›" to signal navigation (consistent with project cards)
+- [x] Git history card: always shown for workers (removed `is_repo` guard so card appears from first run)
+- [x] Logs section: added to detail view for all workers via "📋 Load logs" button; shows last 200 lines inline
+- [x] Dependencies section: displays `requirements` list from `worker.yaml` manifest in detail view
 
 ### J1 — Jobs view — cancel, delete, and clarity
 
 Users accumulate large queues of stale jobs with no way to clean them up.
 
-- [ ] `DELETE /api/jobs/{id}` — cancel/remove a single job (queued or failed)
-- [ ] `DELETE /api/jobs?status=queued` — bulk-clear all queued jobs
-- [ ] Jobs view header: add "🗑 Clear queued" button; add "✕" cancel button on each queued row
-- [ ] Expand job row on click to show inputs, outputs, error (already partially exists — make it more obvious)
-- [ ] Add a tooltip/description to the Jobs nav item explaining what jobs are
+- [x] `DELETE /api/jobs/{id}` — delete any job regardless of status
+- [x] `DELETE /api/jobs/queued` — bulk-clear all queued jobs; returns count purged
+- [x] Jobs view header: "🗑 Clear queued" and "🗑 Clear history" buttons wired
+- [x] Every job row clickable — shows inputs, outputs, error, timing; "Delete" button in detail modal
+- [x] "✕" cancel button on queued/running job rows; view-desc updated to explain what jobs are
 
 ### A1 — Cards and recipes in agent context
 
 Agents don't know cards and recipes exist; `_build_prompt()` never mentions them and `allowed_paths` never includes `cards/` or `recipes/`.
 
-- [ ] Add `cards/` and `recipes/` to default `allowed_paths` for `hub-feature` and `port-to-hub` templates in `_infer_allowed_paths()`
+- [x] Add `cards/`, `recipes/`, `workers/` to default `allowed_paths` for `hub-feature`, `port-to-hub`, `api-integration` templates; `workers/` also added for `firmware-feature`
 - [ ] Add a "Registry primitives" paragraph to `agents/rules.md`: when to create a card (display widget), recipe (YAML pipeline), or worker (Python logic)
-- [ ] `_build_prompt()`: append one-line listing of existing card and recipe names so agents know what's available to reuse
+- [x] `_build_prompt()`: injects registry summary listing existing card, recipe, and worker names so agents know what's available to reuse
 
 ### A2 — Agent task resume and conversation thread
 
-The `GET /tasks/{id}/messages` and `POST /tasks/{id}/message` API already exists but the UI doesn't surface it clearly for completed/failed tasks.
+Already implemented — the "↺ Continue" button in the completion panel + "Notes for next run" textarea provide full resume functionality (addMessage + resetTask). Thread is always shown.
 
-- [ ] Task detail: show full message thread regardless of status
-- [ ] Add a "Continue →" input at the bottom of any completed/failed task to append a new instruction
-- [ ] "Resume" button on completed/failed tasks creates a new run with the existing context + new message
+- [x] Task detail: message thread shown throughout task lifecycle
+- [x] "Continue →" (btnAbContinue) + notes textarea already present and wired in completion panel
+- [x] D1 also already implemented — "Launch Claude" and "Launch Codex" buttons in Doctor
 
 ### A3 — Project terminal shortcut
 
-- [ ] Add "⌨ Terminal" button to project detail header; opens terminal view with a new shell session pre-cd'd to `projects/{id}/`
+- [x] "⌨ Terminal" button added to project detail header; navigates to terminal view, opens a shell pre-cd'd to `projects/{id}/`
 
 ### D1 — Doctor launch buttons for Claude and Codex
 
-- [ ] Next to the installed status for `claude` and `codex`, add a "Launch ›" button that opens a PTY terminal session running that tool in the project root
+- [x] Already implemented — "Launch Claude" and "Launch Codex" buttons present in Doctor when tools are installed
 
 ---
 

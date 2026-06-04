@@ -1803,6 +1803,23 @@ async function openProject(p) {
   // Wire Upload Media button
   const uploadBtn = document.getElementById("btnUploadMedia");
   if (uploadBtn) uploadBtn.onclick = () => _openMediaUploadModal(p.id);
+
+  // Wire Terminal shortcut — opens terminal pre-cd'd to this project's folder
+  const termBtn = document.getElementById("btnProjTerminal");
+  if (termBtn) termBtn.onclick = () => {
+    const projPath = `projects/${p.id}`;
+    showView("terminal");
+    setTimeout(async () => {
+      try {
+        const s = await api.terminal.create({ title: `${p.name}` });
+        _termAttach(s.id, s.title);
+        setTimeout(() => {
+          if (_termSessions[s.id]?.ws?.readyState === 1)
+            _termSessions[s.id].ws.send(`cd "${projPath}"\n`);
+        }, 800);
+      } catch (_) {}
+    }, 150);
+  };
 }
 
 // ── Project media gallery ──────────────────────────────────────────────────────
@@ -3351,8 +3368,8 @@ async function loadWorkers() {
     };
     btnRow.appendChild(enableBtn);
 
-    const editBtn = el("button", "btn btn-secondary btn-sm", "📁 Edit");
-    editBtn.dataset.tip = "Browse and edit this worker's files in the hub editor";
+    const editBtn = el("button", "btn btn-secondary btn-sm", "Open ›");
+    editBtn.dataset.tip = "Open worker detail — files, git history, logs, and dependencies";
     editBtn.onclick = () => _openRegistryEditor("worker", item._folder || wname, title);
     btnRow.appendChild(editBtn);
 
@@ -3733,15 +3750,19 @@ async function _openRegistryEditor(type, itemName, displayName) {
 
   _regEditorCtx = { type, itemName, displayName };
 
-  // Fetch files (and git log for workers)
+  // Fetch files, git log, and manifest (workers only)
   let files = [];
   let gitData = { commits: [], is_repo: false };
+  let manifest = null;
   try {
     const fetches = [_REG_API[type].files(itemName)];
-    if (type === "worker") fetches.push(api.workers.gitLog(itemName).catch(() => ({ commits: [], is_repo: false })));
+    if (type === "worker") {
+      fetches.push(api.workers.gitLog(itemName).catch(() => ({ commits: [], is_repo: false })));
+      fetches.push(api.workers.get(itemName).catch(() => null));
+    }
     const results = await Promise.all(fetches);
     files = results[0].files || [];
-    if (type === "worker") gitData = results[1];
+    if (type === "worker") { gitData = results[1]; manifest = results[2]; }
   } catch (err) {
     alert("Could not load files: " + err.message);
     return;
@@ -3762,8 +3783,8 @@ async function _openRegistryEditor(type, itemName, displayName) {
     <button class="btn btn-secondary btn-sm" id="btnRegNewFile" data-tip="Create a new file in this ${type}'s folder">＋ New File</button>`;
   detailEl.appendChild(hdr);
 
-  // Git card for workers
-  if (type === "worker" && gitData.is_repo) {
+  // Git card for workers — always shown so history is visible from day one
+  if (type === "worker") {
     const gitCard = el("div", "git-repo-card");
     const commits = gitData.commits || [];
     const commitRows = commits.map(c => {
@@ -3824,6 +3845,51 @@ async function _openRegistryEditor(type, itemName, displayName) {
     }
   }
   detailEl.appendChild(fileListEl);
+
+  // ── Worker-only sections: dependencies + logs ─────────────────────────────
+  if (type === "worker") {
+    // Dependencies
+    const reqs = manifest?.requirements || [];
+    const depsSection = el("div");
+    depsSection.style.cssText = "margin-top:20px";
+    depsSection.innerHTML = `
+      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--color-text-muted);margin-bottom:6px">DEPENDENCIES</div>
+      ${reqs.length
+        ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${reqs.map(r =>
+            `<span class="tag" style="font-family:monospace" data-tip="Python package required by this worker">${r}</span>`
+          ).join("")}</div>`
+        : `<div style="font-size:12px;color:var(--color-text-muted)">None declared in worker.yaml</div>`}`;
+    detailEl.appendChild(depsSection);
+
+    // Logs
+    const logsSection = el("div");
+    logsSection.style.cssText = "margin-top:20px";
+    const logsPre = el("div");
+    logsPre.id = "workerDetailLogs";
+    logsPre.style.cssText = "font-size:11px;color:var(--color-text-muted)";
+    logsPre.textContent = "Click Load to view recent output.";
+    const logsBtn = el("button", "btn btn-secondary btn-sm", "📋 Load logs");
+    logsBtn.dataset.tip = "Load the last 200 lines of output from this worker";
+    logsBtn.onclick = async () => {
+      logsBtn.disabled = true; logsBtn.textContent = "Loading…";
+      try {
+        const { lines } = await api.workers.logs(itemName, 200);
+        if (!lines.length) {
+          logsPre.textContent = "No log output captured yet.";
+        } else {
+          logsPre.innerHTML = `<pre style="max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;background:var(--color-card);border:1px solid var(--color-card-border);border-radius:6px;padding:10px;margin:4px 0 0">${lines.map(l => l.replace(/</g,"&lt;")).join("\n")}</pre>`;
+        }
+      } catch (err) { logsPre.textContent = "Could not load logs: " + err.message; }
+      logsBtn.disabled = false; logsBtn.textContent = "📋 Reload logs";
+    };
+    const logsHdr = el("div");
+    logsHdr.style.cssText = "display:flex;align-items:center;gap:10px;margin-bottom:6px";
+    logsHdr.innerHTML = `<div style="font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--color-text-muted)">LOGS</div>`;
+    logsHdr.appendChild(logsBtn);
+    logsSection.appendChild(logsHdr);
+    logsSection.appendChild(logsPre);
+    detailEl.appendChild(logsSection);
+  }
 
   // Switch to detail
   _regEditorDetailView(listViewId, detailViewId);
@@ -4001,6 +4067,18 @@ document.getElementById("btnNewRecipe").onclick = () =>
 // ── Jobs view ──────────────────────────────────────────────────────────────
 
 async function loadJobs() {
+  // Wire header buttons
+  document.getElementById("btnClearQueued")?.addEventListener("click", async () => {
+    if (!confirm("Delete all queued jobs? This removes jobs that have not started yet.")) return;
+    await api.jobs.clearQueued().catch(err => alert(err.message));
+    loadJobs();
+  }, { once: true });
+  document.getElementById("btnClearCompleted")?.addEventListener("click", async () => {
+    if (!confirm("Delete all completed, failed, and cancelled job records?")) return;
+    await api.jobs.purgeCompleted().catch(err => alert(err.message));
+    loadJobs();
+  }, { once: true });
+
   const [jobs, workers] = await Promise.all([
     api.jobs.list().catch(() => []),
     api.workers.list().catch(() => []),
@@ -4009,13 +4087,14 @@ async function loadJobs() {
 
   const listEl = document.getElementById("jobList");
   if (!jobs.length) {
-    listEl.innerHTML = '<div class="empty-state">No jobs.</div>';
+    listEl.innerHTML = '<div class="empty-state">No jobs yet — jobs are created when a worker runs via a rule, the API, or Agent Bench.</div>';
     return;
   }
   listEl.innerHTML = "";
   for (const j of jobs) {
     const row = el("div", "job-row");
-    const w   = workerMap.get(j.worker_name);
+    row.style.cursor = "pointer";
+    const w    = workerMap.get(j.worker_name);
     const cost = w?.resource_cost || {};
 
     const cpuColor = { high: "var(--color-danger)", medium: "var(--color-warning)", low: "var(--color-success)" };
@@ -4028,30 +4107,56 @@ async function loadJobs() {
       ? '<span class="tag" data-tip="This worker is not realtime-safe and may block the event loop" style="font-size:10px;color:var(--color-warning)">not-rt-safe</span>' : "";
 
     row.innerHTML = `
-      <span class="job-status ${j.status}" data-tip="Job status: ${j.status}">${j.status}</span>
+      <span class="job-status ${j.status}" data-tip="Status: ${j.status}">${j.status}</span>
       <span style="font-weight:600;font-size:13px">${j.worker_name}</span>
       <span style="display:flex;gap:4px;align-items:center">${costTags}${rtSafe}</span>
       <span style="color:var(--color-text-muted);font-size:12px;flex:1">${j.id.slice(0,8)}</span>
       <span style="color:var(--color-text-muted);font-size:12px">${timeAgo(j.created)}</span>
     `;
-    // Click to show outputs
-    if (j.outputs || j.error) {
-      row.style.cursor = "pointer";
-      row.dataset.tip = "Click to view job outputs and timing details";
-      row.onclick = () => {
-        const detail = j.outputs ? JSON.stringify(JSON.parse(j.outputs || "{}"), null, 2) : "";
-        openModal(`Job — ${j.worker_name}`, `
-          <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:8px">
-            Status: <b style="color:${j.status === 'done' ? 'var(--color-success)' : 'var(--color-danger)'}">${j.status}</b>
-            · Created: ${timeAgo(j.created)}
-            ${j.started ? `· Started: ${timeAgo(j.started)}` : ""}
-            ${j.finished ? `· Finished: ${timeAgo(j.finished)}` : ""}
-          </p>
-          ${detail ? `<pre style="font-size:11px;max-height:200px;overflow:auto;background:var(--color-card);padding:8px;border-radius:6px">${detail}</pre>` : ""}
-          ${j.error ? `<pre style="font-size:11px;color:var(--color-danger);max-height:120px;overflow:auto;background:var(--color-card);padding:8px;border-radius:6px;margin-top:6px">${j.error}</pre>` : ""}
-        `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+
+    // Cancel button for queued/running jobs
+    if (j.status === "queued" || j.status === "running") {
+      const cancelBtn = el("button", "btn btn-danger btn-sm", "✕");
+      cancelBtn.dataset.tip = j.status === "queued" ? "Cancel this queued job — it will not run" : "Cancel this running job";
+      cancelBtn.onclick = async (e) => {
+        e.stopPropagation();
+        try { await api.jobs.cancel(j.id); loadJobs(); }
+        catch (err) { alert(err.message); }
       };
+      row.appendChild(cancelBtn);
     }
+
+    // Click anywhere on row to view detail
+    row.dataset.tip = "Click to view inputs, outputs, and timing";
+    row.onclick = () => {
+      let detail = "";
+      try { detail = j.outputs ? JSON.stringify(typeof j.outputs === "string" ? JSON.parse(j.outputs) : j.outputs, null, 2) : ""; }
+      catch (_) { detail = j.outputs || ""; }
+      let inputs = "";
+      try { inputs = j.inputs ? JSON.stringify(typeof j.inputs === "string" ? JSON.parse(j.inputs) : j.inputs, null, 2) : ""; }
+      catch (_) { inputs = j.inputs || ""; }
+      const statusColor = { done: "var(--color-success)", failed: "var(--color-danger)", cancelled: "var(--color-text-muted)" }[j.status] || "var(--color-accent)";
+      openModal(`Job — ${j.worker_name}`, `
+        <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px;line-height:1.8">
+          Status: <b style="color:${statusColor}">${j.status}</b>
+          &nbsp;·&nbsp; ID: <code>${j.id.slice(0,12)}</code>
+          &nbsp;·&nbsp; Created: ${timeAgo(j.created)}
+          ${j.started  ? `&nbsp;·&nbsp; Started: ${timeAgo(j.started)}`  : ""}
+          ${j.finished ? `&nbsp;·&nbsp; Finished: ${timeAgo(j.finished)}` : ""}
+        </p>
+        ${inputs ? `<div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px">Inputs</div><pre style="font-size:11px;max-height:120px;overflow:auto;background:var(--color-card);padding:8px;border-radius:6px;margin-bottom:10px">${inputs}</pre>` : ""}
+        ${detail  ? `<div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px">Outputs</div><pre style="font-size:11px;max-height:200px;overflow:auto;background:var(--color-card);padding:8px;border-radius:6px">${detail}</pre>` : ""}
+        ${j.error ? `<div style="font-size:11px;color:var(--color-danger);margin-top:8px;margin-bottom:4px">Error</div><pre style="font-size:11px;color:var(--color-danger);max-height:120px;overflow:auto;background:var(--color-card);padding:8px;border-radius:6px">${j.error}</pre>` : ""}
+        ${!detail && !j.error && !inputs ? `<p style="font-size:12px;color:var(--color-text-muted)">No output recorded for this job.</p>` : ""}
+      `, [
+        { label: "Delete", cls: "btn btn-danger", action: async () => {
+          await api.jobs.deleteJob(j.id).catch(err => alert(err.message));
+          closeModal(); loadJobs();
+        }},
+        { label: "Close", cls: "btn btn-secondary", action: closeModal },
+      ]);
+    };
+
     listEl.appendChild(row);
   }
 }

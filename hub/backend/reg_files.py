@@ -8,6 +8,7 @@ support files (main.py, requirements.txt, preview.html, etc.).
 This module provides safe path resolution and CRUD helpers used by the
 workers, cards, and recipes routers.
 """
+import os
 import re
 import shutil
 from pathlib import Path
@@ -32,13 +33,25 @@ class NewItemRequest(BaseModel):
     description: str = ""
 
 
+def _safe_under(child: Path, parent: Path) -> bool:
+    """
+    Return True if child is equal to or under parent.
+
+    Uses case-insensitive string comparison so this works correctly on Windows
+    and OneDrive where Path.resolve() can produce inconsistent drive-letter
+    casing (e.g. C:\\ vs c:\\), causing Path.relative_to() to raise ValueError
+    even for perfectly valid paths.
+    """
+    parent_s = str(parent).lower().rstrip("/\\")
+    child_s  = str(child).lower()
+    return child_s == parent_s or child_s.startswith(parent_s + os.sep.lower())
+
+
 def _item_dir(base_dir: Path, folder: str) -> Path:
     """Return the item directory, raising 404 if it doesn't exist."""
+    resolved_base = base_dir.resolve()
     d = (base_dir / folder).resolve()
-    # Ensure it's under base_dir (no traversal)
-    try:
-        d.relative_to(base_dir.resolve())
-    except ValueError:
+    if not _safe_under(d, resolved_base):
         raise HTTPException(403, "Path traversal not allowed")
     if not d.exists():
         raise HTTPException(404, f"Item folder {folder!r} not found")
@@ -49,9 +62,7 @@ def _resolve(base_dir: Path, folder: str, file_path: str) -> tuple[Path, Path]:
     """Resolve a registry-relative file path. Returns (item_dir, target)."""
     item_dir = _item_dir(base_dir, folder)
     target   = (item_dir / file_path).resolve()
-    try:
-        target.relative_to(item_dir)
-    except ValueError:
+    if not _safe_under(target, item_dir):
         raise HTTPException(403, "Path traversal not allowed")
     lower = file_path.lower()
     if any(p in lower for p in _BLOCKED):

@@ -170,6 +170,7 @@
               <button class="btn btn-primary    btn-sm" id="btnProjImport"  data-tip="Import the last compiled firmware.bin into the OTA catalog so you can push it to a device over WiFi">&#8679; Import to OTA</button>
               <button class="btn btn-secondary btn-sm" id="btnProjUploadFirmware" data-tip="Upload a .bin file and tag it to this project — then flash it to a linked device in one click from the Firmware section below">⬆ Upload Firmware</button>
               <button class="btn btn-secondary btn-sm" id="btnProjFlashUSB" data-tip="Flash firmware directly via USB cable (pio run -t upload) — use when device is not yet on WiFi">&#128299; Flash USB</button>
+              <button class="btn btn-secondary btn-sm" id="btnProjTerminal"    data-tip="Open a terminal session in this project's folder — runs commands relative to projects/{id}/">⌨ Terminal</button>
               <button class="btn btn-secondary btn-sm" id="btnProjTheme"       data-tip="Override CSS design tokens while this project is active — pick a hub theme or edit tokens directly">🎨 Theme</button>
               <button class="btn btn-secondary btn-sm" id="btnProjApplyTheme" data-tip="Inject the active hub theme as a hub-theme.css file into the project web/ folder — link it in your HTML to apply the palette">↓ CSS Theme</button>
               <button class="btn btn-secondary btn-sm" id="btnProjRegenCtx"   data-tip="Regenerate the project ESPAI.md context file — agents receive this before every task prompt">↺ Context</button>
@@ -385,8 +386,16 @@
 
       <!-- Jobs view -->
       <section class="view" id="view-jobs">
-        <header class="view-header"><h1>Jobs</h1></header>
-        <p class="view-desc">Every time a worker runs, it creates a job record. Browse execution history, inspect outputs, and diagnose failures here.</p>
+        <header class="view-header">
+          <h1>Jobs</h1>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary btn-sm" id="btnClearQueued"
+              data-tip="Delete all queued jobs — removes stale jobs that haven't started yet">🗑 Clear queued</button>
+            <button class="btn btn-secondary btn-sm" id="btnClearCompleted"
+              data-tip="Delete all completed, failed, and cancelled job records from history">🗑 Clear history</button>
+          </div>
+        </header>
+        <p class="view-desc">Background tasks created by worker rules, agent actions, and manual runs. Click any row to see inputs, outputs, and timing. Queued jobs run automatically when the worker runner picks them up.</p>
         <div class="job-list" id="jobList">
           <div class="empty-state">No jobs yet — jobs are created when a worker runs via a rule, the API, or Agent Bench.</div>
         </div>

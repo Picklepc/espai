@@ -186,7 +186,10 @@ const api = {
   jobs: {
     list:   (status) => apiFetch(`/api/jobs/${status ? "?status=" + status : ""}`),
     submit: (body)   => apiFetch("/api/jobs/submit",   { method: "POST",   body: JSON.stringify(body) }),
-    cancel: (id)     => apiFetch(`/api/jobs/${id}/cancel`, { method: "POST" }),
+    cancel:          (id) => apiFetch(`/api/jobs/${id}/cancel`,  { method: "POST" }),
+    deleteJob:       (id) => apiFetch(`/api/jobs/${id}`,         { method: "DELETE" }),
+    clearQueued:     ()   => apiFetch("/api/jobs/queued",        { method: "DELETE" }),
+    purgeCompleted:  ()   => apiFetch("/api/jobs/completed",     { method: "DELETE" }),
   },
 
   // OTA

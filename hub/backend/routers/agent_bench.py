@@ -105,7 +105,6 @@ _TOOL_HINTS: dict[str, str] = {
     "python": "https://www.python.org/downloads/",
     "git":    "https://git-scm.com/  — or install GitHub Desktop",
     "pio":    "py -3.11 -m pip install platformio --user",
-    "docker": "https://docs.docker.com/desktop/install/windows/",
     "codex":  "npm install -g @openai/codex",
     "claude": "npm install -g @anthropic-ai/claude-code",
     "node":   "https://nodejs.org/",
@@ -172,9 +171,6 @@ def _extra_tool_dirs() -> list[str]:
         r"C:\Program Files\Git\cmd",
         r"C:\Program Files (x86)\Git\cmd",
     ])
-
-    # Docker Desktop
-    dirs.append(r"C:\Program Files\Docker\Docker\resources\bin")
 
     # Node.js system install
     dirs.append(r"C:\Program Files\nodejs")
@@ -312,6 +308,29 @@ def _build_prompt(task: dict, project: dict | None) -> str:
             except Exception:
                 pass
 
+    # Inject brief registry summary — lists existing cards and recipes so agents
+    # know what primitives are available to reuse before creating new ones.
+    registry_summary = ""
+    try:
+        from ..registry.loader import scan_folder
+        from ..config import ROOT as _ROOT
+        card_names   = [c.get("name") or c.get("_folder","") for c in scan_folder(_ROOT / "cards",   "card")   if c.get("name") or c.get("_folder")]
+        recipe_names = [r.get("name") or r.get("_folder","") for r in scan_folder(_ROOT / "recipes", "recipe") if r.get("name") or r.get("_folder")]
+        worker_names = [w.get("name") or w.get("_folder","") for w in scan_folder(_ROOT / "workers", "worker") if w.get("name") or w.get("_folder")]
+        parts = []
+        if card_names:   parts.append("**Cards** (dashboard widgets): " + ", ".join(f"`{n}`" for n in card_names))
+        if recipe_names: parts.append("**Recipes** (YAML pipelines): "  + ", ".join(f"`{n}`" for n in recipe_names))
+        if worker_names: parts.append("**Workers** (Python modules): "  + ", ".join(f"`{n}`" for n in worker_names))
+        if parts:
+            registry_summary = (
+                "\n---\n\n## Available registry primitives\n\n"
+                + "\n".join(parts)
+                + "\n\nReuse existing primitives where appropriate. "
+                + "Create new workers/cards/recipes only when no suitable one exists.\n"
+            )
+    except Exception:
+        pass
+
     allowed = json.loads(task.get("allowed_paths") or "[]")
     criteria = json.loads(task.get("acceptance_criteria") or "[]")
 
@@ -328,7 +347,7 @@ def _build_prompt(task: dict, project: dict | None) -> str:
     if task.get("parent_task_id"):
         thread_note = f"\n**Note:** This is a follow-up task (parent: `{task['parent_task_id']}`). Review the previous task's diff and address any remaining issues.\n"
 
-    prompt = f"""{system}{rules_md}{project_context_md}
+    prompt = f"""{system}{rules_md}{project_context_md}{registry_summary}
 ---
 
 ## Task: {task['title']}
@@ -381,8 +400,11 @@ def _infer_allowed_paths(
     if context_type == "project" and (context_id or project_id):
         pid = context_id or project_id
         paths = [f"projects/{pid}/firmware/", f"projects/{pid}/workers/"]
-        if template == "port-to-hub":
-            # Also needs the shared workers directory to create hub-side workers
+        if template in ("hub-feature", "port-to-hub", "api-integration"):
+            # Hub-side tasks may need to create or reuse shared workers, cards, and recipes
+            paths += ["workers/", "cards/", "recipes/"]
+        elif template == "firmware-feature":
+            # Firmware tasks may need hub workers for offloaded processing
             paths.append("workers/")
         return paths
 
@@ -630,7 +652,6 @@ def agent_doctor():
         "python":    _detect_tool("python",    "--version"),
         "git":       _detect_tool("git",       "--version"),
         "pio":       _detect_tool("pio",       "--version"),
-        "docker":    _detect_tool("docker",    "--version"),
         "codex":     _detect_tool("codex",     "--version"),
         "claude":    _detect_tool("claude",    "--version"),
         "node":      _detect_tool("node",      "--version"),
