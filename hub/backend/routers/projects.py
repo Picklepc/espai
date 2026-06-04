@@ -888,8 +888,8 @@ def project_app_url(project_id: str, request: Request):
     if (proj_dir / "web" / "index.html").exists():
         base = str(request.base_url).rstrip("/")
         with get_conn() as conn:
-            name = conn.execute("SELECT name FROM projects WHERE id=?", (project_id,)).fetchone()
-        slug = _safe_slug(name["name"]) if name else project_id
+            row = conn.execute("SELECT slug, name FROM projects WHERE id=?", (project_id,)).fetchone()
+        slug = (row["slug"] or _safe_slug(row["name"])) if row else project_id
         return {"url": f"{base}/app/{slug}/", "host": "hub", "slug": slug, "project_id": project_id}
 
     # Linked device IP?

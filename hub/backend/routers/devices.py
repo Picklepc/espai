@@ -32,6 +32,7 @@ class DeviceCheckin(BaseModel):
     capabilities: dict | None = None
     ip: str | None = None
     sleep_interval_s: int | None = None   # node reports its configured sleep interval; 0 = awake-always
+    awake_window_s:   int | None = None   # node reports how long it stays awake before sleeping
 
     @field_validator("id")
     @classmethod
@@ -124,8 +125,10 @@ def checkin(data: DeviceCheckin):
         # Preserve paired state — nodes cannot un-pair themselves via checkin
         paired = int(existing["paired"]) if existing else 0
         conn.execute(
-            """INSERT INTO devices (id, ip, name, board, fw_version, paired, last_seen, capabilities, sleep_interval_s)
-               VALUES (?,?,?,?,?,?,?,?,?)
+            """INSERT INTO devices
+                 (id, ip, name, board, fw_version, paired, last_seen, capabilities,
+                  sleep_interval_s, awake_window_s)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  ip=excluded.ip,
                  name=excluded.name,
@@ -133,25 +136,23 @@ def checkin(data: DeviceCheckin):
                  fw_version=excluded.fw_version,
                  last_seen=excluded.last_seen,
                  capabilities=excluded.capabilities,
-                 sleep_interval_s=COALESCE(excluded.sleep_interval_s, devices.sleep_interval_s)""",
+                 sleep_interval_s=COALESCE(excluded.sleep_interval_s, devices.sleep_interval_s),
+                 awake_window_s=COALESCE(excluded.awake_window_s, devices.awake_window_s)""",
             (
-                data.id,
-                data.ip,
-                data.name,
-                data.board,
-                data.fw_version,
-                paired,
-                now,
-                json.dumps(data.capabilities or {}),
-                data.sleep_interval_s,
+                data.id, data.ip, data.name, data.board, data.fw_version,
+                paired, now, json.dumps(data.capabilities or {}),
+                data.sleep_interval_s, data.awake_window_s,
             ),
         )
-        # Return the hub-stored sleep interval so the node can adopt hub-side overrides
         row = conn.execute(
-            "SELECT sleep_interval_s FROM devices WHERE id=?", (data.id,)
+            "SELECT sleep_interval_s, awake_window_s FROM devices WHERE id=?", (data.id,)
         ).fetchone()
-    hub_sleep = row["sleep_interval_s"] if row else None
-    return {"status": "ok", "paired": bool(paired), "sleep_interval_s": hub_sleep}
+    return {
+        "status": "ok",
+        "paired": bool(paired),
+        "sleep_interval_s": row["sleep_interval_s"] if row else None,
+        "awake_window_s":   (row["awake_window_s"] or 5) if row else 5,
+    }
 
 
 @router.post("/manual")
@@ -209,6 +210,28 @@ def confirm_pairing(data: PairingConfirm):
         conn.execute("UPDATE devices SET paired=1 WHERE id=?", (data.device_id,))
 
     return {"status": "paired", "device_id": data.device_id}
+
+
+class DevicePatch(BaseModel):
+    sleep_interval_s: int | None = None   # 0 = awake-always; positive = deep-sleep interval in seconds
+    awake_window_s:   int | None = None   # seconds node stays awake after boot before sleeping
+
+
+@router.patch("/{device_id}")
+def patch_device(device_id: str, data: DevicePatch):
+    """Update hub-side per-device settings. Sent back to the node on next checkin."""
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    with get_conn() as conn:
+        result = conn.execute(
+            f"UPDATE devices SET {set_clause} WHERE id=?",
+            (*updates.values(), device_id),
+        )
+        if result.rowcount == 0:
+            raise HTTPException(404, f"Device {device_id!r} not found")
+    return {"status": "ok", "id": device_id, **updates}
 
 
 @router.delete("/{device_id}")

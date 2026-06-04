@@ -857,7 +857,7 @@ In `POST /api/projects/{id}/data`, after storing the payload: if the project has
 
 ---
 
-## 25. Current Build State (as of 2026-06-04)
+## 25. Current Build State (as of 2026-06-04) — v0.3.0
 
 Milestones 0–19 (partial) complete. Key shipped capabilities:
 
@@ -892,10 +892,13 @@ Milestones 0–19 (partial) complete. Key shipped capabilities:
 - **Worker sync on startup** — per-worker version-aware copy; new workers land on update without reinstall
 - **Project-scoped workers** — `projects/{id}/workers/{name}/` takes precedence over global worker for job mode
 
-**Open priorities (M23+):**
-- **Matter bridge** (M23) — hub-hosted aggregator; one commissioning for all opted-in projects; see Section 24
-- **Matter device type mapping** (M24) — state map editor, command routing editor, inferred device types
-- Docker sidecar runner for workers
-- Firmware CI builds in release pipeline
-- Service health polling for Services view (M20 follow-on)
-- Link service to project (M20 follow-on)
+**Release roadmap:**
+- **0.3.x** — polish, cleanup, M18/M19/M20 follow-ons, debugging, quality pass
+- **0.4.0** — Matter bridge (M23) + device type mapping (M24); hub-hosted aggregator; one commissioning for all opted-in projects; see Section 24
+
+**Open priorities (0.3.x):**
+- Service health polling + link service to project (M20 follow-ons)
+- Git-branch OTA rollback (M18 follow-on)
+- Firmware CI builds in release pipeline (M19)
+- Docker sidecar runner for workers (M6)
+- Linux `.deb` package (M19)

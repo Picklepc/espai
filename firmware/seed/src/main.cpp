@@ -72,7 +72,8 @@ bool      wifiConnected = false;
 bool      apMode        = false;
 uint32_t  lastCheckin   = 0;
 bool      paired        = false;
-int       sleepIntervalS = SLEEP_INTERVAL_S;  // can be updated from hub checkin response
+int       sleepIntervalS = SLEEP_INTERVAL_S;  // updated from hub checkin response
+int       awakeWindowS   = 5;                 // seconds to stay awake after checkin; read from NVS then updated from hub
 
 // OTA state — reset on each new upload
 static bool                  g_otaError  = false;
@@ -249,7 +250,7 @@ void handleNotFound() {
 // Returns the hub-recommended sleep interval (0 = keep awake), or -1 on failure.
 int hubCheckin(const String& hubUrl) {
   if (!wifiConnected) return -1;
-#ifdef HUB_PROJECT_ID
+#ifdef HUB_URL
   HTTPClient http;
   String url = hubUrl + "/api/devices/checkin";
   http.begin(url);
@@ -257,14 +258,24 @@ int hubCheckin(const String& hubUrl) {
   String body = "{\"id\":\"" + nodeId + "\",\"name\":\"" NODE_NAME "\",\"board\":\"" BOARD_ID
               + "\",\"fw_version\":\"" FW_VERSION "\",\"ip\":\""
               + WiFi.localIP().toString() + "\",\"sleep_interval_s\":"
-              + String(sleepIntervalS) + "}";
+              + String(sleepIntervalS) + ",\"awake_window_s\":"
+              + String(awakeWindowS) + "}";
   int code = http.POST(body);
   if (code == 200) {
     JsonDocument resp;
     deserializeJson(resp, http.getString());
+    // Hub can override both values; persist to NVS so they survive deep sleep
+    Preferences prefs;
+    prefs.begin("espai", false);
     if (!resp["sleep_interval_s"].isNull()) {
       sleepIntervalS = resp["sleep_interval_s"].as<int>();
+      prefs.putInt("sleep_s", sleepIntervalS);
     }
+    if (!resp["awake_window_s"].isNull()) {
+      awakeWindowS = resp["awake_window_s"].as<int>();
+      prefs.putInt("awake_s", awakeWindowS);
+    }
+    prefs.end();
   }
   http.end();
   return sleepIntervalS;
@@ -364,6 +375,15 @@ void setup() {
   nodeId = deriveNodeId();
   Serial.printf("[ESPAI] Node ID: %s\n", nodeId.c_str());
 
+  // Read sleep config from NVS (set by hub checkin; survives deep sleep)
+  {
+    Preferences prefs;
+    prefs.begin("espai", true);
+    sleepIntervalS = prefs.getInt("sleep_s", SLEEP_INTERVAL_S);
+    awakeWindowS   = prefs.getInt("awake_s", 5);
+    prefs.end();
+  }
+
   wifiConnected = connectWifi();
 
   if (wifiConnected || apMode) {
@@ -412,8 +432,8 @@ void loop() {
   // Deep sleep mode: serve HTTP for a short window so OTA / commands can land,
   // then sleep for the configured interval.
   if (sleepIntervalS > 0) {
-    // Stay awake for up to 5 s after boot to handle any pending requests
-    if (millis() > 5000) {
+    // Stay awake for the configured window (default 5 s) to handle OTA / commands
+    if (millis() > (uint32_t)(awakeWindowS * 1000)) {
       enterDeepSleep(sleepIntervalS);
     }
   } else {

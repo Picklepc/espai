@@ -29,6 +29,7 @@ const api = {
     initiatePair:   (id)        => apiFetch(`/api/devices/pair/initiate/${id}`, { method: "POST" }),
     confirmPair:    (body)      => apiFetch("/api/devices/pair/confirm", { method: "POST", body: JSON.stringify(body) }),
     delete:         (id)        => apiFetch(`/api/devices/${id}`,        { method: "DELETE" }),
+    patch:  (id, body) => apiFetch(`/api/devices/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
     scan:   (subnet) => apiFetch("/api/devices/scan" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""), { method: "POST" }),
     browse: (subnet) => apiFetch("/api/devices/browse" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""), { method: "POST" }),
   },

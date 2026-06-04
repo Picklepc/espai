@@ -26,7 +26,7 @@ The checklist as it appears in the repo reflects the **most recently completed r
 
 ## 1. Version and Packaging
 
-- [ ] `VERSION` file matches the intended tag — `0.2.9`
+- [ ] `VERSION` file matches the intended tag — `0.3.1`
 - [ ] `hub/backend/__init__.py` imports `VERSION` correctly — reads dynamically from `VERSION` file
 - [ ] `GET /api/status` returns `version`, `uptime`, `device_count`
 - [ ] `espai.spec` datas: `hub/frontend/`, `recipes/`, `workers/`, `cards/`, `design/`, `agents/`, `agent-bench/`, `policies/`, `schemas/`, `VERSION`
@@ -61,7 +61,9 @@ The checklist as it appears in the repo reflects the **most recently completed r
 - [ ] `_migrate()` additive — all `ALTER TABLE ADD COLUMN`, no destructive changes
 - [ ] `device_type TEXT DEFAULT 'esp32'` column present in `projects` after `_migrate()`
 - [ ] Fresh `init_db()` against empty DB — no errors, all tables created
-- [ ] `_migrate()` against 0.2.8 DB — no errors, all expected columns present (manual test)
+- [ ] `sleep_interval_s` and `awake_window_s` columns present in `devices` after `_migrate()`
+- [ ] `reachable INTEGER` column present in `local_services` after `_migrate()`
+- [ ] `_migrate()` against 0.3.0 DB — no errors, all expected columns present (manual test)
 - **Note:** `_migrate()` has duplicate slug migration blocks — backfill in second block is unreachable if first block ran. Pre-existing issue, slug is backfilled lazily. Not blocking.
 
 ---
@@ -85,6 +87,13 @@ The checklist as it appears in the repo reflects the **most recently completed r
 - [ ] `GET /api/cards/device-log/preview` → `cards.py`
 - [ ] `GET /api/workers/` → router registered
 - [ ] `GET /api/packages/` → `packages.py` router registered
+- [ ] `PATCH /api/devices/{id}` → updates `sleep_interval_s` and/or `awake_window_s`
+- [ ] `GET /api/caddy/caddyfile` → returns Caddyfile with one block per project slug
+- [ ] `GET /api/caddy/download` → file download response with `filename: Caddyfile`
+- [ ] `POST /api/services/{id}` PATCH with `project_id` → links service to project
+- [ ] `GET /api/services/` → includes `reachable` field on each row
+- [ ] `POST /api/projects/{id}/import-build` → creates catalog entry from `.pio/build/`
+- [ ] Integration workers registered in worker registry: tasmota-poller, shelly-poller, wled-controller, zigbee2mqtt-bridge, jellyfin-poller, http-poller
 - [ ] `POST /api/ota/push` — requires paired device + firmware (manual test)
 - [ ] WebSocket `/api/ws` — requires running browser (manual test)
 
@@ -104,9 +113,17 @@ The checklist as it appears in the repo reflects the **most recently completed r
 - [ ] Mobile portrait: floating hamburger opens nav, overlay closes it — manual test
 - [ ] Mobile logo: transparent-background PNG renders on all themes — manual test
 - [ ] Favicon shows in browser tab — manual test
-- [ ] Fleet, Projects, OTA, Design, Agent Bench views render without JS errors — manual test
+- [ ] Fleet, Projects, OTA, Design, Agent Bench, Services views render without JS errors — manual test
 - [ ] Worker quarantine auto-lift modal — manual test
 - [ ] Diff view Accept/Reject checkboxes — manual test
+- [ ] Services view: Discover scan finds LAN services, categorises them — manual test
+- [ ] Services view: Pin a service → reachable dot appears; Stop the service → dot turns red within 60 s — manual test
+- [ ] Services view: Edit modal shows Label, Category, Linked Project fields — manual test
+- [ ] New project (Web scaffold): `web/index.html`, `web/hub-api.js`, `web/app.json` created; save a web file → browser auto-reloads via WebSocket — manual test
+- [ ] Fleet device card: sleeping device shows 💤 badge with interval; 💤 button opens sleep settings modal — manual test
+- [ ] Sleep settings: save new `sleep_interval_s` → checkin response returns it → firmware NVS updated (verify via serial log) — manual test
+- [ ] Projects view: "⬇ Caddyfile" link downloads a valid Caddyfile with project slug blocks — manual test
+- [ ] Worker sync on startup: add a new worker to bundle, restart hub → worker appears in workers registry — manual test
 
 ---
 
@@ -121,7 +138,7 @@ python espai.py serve
 - [ ] Hub starts clean, no import errors in first 10 s
 - [ ] Fake node appears in Fleet after scan or manual IP add
 - [ ] Pairing flow: initiate → confirm → device marked paired
-- [ ] `GET /api/status` returns `"version": "0.2.9"`
+- [ ] `GET /api/status` returns `"version": "0.3.1"`
 - [ ] Recipe validate: `example-bms` returns no errors
 - [ ] Theme switch: CSS vars update without page reload
 - [ ] Project create (ESP32 type) → `firmware/` folder present, `integration/` absent
@@ -140,7 +157,7 @@ python espai.py serve
 - [ ] Tray → Stop/Start/Restart — icon state updates correctly
 - [ ] Tray → Start at Login — registry key persists
 - [ ] First-run scaffold populates `~/Documents/ESPAI/` (check `.espai-initialized`)
-- [ ] `iscc /DMyAppVersion=0.2.9 installer\espai.iss` → `ESPAI-Setup-0.2.9.exe`
+- [ ] `iscc /DMyAppVersion=0.3.1 installer\espai.iss` → `ESPAI-Setup-0.3.1.exe`
 - [ ] Installer: no elevation, installs to `%LOCALAPPDATA%\Programs\ESPAI`
 - [ ] Uninstaller cleans up registry key
 
@@ -160,7 +177,7 @@ python espai.py serve
 
 - [ ] `docker compose up -d` starts container, health check passes within `start_period: 20s`
 - [ ] `GET /api/status` reachable at `http://<router-ip>:7888/api/status`
-- [ ] Response contains `"version": "0.2.9"`
+- [ ] Response contains `"version": "0.3.1"`
 - [ ] mDNS discovery finds ESP32 nodes (`network_mode: host`)
 - [ ] Data persists across `docker compose restart` (SSD bind-mounts: `data/`, `projects/`, `firmware-catalog/`)
 - [ ] `claude --version` works inside container (`latest` and `workers` variants)
@@ -192,7 +209,7 @@ python espai.py serve
 - [ ] `docker pull ghcr.io/picklepc/espai:0.2.9` succeeds on amd64
 - [ ] `docker pull ghcr.io/picklepc/espai:0.2.9` succeeds on arm64 (verify on router)
 - [ ] Floating tags updated: `:latest`, `:workers`, `:slim`
-- [ ] Version-pinned tags present: `:0.2.9`, `:0.2.9-workers`, `:0.2.9-slim`, `:0.2`, `:0.2-workers`, `:0.2-slim`
+- [ ] Version-pinned tags present: `:0.3.1`, `:0.2.9-workers`, `:0.2.9-slim`, `:0.2`, `:0.2-workers`, `:0.2-slim`
 
 ---
 
@@ -228,10 +245,10 @@ Document in release notes:
 | Check | Result | Notes |
 |---|---|---|
 | Code + security review | pending | |
-| DB migration dry-run (0.2.8 → 0.2.9) | pending | Manual test on router |
+| DB migration dry-run (0.3.0 → 0.3.1) | pending | Manual test on router |
 | API smoke test | pending | |
 | UI smoke test | pending | Manual |
 | Windows packaging | pending | CI |
 | Docker (ARM64) | pending | Deploy to router after CI |
-| Tag pushed | pending | `v0.2.9` |
+| Tag pushed | pending | `v0.3.1` |
 | CI green | pending | Check Actions |

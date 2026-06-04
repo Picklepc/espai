@@ -12,6 +12,7 @@ Manual add accepts hostname/IP + port and auto-fetches metadata (title, favicon)
 import concurrent.futures
 import re
 import socket
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -197,10 +198,11 @@ class ServiceAdd(BaseModel):
 
 
 class ServicePatch(BaseModel):
-    label:    Optional[str]  = None
-    category: Optional[str]  = None
-    pinned:   Optional[bool] = None
-    hidden:   Optional[bool] = None
+    label:      Optional[str]  = None
+    category:   Optional[str]  = None
+    pinned:     Optional[bool] = None
+    hidden:     Optional[bool] = None
+    project_id: Optional[str]  = None   # link to an ESPai project; set to "" to unlink
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -211,12 +213,67 @@ def _now() -> str:
 
 def _row_to_dict(row) -> dict:
     d = dict(row)
-    d["pinned"]   = bool(d.get("pinned"))
-    d["hidden"]   = bool(d.get("hidden"))
-    d["is_espai"] = bool(d.get("is_espai"))
-    d["color"]    = _SVC_COLORS.get(d.get("service_type", "unknown"), _SVC_COLORS["unknown"])
+    d["pinned"]    = bool(d.get("pinned"))
+    d["hidden"]    = bool(d.get("hidden"))
+    d["is_espai"]  = bool(d.get("is_espai"))
+    d["reachable"] = bool(d.get("reachable", 1))
+    d["color"]     = _SVC_COLORS.get(d.get("service_type", "unknown"), _SVC_COLORS["unknown"])
     d["category_label"] = _CATEGORY_LABELS.get(d.get("category", "other"), "Other")
     return d
+
+
+# ── Service health polling ────────────────────────────────────────────────────
+
+_HEALTH_INTERVAL_S = 60
+_health_thread: threading.Thread | None = None
+
+
+def _ping_service(host: str, port: int, timeout: float = 2.0) -> bool:
+    """Return True if the host:port is reachable (TCP connect)."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _health_poll_loop() -> None:
+    """Background thread — pings all pinned services every 60 s."""
+    import time
+    while True:
+        time.sleep(_HEALTH_INTERVAL_S)
+        try:
+            with get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT id, host, port FROM local_services WHERE pinned=1 AND hidden=0"
+                ).fetchall()
+            for row in rows:
+                reachable = _ping_service(row["host"], row["port"])
+                now = datetime.now(timezone.utc).isoformat()
+                with get_conn() as conn:
+                    if reachable:
+                        conn.execute(
+                            "UPDATE local_services SET reachable=1, last_seen=? WHERE id=?",
+                            (now, row["id"]),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE local_services SET reachable=0 WHERE id=?",
+                            (row["id"],),
+                        )
+        except Exception:
+            pass
+
+
+def start_health_poller() -> None:
+    """Called from hub lifespan — starts the background health polling thread once."""
+    global _health_thread
+    if _health_thread and _health_thread.is_alive():
+        return
+    _health_thread = threading.Thread(
+        target=_health_poll_loop, daemon=True, name="svc-health-poller"
+    )
+    _health_thread.start()
 
 
 def _upsert_service(conn, host: str, port: int, protocol: str, meta: dict, project_id: str | None = None) -> None:
@@ -387,10 +444,15 @@ def add_service(data: ServiceAdd):
 
 @router.patch("/{svc_id}")
 def update_service(svc_id: int, data: ServicePatch):
-    """Update user-controlled fields: label, category, pinned, hidden."""
-    # Only allow the explicitly whitelisted fields
-    allowed = {"label", "category", "pinned", "hidden"}
-    updates = {k: v for k, v in data.model_dump().items() if v is not None and k in allowed}
+    """Update user-controlled fields: label, category, pinned, hidden, project_id."""
+    allowed = {"label", "category", "pinned", "hidden", "project_id"}
+    raw = data.model_dump()
+    # Allow explicit empty-string project_id to unlink
+    updates = {k: v for k, v in raw.items()
+               if k in allowed and (v is not None or k == "project_id") and raw.get(k) is not None}
+    # Normalise: empty string → NULL for project_id
+    if "project_id" in updates and updates["project_id"] == "":
+        updates["project_id"] = None
     if not updates:
         raise HTTPException(400, "Nothing to update")
     if "category" in updates and updates["category"] not in _CATEGORY_LABELS:

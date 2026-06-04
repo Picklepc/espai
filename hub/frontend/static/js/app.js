@@ -572,7 +572,8 @@ function _makeSvcCard(svc) {
 
   const tile = el("div", "svc-tile");
   tile.style.setProperty("--tile-color", color);
-  tile.dataset.tip = `${label} · ${addr}${svc.last_seen ? " · seen " + timeAgo(svc.last_seen) : ""}`;
+  const reachStr = svc.reachable === false ? " · unreachable" : (svc.last_seen ? " · seen " + timeAgo(svc.last_seen) : "");
+  tile.dataset.tip = `${label} · ${addr}${reachStr}`;
 
   // Icon bubble
   const iconEl = el("div", "svc-tile-icon");
@@ -614,6 +615,15 @@ function _makeSvcCard(svc) {
   ctrl.appendChild(moreBtn);
 
   tile.appendChild(ctrl);
+
+  // Reachability dot (only shown for pinned services where we actively poll)
+  if (svc.pinned) {
+    const dot = el("div", "");
+    const reachable = svc.reachable !== false;
+    dot.style.cssText = `position:absolute;top:5px;left:7px;width:7px;height:7px;border-radius:50%;background:${reachable ? "var(--color-success, #2ecc71)" : "var(--color-error, #e74c3c)"}`;
+    dot.dataset.tip = reachable ? "Reachable — responded to last health check" : "Unreachable — did not respond to last health check";
+    tile.appendChild(dot);
+  }
 
   // Pin glyph in corner
   if (isPinned) {
@@ -819,8 +829,7 @@ document.getElementById("btnSvcShowHidden").onclick = () => {
 };
 
 // Patch _openSvcEditModal to accept an optional fromServicesView flag
-const _origOpenSvcEdit = _openSvcEditModal;
-function _openSvcEditModal(svc, fromServicesView = false) {
+async function _openSvcEditModal(svc, fromServicesView = false) {
   const currentLabel = svc.label || svc.title || "";
   const catOpts = Object.entries(_SVC_CATEGORY_LABELS).map(([k, v]) =>
     `<option value="${k}" ${svc.category === k ? "selected" : ""}>${v}</option>`
@@ -828,6 +837,12 @@ function _openSvcEditModal(svc, fromServicesView = false) {
   const reloadFn = fromServicesView
     ? () => { loadLocalNetwork(); loadServicesView(); }
     : () => loadLocalNetwork();
+
+  let projects = [];
+  try { projects = await api.projects.list(); } catch (_) {}
+  const projOpts = ['<option value="">— none —</option>',
+    ...projects.map(p => `<option value="${p.id}" ${svc.project_id === p.id ? "selected" : ""}>${p.name}</option>`)
+  ].join("");
 
   openModal(`Edit — ${currentLabel || svc.host}`, `
     <div class="form-field">
@@ -838,11 +853,16 @@ function _openSvcEditModal(svc, fromServicesView = false) {
       <label data-tip="Group this service with similar services">Category</label>
       <select id="svcEditCat">${catOpts}</select>
     </div>
+    <div class="form-field">
+      <label data-tip="Link this service to an ESPai project — double-clicking the tile will open that project">Linked Project</label>
+      <select id="svcEditProject">${projOpts}</select>
+    </div>
   `, [
     { label: "Save", cls: "btn btn-primary", action: async () => {
-      const label    = document.getElementById("svcEditLabel").value.trim() || null;
-      const category = document.getElementById("svcEditCat").value;
-      await api.services.update(svc.id, { label, category }).catch(err => alert(err.message));
+      const label      = document.getElementById("svcEditLabel").value.trim() || null;
+      const category   = document.getElementById("svcEditCat").value;
+      const project_id = document.getElementById("svcEditProject").value || null;
+      await api.services.update(svc.id, { label, category, project_id }).catch(err => alert(err.message));
       closeModal(); reloadFn();
     }},
     { label: svc.pinned ? "Unpin" : "📌 Pin", cls: "btn btn-secondary", action: async () => {
@@ -977,6 +997,7 @@ function _renderDeviceCards(listEl, devices, onRefresh) {
         <div class="device-name">${d.name || d.id}</div>
         <div class="device-meta">${d.ip || "no IP"} · ${d.board || "unknown board"} · fw ${d.fw_version || "?"} · ${timeAgo(d.last_seen)}</div>
       </div>
+      ${d.sleep_interval_s > 0 ? `<span class="tag" style="font-size:10px;opacity:.8" data-tip="Deep-sleep node — wakes every ${d.sleep_interval_s}s to push data and check for OTA">💤 ${d.sleep_interval_s}s</span>` : ""}
       <span class="device-badge ${d.paired ? "" : "unpaired"}" data-tip="${d.paired ? "Paired — trusted for OTA and commands" : "Not paired — click Pair to enable OTA and commands"}">${d.paired ? "Paired" : "Unpaired"}</span>
     `;
     const actions = el("div", "device-actions");
@@ -997,6 +1018,36 @@ function _renderDeviceCards(listEl, devices, onRefresh) {
       portalBtn.onclick = (e) => { e.stopPropagation(); window.open(`http://${d.ip}/`, "_blank"); };
       actions.appendChild(portalBtn);
     }
+    const sleepBtn = el("button", "btn btn-secondary btn-sm", "💤");
+    sleepBtn.dataset.tip = "Configure hub-side sleep interval and awake window — sent to device on next checkin";
+    sleepBtn.onclick = (e) => {
+      e.stopPropagation();
+      openModal(`Sleep Settings — ${d.name || d.id}`, `
+        <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+          These values are returned to the device on its next checkin and saved to NVS.
+          Set <strong>Sleep Interval</strong> to 0 to disable deep sleep (always-on web server).
+        </p>
+        <div class="form-field">
+          <label data-tip="How long the device sleeps between wake-ups (0 = always on, never sleeps)">Sleep Interval (seconds)</label>
+          <input type="number" id="sleepIntervalInput" value="${d.sleep_interval_s || 0}" min="0" max="86400">
+        </div>
+        <div class="form-field">
+          <label data-tip="How many seconds the device stays awake after boot — use for OTA and command windows">Awake Window (seconds)</label>
+          <input type="number" id="awakeWindowInput" value="${d.awake_window_s || 5}" min="1" max="300">
+        </div>
+      `, [
+        { label: "Save", cls: "btn btn-primary", action: async () => {
+          const sleep_interval_s = parseInt(document.getElementById("sleepIntervalInput").value, 10);
+          const awake_window_s   = parseInt(document.getElementById("awakeWindowInput").value, 10);
+          await api.devices.patch(d.id, { sleep_interval_s, awake_window_s }).catch(err => alert(err.message));
+          closeModal();
+          if (onRefresh) onRefresh();
+        }},
+        { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+      ]);
+    };
+    actions.appendChild(sleepBtn);
+
     const delBtn = el("button", "btn btn-danger btn-sm", "✕");
     delBtn.dataset.tip = "Remove this device from the hub";
     delBtn.onclick = async (e) => {

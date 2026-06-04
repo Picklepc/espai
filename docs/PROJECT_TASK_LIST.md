@@ -257,7 +257,26 @@ Make it easy to build and deploy a full custom web app as the local replacement 
 - [x] **App manifest** — `web/app.json` written on project create: `name`, `description`, `project_id`, `entry_point`, `theme_color`
 - [x] **Caddy auto-config** (links Milestone 17) — completed above; Caddyfile contains `{slug}.local` blocks for all projects
 
-## Milestone 23 — Matter Bridge (hub-hosted)
+## Milestone 22.5 — Infrastructure and Quality (v0.3.x)
+
+Cleanup, polish, and M18/M19/M20 follow-ons before the 0.4.0 Matter release.
+
+### Shipped in 0.3.0
+- [x] **Worker sync on every startup** — `_sync_workers()` in `espai.py`; per-worker version-aware copy; installs missing workers, overwrites only when bundle version is strictly higher than installed; runs every startup (not sentinel-gated); preserves user-modified workers with matching or higher version
+- [x] **Project-scoped worker lookup** — `_resolve_worker()` in `runner.py`; checks `projects/{project_id}/workers/{name}/` before global `workers/`; `project_id` sourced from job `inputs` dict; enables per-project worker customisation without breaking other projects
+
+### Pending (0.3.x targets)
+- [ ] **Fleet view sleep indicator** — show `💤 {n}s` badge on fleet device cards when `sleep_interval_s > 0`; allows distinguishing sleeping nodes from offline ones
+- [ ] **NVS-configurable awake window** — firmware reads `awake_s` from NVS Preferences (key `awake_s`, default 5); hub checkin response includes `awake_window_s` field; device saves it to NVS; new `awake_window_s` column in `devices` table; editable in fleet device detail
+- [ ] **Link service to project** (M20) — "⚙ Link Project" in service edit modal; `ServicePatch.project_id` field; hub queries projects list for picker; shows project name badge on linked service tile; double-clicking badge opens project detail
+- [ ] **Service health polling** (M20) — background thread in `services.py` started at hub launch; pings pinned services every 60 s with a HEAD or TCP probe; stores result in new `reachable BOOLEAN` column; services view and home grid show green/red dot per tile
+- [ ] **`app-url` uses stored slug** — `project_app_url` reads `slug` column directly instead of re-deriving via `_safe_slug(name)`; removes the one divergence point
+- [ ] **Remove dead `_origOpenSvcEdit`** — line 822 of `app.js` captures an unused reference; delete it
+- [ ] **Git-tagged OTA rollback** (M18) — `import_build` stores current `git_sha` in `firmware.json`; git log view shows 🎯 Flash button on commits that have a matching catalog entry; fleet/project flash modal gains a "prior builds" tab filtered by project + sha
+- [ ] **Firmware CI builds** (M19) — add `build-firmware` matrix job to `release.yml`; PlatformIO matrix over `seeed_xiao_esp32s3`, `esp32dev`, `lolin_s3`; artifacts `ESPAI-firmware-seed-{env}-{version}.bin` attached to GitHub Release
+- [ ] **RELEASE_CHECKLIST.md** — add Section 4/5 items for M17–M22 features; update version strings to 0.3.x
+
+## Milestone 23 — Matter Bridge (hub-hosted) — target: v0.4.0
 
 The ESPAI hub acts as a **Matter bridge** (aggregator device). Commission it once to Google Home, HomeKit, or Alexa — every ESPai project that opts in appears as a first-class device in that ecosystem automatically. No Matter stack on the ESP32 or other device required.
 
@@ -426,7 +445,7 @@ Added below the Agent Tasks section:
 - [ ] Update Docker `Dockerfile` to run `npm install` in `hub/matter/` during build
 - [ ] Update `RELEASE_CHECKLIST.md` — add Matter smoke test section
 
-## Milestone 24 — Matter Device Type Mapping and Command Routing
+## Milestone 24 — Matter Device Type Mapping and Command Routing — target: v0.4.0
 
 Fine-grained control over how ESPai data maps to Matter attributes and how Matter commands route to device actions.
 
