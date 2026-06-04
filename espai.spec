@@ -33,6 +33,7 @@ def _datas():
     pairs = [
         # (src_dir,                       dest_in_bundle)
         ("hub/frontend",                  "hub/frontend"),
+        ("hub/matter",                    "hub/matter"),
         ("recipes",                       "recipes"),
         ("workers",                       "workers"),
         ("cards",                         "cards"),

@@ -160,11 +160,21 @@ enabled: true
 {req.name} — ESPAI Worker
 
 Inputs (via ESPAI_INPUTS JSON):
+  project_id  - str   required: project this worker belongs to
   # TODO: document your inputs here
+  # image_file_id - str  optional: set to a project_media file_id;
+  #   the runner sets ESPAI_MEDIA_PATH_IMAGE to the local file path
+
+Environment variables provided by the runner:
+  ESPAI_JOB_ID         - current job ID
+  ESPAI_INPUTS         - JSON-encoded inputs dict
+  ESPAI_HUB_URL        - hub base URL (e.g. http://localhost:7888)
+  ESPAI_MEDIA_DIR      - local path to hub media storage root
+  ESPAI_MEDIA_PATH_*   - resolved local path for any *_file_id input
 
 Outputs (JSON to stdout):
   ok     - bool
-  events - list of ESPAI events to emit
+  events - list of ESPAI events to emit  [{{"type":"...","data":{{...}}}}]
   error  - set on failure
 """
 import json

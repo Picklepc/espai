@@ -1,0 +1,3 @@
+node_modules/
+matter-storage/
+*.log

@@ -96,6 +96,24 @@ The checklist as it appears in the repo reflects the **most recently completed r
 - [ ] Integration workers registered in worker registry: tasmota-poller, shelly-poller, wled-controller, zigbee2mqtt-bridge, jellyfin-poller, http-poller
 - [ ] `POST /api/ota/push` — requires paired device + firmware (manual test)
 - [ ] WebSocket `/api/ws` — requires running browser (manual test)
+- [ ] `GET /api/matter/status` → `{ enabled, running, commissioned, endpoints }`
+- [ ] `POST /api/matter/bridge/start` → starts bridge; returns updated status
+- [ ] `POST /api/matter/bridge/stop` → stops bridge
+- [ ] `GET /api/matter/qrcode` → 404 when bridge not running; QR object when running
+- [ ] `GET /api/projects/{id}/matter` → returns matter config keys with defaults
+- [ ] `PUT /api/projects/{id}/matter` with `matter_enabled:true` → persists; bridge syncs if running
+
+---
+
+## 4a. Matter Bridge Smoke Test (requires Node.js)
+
+- [ ] Install Node.js 18+, then `cd hub/matter && npm install`
+- [ ] Set `ESPAI_MATTER_AUTOSTART=true`, restart hub — bridge starts, "READY" appears in log
+- [ ] `GET /api/matter/status` returns `running:true`
+- [ ] `GET /api/matter/qrcode` returns QR SVG and manual pairing code
+- [ ] Matter view in dashboard shows "● Running" badge and QR panel
+- [ ] Enable Matter on a project (e.g. temperature_sensor), click Save — endpoint appears in endpoint list
+- [ ] `POST /api/matter/bridge/stop` stops the process; status returns `running:false`
 
 ---
 
@@ -119,6 +137,9 @@ The checklist as it appears in the repo reflects the **most recently completed r
 - [ ] Services view: Discover scan finds LAN services, categorises them — manual test
 - [ ] Services view: Pin a service → reachable dot appears; Stop the service → dot turns red within 60 s — manual test
 - [ ] Services view: Edit modal shows Label, Category, Linked Project fields — manual test
+- [ ] Matter nav item visible; clicking opens Matter bridge view — manual test
+- [ ] Matter view: Start Bridge / Stop Bridge buttons work; QR panel appears when running and uncommissioned — manual test
+- [ ] Project detail: Matter section shows toggle, device type selector, label; Save persists — manual test
 - [ ] New project (Web scaffold): `web/index.html`, `web/hub-api.js`, `web/app.json` created; save a web file → browser auto-reloads via WebSocket — manual test
 - [ ] Fleet device card: sleeping device shows 💤 badge with interval; 💤 button opens sleep settings modal — manual test
 - [ ] Sleep settings: save new `sleep_interval_s` → checkin response returns it → firmware NVS updated (verify via serial log) — manual test

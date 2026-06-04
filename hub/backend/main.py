@@ -27,9 +27,10 @@ from .config import DEBUG, PORT
 from .config import PROJECTS_DIR
 from .db import get_conn, init_db
 from . import __version__ as HUB_VERSION
+from . import matter_bridge
 from .discovery.mdns import mdns_manager
 from . import mqtt_publisher, theme_scheduler, ws_broker
-from .routers import admin, agent_bench, caddy, cards, commands, data, design, devices, events, jobs, media, ota, packages, projects, recipes, rules, services, terminal, workers
+from .routers import admin, agent_bench, caddy, cards, commands, data, design, devices, events, jobs, matter, media, ota, packages, projects, recipes, rules, services, terminal, workers
 from .workers.runner import start_runner, start_services
 from .routers.services import start_health_poller
 from .rules import scheduler as cron_scheduler
@@ -122,10 +123,15 @@ async def lifespan(app: FastAPI):
     mqtt_publisher.init()
     theme_scheduler.start()
     ws_broker.set_loop(asyncio.get_event_loop())
+    # Start Matter bridge if autostart is enabled
+    if os.environ.get("ESPAI_MATTER_AUTOSTART", "").lower() in ("1", "true", "yes"):
+        if matter_bridge.start():
+            matter_bridge.sync_all_projects()
     yield
     # Shutdown
     mdns_manager.stop()
     mqtt_publisher.shutdown()
+    matter_bridge.stop()
 
 
 app = FastAPI(
@@ -171,6 +177,7 @@ app.include_router(terminal.router,    prefix="/api/terminal",     tags=["termin
 app.include_router(data.router,        prefix="/api/projects",     tags=["project-data"])
 app.include_router(media.router,       prefix="/api/projects",     tags=["project-media"])
 app.include_router(commands.router,    prefix="/api/devices",      tags=["commands"])
+app.include_router(matter.router,      prefix="/api/matter",        tags=["matter"])
 
 
 @app.websocket("/api/ws")

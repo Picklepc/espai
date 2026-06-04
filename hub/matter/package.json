@@ -1,0 +1,15 @@
+{
+  "name": "espai-matter-bridge",
+  "version": "1.0.0",
+  "description": "Matter bridge process for ESPAI Hub",
+  "type": "module",
+  "main": "bridge.mjs",
+  "engines": { "node": ">=18.0.0" },
+  "dependencies": {
+    "@project-chip/matter-node.js": "^0.10.0",
+    "express": "^4.18.0"
+  },
+  "scripts": {
+    "start": "node bridge.mjs"
+  }
+}

@@ -1720,3 +1720,61 @@ async def import_project_from_zip(
         "project_type":  project_type,
         "task_id":       task_id,
     }
+
+
+# ── Matter config ──────────────────────────────────────────────────────────────
+
+_MATTER_DEFAULTS = {
+    "matter_enabled":         False,
+    "matter_device_type":     "on_off_plug",
+    "matter_label":           "",
+    "matter_state_map":       {},
+    "matter_command_actions": {},
+    "matter_endpoint_id":     None,
+}
+_MATTER_KEYS = set(_MATTER_DEFAULTS)
+
+
+@router.get("/{project_id}/matter")
+def get_project_matter(project_id: str):
+    """Read per-project Matter configuration from .ESPAI-project.json."""
+    cfg_file = PROJECTS_DIR / project_id / ".ESPAI-project.json"
+    if not cfg_file.exists():
+        raise HTTPException(404, "Project not found")
+    try:
+        full = json.loads(cfg_file.read_text(encoding="utf-8"))
+    except Exception:
+        full = {}
+    result = {**_MATTER_DEFAULTS}
+    for k in _MATTER_KEYS:
+        if k in full:
+            result[k] = full[k]
+    return result
+
+
+@router.put("/{project_id}/matter")
+def set_project_matter(project_id: str, body: dict):
+    """Write per-project Matter configuration; sync bridge on enable/disable."""
+    from .. import matter_bridge as _mb
+
+    cfg_file = PROJECTS_DIR / project_id / ".ESPAI-project.json"
+    if not cfg_file.exists():
+        raise HTTPException(404, "Project not found")
+
+    try:
+        full = json.loads(cfg_file.read_text(encoding="utf-8"))
+    except Exception:
+        full = {}
+
+    was_enabled = bool(full.get("matter_enabled", False))
+    for k in _MATTER_KEYS:
+        if k in body and k != "matter_endpoint_id":   # endpoint_id assigned by bridge
+            full[k] = body[k]
+
+    cfg_file.write_text(json.dumps(full, indent=2), encoding="utf-8")
+
+    now_enabled = bool(full.get("matter_enabled", False))
+    if _mb.is_running() and (was_enabled != now_enabled or now_enabled):
+        _mb.sync_project(project_id)
+
+    return {k: full.get(k, _MATTER_DEFAULTS[k]) for k in _MATTER_KEYS}

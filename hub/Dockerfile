@@ -68,6 +68,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Application code ──────────────────────────────────────────────────────────
 COPY . .
 
+# ── Matter bridge Node.js dependencies ────────────────────────────────────────
+# Pre-install so the bridge can start without needing internet access at runtime.
+RUN if [ -f hub/matter/package.json ]; then \
+        cd hub/matter && npm install --omit=dev --no-audit --no-fund \
+        || echo "WARNING: Matter bridge npm install failed — Matter will be unavailable"; \
+    fi
+
 # Entrypoint handles optional worker dep preloading before starting uvicorn
 COPY hub/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh

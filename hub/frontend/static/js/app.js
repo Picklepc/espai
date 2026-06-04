@@ -1798,6 +1798,7 @@ async function openProject(p) {
   renderProjectFirmware(p, linkedIds);
   _loadProjectApprovalMode(p.id);
   _loadProjectMedia(p.id);
+  _renderProjectMatter(p.id);
 
   // Wire Upload Media button
   const uploadBtn = document.getElementById("btnUploadMedia");
@@ -1896,6 +1897,140 @@ function _openMediaUploadModal(projectId) {
     }},
     { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
   ]);
+}
+
+// ── Project Matter section ────────────────────────────────────────────────────
+
+async function _renderProjectMatter(projectId) {
+  const toggle   = document.getElementById("projMatterToggle");
+  const cfgDiv   = document.getElementById("projMatterConfig");
+  const statusEl = document.getElementById("projMatterStatus");
+  const saveBtn  = document.getElementById("btnMatterSave");
+  if (!toggle) return;
+
+  let cfg;
+  try {
+    cfg = await api.projects.getMatter(projectId);
+  } catch (_) {
+    statusEl.textContent = "Matter config unavailable";
+    return;
+  }
+
+  const dtSel   = document.getElementById("projMatterDeviceType");
+  const labelIn = document.getElementById("projMatterLabel");
+  const epEl    = document.getElementById("projMatterEndpointId");
+
+  toggle.checked = !!cfg.matter_enabled;
+  if (dtSel)   dtSel.value   = cfg.matter_device_type   || "on_off_plug";
+  if (labelIn) labelIn.value = cfg.matter_label         || "";
+  if (epEl)    epEl.textContent = cfg.matter_endpoint_id ? `endpoint: ${cfg.matter_endpoint_id}` : "";
+
+  cfgDiv.style.display = cfg.matter_enabled ? "" : "none";
+
+  const bridgeStatus = await api.matter.status().catch(() => null);
+  if (bridgeStatus && bridgeStatus.running) {
+    statusEl.textContent = bridgeStatus.commissioned ? "Bridge running · commissioned" : "Bridge running · not commissioned";
+  } else {
+    statusEl.textContent = "Bridge not running";
+  }
+
+  toggle.onchange = async () => {
+    cfgDiv.style.display = toggle.checked ? "" : "none";
+    await api.projects.setMatter(projectId, { matter_enabled: toggle.checked }).catch(err => alert(err.message));
+  };
+
+  if (saveBtn) saveBtn.onclick = async () => {
+    try {
+      await api.projects.setMatter(projectId, {
+        matter_enabled:     toggle.checked,
+        matter_device_type: dtSel  ? dtSel.value   : cfg.matter_device_type,
+        matter_label:       labelIn? labelIn.value  : cfg.matter_label,
+      });
+      showToast("Matter settings saved");
+    } catch (err) { alert(err.message); }
+  };
+}
+
+// ── Hub-level Matter view ─────────────────────────────────────────────────────
+
+async function _loadMatterView() {
+  const runBadge  = document.getElementById("matterRunBadge");
+  const commBadge = document.getElementById("matterCommBadge");
+  const epCount   = document.getElementById("matterEndpointCount");
+  const qrPanel   = document.getElementById("matterQrPanel");
+  const qrSvg     = document.getElementById("matterQrSvg");
+  const manualEl  = document.getElementById("matterManualCode");
+  const epList    = document.getElementById("matterEndpointList");
+
+  if (!runBadge) return;
+
+  let status;
+  try {
+    status = await api.matter.status();
+  } catch (_) {
+    runBadge.textContent  = "Bridge unavailable";
+    runBadge.style.background = "var(--color-error,#c33)";
+    return;
+  }
+
+  const running     = status.running     ?? false;
+  const commissioned = status.commissioned ?? false;
+  const endpoints   = status.endpoints   ?? [];
+
+  runBadge.textContent  = running ? "● Running" : "● Stopped";
+  runBadge.style.background = running ? "var(--color-success,#2a7)" : "var(--color-error,#c33)";
+  commBadge.textContent = commissioned ? "✓ Commissioned" : "⊘ Not commissioned";
+  commBadge.style.background = commissioned ? "var(--color-success,#2a7)" : "var(--color-card-border,#333)";
+  epCount.textContent   = `${endpoints.length} endpoint${endpoints.length !== 1 ? "s" : ""}`;
+
+  // Show QR code if running but not yet commissioned
+  if (running && !commissioned) {
+    try {
+      const qr = await api.matter.qrcode();
+      if (qr && qr.svg) {
+        qrSvg.innerHTML     = qr.svg;
+        manualEl.textContent = qr.manual_pairing_code || "";
+        qrPanel.style.display = "";
+      }
+    } catch (_) {}
+  } else {
+    qrPanel.style.display = "none";
+  }
+
+  // Endpoint list
+  if (!endpoints.length) {
+    epList.innerHTML = '<div class="empty-state">No endpoints — enable Matter on individual projects to register them.</div>';
+  } else {
+    epList.innerHTML = "";
+    endpoints.forEach(ep => {
+      const row = el("div", "card-row");
+      row.style.cssText = "display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--color-surface);border-radius:6px;border:1px solid var(--color-card-border)";
+      row.dataset.tip   = `Matter endpoint: ${ep.device_type} (id: ${ep.id})`;
+      row.innerHTML     = `<span class="device-dot ${ep.reachable ? "online" : "offline"}" data-tip="${ep.reachable ? "Reachable" : "Unreachable"}"></span>
+        <span style="flex:1;font-size:13px">${ep.name}</span>
+        <span style="font-size:11px;color:var(--color-text-muted)">${ep.device_type}</span>`;
+      epList.appendChild(row);
+    });
+  }
+
+  // Button wiring
+  const startBtn = document.getElementById("btnMatterStart");
+  const stopBtn  = document.getElementById("btnMatterStop");
+  const syncBtn  = document.getElementById("btnMatterSync");
+  if (startBtn) startBtn.onclick = async () => {
+    startBtn.disabled = true;
+    try { await api.matter.start(); _loadMatterView(); }
+    catch (err) { alert("Start failed: " + err.message); }
+    finally { startBtn.disabled = false; }
+  };
+  if (stopBtn)  stopBtn.onclick  = async () => {
+    try { await api.matter.stop(); _loadMatterView(); }
+    catch (err) { alert(err.message); }
+  };
+  if (syncBtn)  syncBtn.onclick  = async () => {
+    try { await api.matter.sync(); _loadMatterView(); }
+    catch (err) { alert(err.message); }
+  };
 }
 
 const _NODE_ROLES = ["coordinator","sensor","actuator","gateway","observer","hub-agent","relay","node"];
@@ -4343,9 +4478,11 @@ document.getElementById("btnNewRule").onclick = () => {
       <input type="text" id="ruleEventType" placeholder="e.g. device.motion">
     </div>
     <div class="form-field" id="ruleScheduleField" style="display:none">
-      <label data-tip="5-field cron expression (UTC): minute hour day-of-month month day-of-week. Examples: '0 6 * * *' = daily 6am, '*/15 * * * *' = every 15 min">Cron Schedule (UTC)</label>
+      <label data-tip="5-field cron expression: minute hour day-of-month month day-of-week. Examples: '0 6 * * *' = daily 6am, '*/15 * * * *' = every 15 min">Cron Schedule</label>
       <input type="text" id="ruleScheduleInput" placeholder="0 6 * * *" style="font-family:monospace">
       <div id="ruleSchedulePreview" style="font-size:11px;color:var(--color-accent);margin-top:4px"></div>
+      <label style="margin-top:8px" data-tip="IANA timezone name — leave blank for UTC. Examples: America/Chicago, Europe/London, Asia/Tokyo">Timezone (optional, default UTC)</label>
+      <input type="text" id="ruleScheduleTz" placeholder="e.g. America/New_York" style="width:100%;font-size:12px">
     </div>
     <div class="form-field">
       <label data-tip="Only fire when the event source matches — usually a device ID. Leave blank to match any source.">Source Filter (optional)</label>
@@ -4394,6 +4531,7 @@ document.getElementById("btnNewRule").onclick = () => {
       const action_type  = document.getElementById("ruleActionType").value;
       const cfgRaw       = document.getElementById("ruleActionConfig").value.trim();
       const schedule     = document.getElementById("ruleScheduleInput")?.value.trim() || null;
+      const schedule_tz  = document.getElementById("ruleScheduleTz")?.value.trim() || null;
       if (!name || !event_type) { alert("Rule name and event type are required."); return; }
       let action_config = {};
       if (action_type === "run_worker")  action_config = { worker_name: cfgRaw };
@@ -4410,7 +4548,7 @@ document.getElementById("btnNewRule").onclick = () => {
         try { tokens = JSON.parse(document.getElementById("ruleThemeTokens")?.value || "{}"); } catch { alert("Invalid JSON in token overrides"); return; }
         action_config = { tokens, duration_minutes: parseInt(document.getElementById("ruleThemeDuration")?.value || "5") };
       }
-      await api.rules.create({ name, event_type, source_filter, action_type, action_config, schedule });
+      await api.rules.create({ name, event_type, source_filter, action_type, action_config, schedule, schedule_tz });
       closeModal();
       loadRules();
     }},
@@ -5800,6 +5938,7 @@ const viewLoaders = {
   rules:         loadRules,
   "agent-bench": loadAgentBench,
   services:      loadServicesView,
+  matter:        _loadMatterView,
 };
 
 function loadView(name) {

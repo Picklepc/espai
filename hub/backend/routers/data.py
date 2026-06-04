@@ -19,10 +19,12 @@ Pull endpoints (called by hub-hosted web apps):
 
 import json
 import math
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Query
+from pydantic import BaseModel
 
 from ..db import get_conn
 
@@ -131,7 +133,77 @@ async def push_data(project_id: str, request: Request):
                 (project_id, count - _MAX_ROWS_PER_PROJECT),
             )
 
+    # Geofence check — fire enter/exit events when device crosses a zone boundary
+    if lat is not None and lng is not None:
+        _check_geofences(project_id, device_id, lat, lng, now)
+
+    # Matter bridge — push mapped state to bridge (non-blocking)
+    try:
+        from .. import matter_bridge as _mb
+        if _mb.is_running():
+            cfg = _mb._read_matter_cfg(project_id)
+            if cfg and cfg.get("matter_enabled"):
+                smap = cfg.get("matter_state_map") or {}
+                # Apply state map (hub key → Matter key); identity if no map set
+                mapped = {smap.get(k, k): v for k, v in body.items()}
+                _mb.update_state(project_id, mapped)
+    except Exception:
+        pass
+
     return {"stored": True, "project_id": project_id, "device_id": device_id, "timestamp": now}
+
+
+def _check_geofences(project_id: str, device_id: str, lat: float, lng: float, now: str) -> None:
+    """Check all enabled geofences for this project/device and fire boundary events."""
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM geofences
+                   WHERE project_id=? AND enabled=1
+                     AND (device_id IS NULL OR device_id=?)""",
+                (project_id, device_id),
+            ).fetchall()
+    except Exception:
+        return
+
+    for gf in rows:
+        gf = dict(gf)
+        try:
+            polygon = json.loads(gf["polygon"])
+        except Exception:
+            continue
+        inside = _point_in_polygon(lat, lng, polygon)
+        state  = "inside" if inside else "outside"
+
+        if gf["last_state"] == state:
+            continue  # no change
+
+        event_type = gf["event_enter"] if inside else gf["event_exit"]
+        try:
+            from ..rules.engine import evaluate_rules
+            event = {
+                "event_type": event_type,
+                "source":     f"geofence:{gf['id']}",
+                "payload":    {
+                    "geofence_id":   gf["id"],
+                    "geofence_name": gf["name"],
+                    "device_id":     device_id,
+                    "project_id":    project_id,
+                    "lat":           lat, "lng": lng,
+                    "state":         state,
+                },
+            }
+            with get_conn() as conn:
+                conn.execute(
+                    "INSERT INTO events (source, event_type, payload, timestamp) VALUES (?,?,?,?)",
+                    (event["source"], event_type, json.dumps(event["payload"]), now),
+                )
+                conn.execute(
+                    "UPDATE geofences SET last_state=? WHERE id=?", (state, gf["id"])
+                )
+            evaluate_rules(event)
+        except Exception:
+            pass
 
 
 # ── Latest ────────────────────────────────────────────────────────────────────
@@ -462,3 +534,61 @@ def clear_data(project_id: str):
         conn.execute("DELETE FROM project_data       WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM project_data_cache WHERE project_id=?", (project_id,))
     return {"cleared": True, "project_id": project_id}
+
+
+# ── Geofences ─────────────────────────────────────────────────────────────────
+
+class GeofenceCreate(BaseModel):
+    name: str
+    polygon: list[list[float]]    # [[lat, lng], ...]  min 3 points
+    device_id: Optional[str] = None
+    event_enter: str = "geofence.enter"
+    event_exit:  str = "geofence.exit"
+    enabled: bool = True
+
+
+@router.post("/{project_id}/geofences", status_code=201)
+def create_geofence(project_id: str, data: GeofenceCreate):
+    """Create a named geofence zone for a project."""
+    if len(data.polygon) < 3:
+        raise HTTPException(400, "polygon must have at least 3 points")
+    gf_id = str(uuid.uuid4())
+    now   = _now()
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO geofences
+               (id, project_id, name, device_id, polygon, event_enter, event_exit, enabled, created)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (gf_id, project_id, data.name, data.device_id or None,
+             json.dumps(data.polygon), data.event_enter, data.event_exit,
+             int(data.enabled), now),
+        )
+    return {"id": gf_id, "project_id": project_id, "name": data.name, "created": now}
+
+
+@router.get("/{project_id}/geofences")
+def list_geofences(project_id: str):
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM geofences WHERE project_id=? ORDER BY created DESC",
+            (project_id,),
+        ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try: d["polygon"] = json.loads(d["polygon"])
+        except Exception: pass
+        d["enabled"] = bool(d.get("enabled", 1))
+        result.append(d)
+    return result
+
+
+@router.delete("/{project_id}/geofences/{gf_id}")
+def delete_geofence(project_id: str, gf_id: str):
+    with get_conn() as conn:
+        if not conn.execute(
+            "SELECT id FROM geofences WHERE id=? AND project_id=?", (gf_id, project_id)
+        ).fetchone():
+            raise HTTPException(404, "Geofence not found")
+        conn.execute("DELETE FROM geofences WHERE id=?", (gf_id,))
+    return {"deleted": gf_id}

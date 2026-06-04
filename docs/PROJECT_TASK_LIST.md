@@ -316,7 +316,7 @@ Two features identified in `docs/MOONSHOTS.md` as the highest-leverage additions
 - [x] Media gallery section in project detail — thumbnail grid; click to view/download/delete
 - [x] "⬆ Upload" button + upload modal with device_id and tags fields
 - [x] ESP32 firmware helper — `espai_upload_jpeg(hubUrl, projectId, buf, len, deviceId, tags)` — builds multipart/form-data body, POSTs to `/api/projects/{id}/media`; returns HTTP status code
-- [ ] Worker file_id input — worker fetches media file from hub before processing (0.4.x follow-on)
+- [x] Worker file_id input — worker fetches media file from hub before processing (0.4.x follow-on)
 
 ### M25b — Hub → Device Command Channel (score impact: -1.5 removed)
 
@@ -348,7 +348,7 @@ Analytics capabilities needed by automation and ML projects identified in MOONSH
 - [x] New Rule modal: schedule input shown when event_type = `system.clock`; all 5 new action types in select including `send_command`
 - [x] `api.rules.upcoming(n)` in api.js
 - [x] Cron preview in New Rule modal — hints for common patterns; 5-field validation; debounced live feedback
-- [ ] Timezone support (currently UTC only) (0.4.x follow-on)
+- [x] Timezone support — `schedule_tz` column on rules; zoneinfo-aware scheduler; timezone input in New Rule modal (0.4.x follow-on)
 
 ### M26b — Data Aggregation API
 
@@ -368,7 +368,7 @@ Analytics capabilities needed by automation and ML projects identified in MOONSH
 - [x] `POST /api/projects/{id}/data/geofence-check` — point-in-polygon (ray-casting) for latest device position
 - [x] `api.projects.dataSpatial / dataTrack / geofenceCheck` in api.js
 - [x] `cards/position-map/` — Leaflet.js card with device tracks, latest position markers, 10s auto-refresh, device filter dropdown, full preview.html
-- [ ] Geofence rule condition integrated with rules engine (0.4.x follow-on — use geofence-check endpoint from a worker for now)
+- [x] Geofence rule condition — `geofences` table, CRUD endpoints, `_check_geofences()` in `push_data()` fires `geofence.enter`/`geofence.exit` events; rules engine can trigger on those events (0.4.x follow-on)
 
 ## Milestone 23 — Matter Bridge (hub-hosted) — target: v0.4.0
 
@@ -524,20 +524,20 @@ Added below the Agent Tasks section:
 
 ### Pending items
 
-- [ ] `hub/matter/bridge.mjs` — Matter.js bridge process with HTTP API
-- [ ] `hub/matter/package.json` — `@project-chip/matter-node.js@^0.10`
-- [ ] `hub/matter/.gitignore` — ignore `node_modules/`, `matter-storage/`
-- [ ] `hub/backend/matter_bridge.py` — process manager + HTTP client
-- [ ] `hub/backend/routers/matter.py` — FastAPI router (status, qrcode, start/stop, sync, command webhook)
-- [ ] `hub/backend/routers/projects.py` — `GET/PUT /api/projects/{id}/matter` config endpoints
-- [ ] `hub/backend/routers/data.py` — hook `push_data` to call `matter_bridge.update_state` in background thread
-- [ ] `hub/backend/main.py` — register matter router; start/stop bridge in lifespan
-- [ ] `hub/frontend/index.html` — Matter section in project detail (toggle, device type, label, state map, endpoint ID)
-- [ ] `hub/frontend/static/js/api.js` — `api.matter.*` and `api.projects.getMatter/setMatter`
-- [ ] `hub/frontend/static/js/app.js` — `renderProjectMatter()` called from `openProject()`; hub Matter status view
-- [ ] Update `espai.spec` to include `hub/matter/` in bundle datas
-- [ ] Update Docker `Dockerfile` to run `npm install` in `hub/matter/` during build
-- [ ] Update `RELEASE_CHECKLIST.md` — add Matter smoke test section
+- [x] `hub/matter/bridge.mjs` — Matter.js bridge process with HTTP API
+- [x] `hub/matter/package.json` — `@project-chip/matter-node.js@^0.10`
+- [x] `hub/matter/.gitignore` — ignore `node_modules/`, `matter-storage/`
+- [x] `hub/backend/matter_bridge.py` — process manager + HTTP client
+- [x] `hub/backend/routers/matter.py` — FastAPI router (status, qrcode, start/stop, sync, command webhook)
+- [x] `hub/backend/routers/projects.py` — `GET/PUT /api/projects/{id}/matter` config endpoints
+- [x] `hub/backend/routers/data.py` — hook `push_data` to call `matter_bridge.update_state` in background thread
+- [x] `hub/backend/main.py` — register matter router; start/stop bridge in lifespan
+- [x] `hub/frontend/index.html` — Matter section in project detail (toggle, device type, label, endpoint ID) + hub Matter nav + view
+- [x] `hub/frontend/static/js/api.js` — `api.matter.*` and `api.projects.getMatter/setMatter`
+- [x] `hub/frontend/static/js/app.js` — `_renderProjectMatter()` called from `openProject()`; hub Matter status view with QR code
+- [x] Update `espai.spec` to include `hub/matter/` in bundle datas
+- [x] Update Docker `Dockerfile` to run `npm install` in `hub/matter/` during build
+- [x] Update `RELEASE_CHECKLIST.md` — add Matter smoke test section
 
 ## Milestone 24 — Matter Device Type Mapping and Command Routing — target: v0.4.0
 

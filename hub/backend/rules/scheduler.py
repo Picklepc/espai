@@ -106,6 +106,17 @@ def _loop() -> None:
     log.info("Cron scheduler stopped")
 
 
+def _localise(now: datetime, tz_name: str | None) -> datetime:
+    """Convert UTC now to a local datetime for timezone-aware cron matching."""
+    if not tz_name:
+        return now
+    try:
+        from zoneinfo import ZoneInfo
+        return now.astimezone(ZoneInfo(tz_name))
+    except Exception:
+        return now  # unknown timezone — fall back to UTC
+
+
 def _fire_scheduled_rules(now: datetime) -> None:
     from ..db import get_conn
     from .engine import _execute_action
@@ -119,26 +130,32 @@ def _fire_scheduled_rules(now: datetime) -> None:
     if not rules:
         return
 
-    event = {
-        "event_type": "system.clock",
-        "source":     "scheduler",
-        "payload":    {
-            "minute": now.minute,
-            "hour":   now.hour,
-            "dom":    now.day,
-            "month":  now.month,
-            "dow":    now.weekday(),
-            "iso":    now.isoformat(),
-        },
-    }
-
     for rule in rules:
-        if cron_matches(rule["schedule"], now):
-            log.info("Cron rule %r firing (schedule=%r)", rule["name"], rule["schedule"])
-            try:
-                _execute_action(rule, event)
-            except Exception:
-                log.exception("Cron rule %r action failed", rule["name"])
+        # Apply timezone before cron match
+        check_time = _localise(now, rule.get("schedule_tz"))
+        if not cron_matches(rule["schedule"], check_time):
+            continue
+
+        log.info("Cron rule %r firing (schedule=%r tz=%r)", rule["name"],
+                 rule["schedule"], rule.get("schedule_tz") or "UTC")
+
+        event = {
+            "event_type": "system.clock",
+            "source":     "scheduler",
+            "payload":    {
+                "minute":  check_time.minute,
+                "hour":    check_time.hour,
+                "dom":     check_time.day,
+                "month":   check_time.month,
+                "dow":     check_time.weekday(),
+                "iso":     now.isoformat(),
+                "tz":      rule.get("schedule_tz") or "UTC",
+            },
+        }
+        try:
+            _execute_action(rule, event)
+        except Exception:
+            log.exception("Cron rule %r action failed", rule["name"])
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

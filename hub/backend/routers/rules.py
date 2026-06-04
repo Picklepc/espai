@@ -45,7 +45,8 @@ class RuleCreate(BaseModel):
     action_type: str
     action_config: dict = {}
     enabled: bool = True
-    schedule: str | None = None   # 5-field cron expression, e.g. "0 6 * * *"
+    schedule: str | None = None     # 5-field cron expression, e.g. "0 6 * * *"
+    schedule_tz: str | None = None  # IANA timezone, e.g. "America/Chicago" (default: UTC)
 
 
 class RuleUpdate(BaseModel):
@@ -54,6 +55,7 @@ class RuleUpdate(BaseModel):
     source_filter: str | None = None
     action_config: dict | None = None
     schedule: str | None = None
+    schedule_tz: str | None = None
 
 
 @router.get("/")
@@ -105,13 +107,14 @@ def create_rule(data: RuleCreate):
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO rules
-               (id, name, enabled, event_type, source_filter, action_type, action_config, schedule, created)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+               (id, name, enabled, event_type, source_filter, action_type, action_config,
+                schedule, schedule_tz, created)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (
                 rule_id, data.name.strip(), int(data.enabled),
                 data.event_type.strip(), data.source_filter or None,
                 data.action_type, json.dumps(data.action_config),
-                data.schedule or None, now,
+                data.schedule or None, data.schedule_tz or None, now,
             ),
         )
     return {"id": rule_id, "name": data.name, "created": now}
@@ -130,6 +133,8 @@ def update_rule(rule_id: str, data: RuleUpdate):
         updates.append("action_config=?"); vals.append(json.dumps(data.action_config))
     if data.schedule is not None:
         updates.append("schedule=?"); vals.append(data.schedule or None)
+    if data.schedule_tz is not None:
+        updates.append("schedule_tz=?"); vals.append(data.schedule_tz or None)
     if not updates:
         return {"status": "no-op"}
     vals.append(rule_id)

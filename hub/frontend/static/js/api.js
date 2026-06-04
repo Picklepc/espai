@@ -89,7 +89,13 @@ const api = {
       const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();
       return apiFetch(`/api/projects/${id}/track${q ? "?" + q : ""}`);
     },
-    geofenceCheck: (id, body)     => apiFetch(`/api/projects/${id}/data/geofence-check`, { method: "POST", body: JSON.stringify(body) }),
+    geofenceCheck:  (id, body)    => apiFetch(`/api/projects/${id}/data/geofence-check`, { method: "POST", body: JSON.stringify(body) }),
+    listGeofences:  (id)          => apiFetch(`/api/projects/${id}/geofences`),
+    createGeofence: (id, body)    => apiFetch(`/api/projects/${id}/geofences`, { method: "POST", body: JSON.stringify(body) }),
+    deleteGeofence: (id, gfId)    => apiFetch(`/api/projects/${id}/geofences/${gfId}`, { method: "DELETE" }),
+    // Matter config
+    getMatter:    (id)           => apiFetch(`/api/projects/${id}/matter`),
+    setMatter:    (id, body)     => apiFetch(`/api/projects/${id}/matter`, { method: "PUT", body: JSON.stringify(body) }),
     // Media store
     listMedia:    (id, ct)       => apiFetch(`/api/projects/${id}/media${ct ? "?content_type=" + encodeURIComponent(ct) : ""}`),
     mediaUrl:     (id, fileId)   => `/api/projects/${id}/media/${fileId}`,
@@ -272,5 +278,14 @@ const api = {
     listRuns:      (taskId)     => apiFetch(`/api/agent-bench/runs${taskId ? "?task_id=" + taskId : ""}`),
     install:       (tool)       => apiFetch(`/api/agent-bench/install/${encodeURIComponent(tool)}`,   { method: "POST" }),
     uninstall:     (tool)       => apiFetch(`/api/agent-bench/uninstall/${encodeURIComponent(tool)}`, { method: "POST" }),
+  },
+
+  // Matter bridge
+  matter: {
+    status:      ()     => apiFetch("/api/matter/status"),
+    qrcode:      ()     => apiFetch("/api/matter/qrcode"),
+    start:       ()     => apiFetch("/api/matter/bridge/start",  { method: "POST" }),
+    stop:        ()     => apiFetch("/api/matter/bridge/stop",   { method: "POST" }),
+    sync:        ()     => apiFetch("/api/matter/sync",          { method: "POST" }),
   },
 };

@@ -119,10 +119,12 @@ def _migrate(conn) -> None:
     if "awake_window_s" not in dev_cols:
         conn.execute("ALTER TABLE devices ADD COLUMN awake_window_s INTEGER DEFAULT 5")
 
-    # Add schedule column to rules (cron expression for time-based triggers)
+    # Add schedule / schedule_tz columns to rules (cron + timezone support)
     rules_cols = {row[1] for row in conn.execute("PRAGMA table_info(rules)").fetchall()}
     if "schedule" not in rules_cols:
         conn.execute("ALTER TABLE rules ADD COLUMN schedule TEXT")
+    if "schedule_tz" not in rules_cols:
+        conn.execute("ALTER TABLE rules ADD COLUMN schedule_tz TEXT")
 
     # Add lat/lng columns to project_data for spatial queries (M26c)
     pd_cols = {row[1] for row in conn.execute("PRAGMA table_info(project_data)").fetchall()}
@@ -335,6 +337,24 @@ def init_db() -> None:
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        -- ── Geofence zones ───────────────────────────────────────────────────
+        -- Named polygon zones per project. The data push hook fires
+        -- geofence.enter / geofence.exit events when a device crosses a boundary.
+        CREATE TABLE IF NOT EXISTS geofences (
+            id          TEXT PRIMARY KEY,
+            project_id  TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            device_id   TEXT,           -- NULL = all devices in project
+            polygon     TEXT NOT NULL,  -- JSON: [[lat,lng], ...]
+            event_enter TEXT NOT NULL DEFAULT 'geofence.enter',
+            event_exit  TEXT NOT NULL DEFAULT 'geofence.exit',
+            enabled     INTEGER NOT NULL DEFAULT 1,
+            created     TEXT NOT NULL,
+            last_state  TEXT            -- 'inside' | 'outside' | NULL (first reading)
+        );
+        CREATE INDEX IF NOT EXISTS idx_geofences_pid
+            ON geofences (project_id, enabled);
 
         -- ── Device command queue ─────────────────────────────────────────────
         -- Hub enqueues commands; devices poll and ack. TTL-based expiry.

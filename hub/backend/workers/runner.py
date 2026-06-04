@@ -158,7 +158,28 @@ def _run_job(job_id: str, worker_name: str, inputs: dict) -> None:
         log.error("Failed to mark job %s as running: %s", job_id, e)
         return
 
-    base_env = {**os.environ, "ESPAI_JOB_ID": job_id, "ESPAI_INPUTS": json.dumps(inputs)}
+    from ..config import MEDIA_DIR
+    from .. import config as _cfg
+    hub_url  = os.environ.get("ESPAI_HUB_URL", f"http://localhost:{_cfg.PORT}")
+    base_env = {
+        **os.environ,
+        "ESPAI_JOB_ID":    job_id,
+        "ESPAI_INPUTS":    json.dumps(inputs),
+        "ESPAI_HUB_URL":   hub_url,
+        "ESPAI_MEDIA_DIR": str(MEDIA_DIR),
+    }
+    # Resolve any file_id inputs to local media paths so workers can read files directly
+    proj_id = inputs.get("project_id", "") if isinstance(inputs, dict) else ""
+    for k, v in (inputs.items() if isinstance(inputs, dict) else []):
+        if k.endswith("_file_id") and isinstance(v, str) and v:
+            with get_conn() as _c:
+                mrow = _c.execute(
+                    "SELECT file_path FROM project_media WHERE id=? AND project_id=?",
+                    (v, proj_id),
+                ).fetchone()
+            if mrow:
+                field_key = k[:-8] if k.endswith("_file_id") else k
+                base_env[f"ESPAI_MEDIA_PATH_{field_key.upper()}"] = str(MEDIA_DIR / proj_id / mrow["file_path"])
     env      = build_sandbox_env(worker, policy, base_env)
     pflags   = process_flags(worker)
 

@@ -41,6 +41,7 @@
         <li><a href="#" class="nav-item" data-view="services"            data-tip="All discovered local services — Tasmota, Jellyfin, Home Assistant, cameras, NAS, and more">Services</a></li>
         <li><a href="#" class="nav-item" data-view="agent-bench"         data-tip="AI-assisted development workspace (optional feature)">Agent Bench</a></li>
         <li><a href="#" class="nav-item" data-view="terminal"           data-tip="Full PTY terminal — run builds, Git, serial monitor, and Claude Code directly in the browser">Terminal</a></li>
+        <li><a href="#" class="nav-item" data-view="matter"             data-tip="Matter bridge — expose ESPai projects as Google Home, HomeKit, and Alexa devices">Matter</a></li>
       </ul>
       <div class="sidebar-footer">
         <span class="hub-status" id="hubStatus">Connecting…</span>
@@ -232,6 +233,45 @@
                 data-tip="Create an agent task scoped to this project — paths and criteria are inferred automatically">+ Agent Task</button>
             </div>
             <div id="projTaskList"></div>
+          </div>
+
+          <!-- Matter integration -->
+          <div id="projMatterSection" style="margin-top:28px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+              <p class="section-heading" style="margin:0">Matter</p>
+              <label class="toggle-label" data-tip="Expose this project as a Matter endpoint — appears in Google Home, HomeKit, and Alexa once the hub bridge is commissioned">
+                <input type="checkbox" id="projMatterToggle">
+                <span></span>
+              </label>
+              <span id="projMatterStatus" style="font-size:12px;color:var(--color-text-muted)"></span>
+            </div>
+            <div id="projMatterConfig" style="display:none;font-size:13px">
+              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+                <label style="display:flex;flex-direction:column;gap:4px">
+                  <span style="color:var(--color-text-muted);font-size:11px">Device type</span>
+                  <select id="projMatterDeviceType" class="input-sm"
+                    data-tip="Matter device type — determines which clusters and attributes are exposed to the fabric">
+                    <option value="on_off_plug">On/Off Plug</option>
+                    <option value="dimmable_light">Dimmable Light</option>
+                    <option value="color_light">Color Light</option>
+                    <option value="temperature_sensor">Temperature Sensor</option>
+                    <option value="humidity_sensor">Humidity Sensor</option>
+                    <option value="occupancy_sensor">Occupancy Sensor</option>
+                    <option value="contact_sensor">Contact Sensor</option>
+                  </select>
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px">
+                  <span style="color:var(--color-text-muted);font-size:11px">Display label</span>
+                  <input type="text" id="projMatterLabel" class="input-sm" placeholder="defaults to project name"
+                    data-tip="Name shown in Google Home, HomeKit, or Alexa for this device">
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button class="btn btn-secondary btn-sm" id="btnMatterSave"
+                  data-tip="Save Matter configuration for this project">Save</button>
+                <span id="projMatterEndpointId" style="color:var(--color-text-muted);font-size:11px"></span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -646,6 +686,48 @@
           </div>
 
           <div id="termSurface" class="term-surface"></div>
+        </div>
+      </section>
+
+      <!-- Matter bridge view -->
+      <section class="view" id="view-matter">
+        <header class="view-header">
+          <h1>Matter Bridge</h1>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm"    id="btnMatterStart" data-tip="Start the Matter bridge process — Node.js must be installed">Start Bridge</button>
+            <button class="btn btn-danger  btn-sm"    id="btnMatterStop"  data-tip="Stop the Matter bridge process">Stop Bridge</button>
+            <button class="btn btn-secondary btn-sm"  id="btnMatterSync"  data-tip="Re-register all Matter-enabled projects with the running bridge">↺ Sync</button>
+          </div>
+        </header>
+        <p class="view-desc">Commission the ESPAI hub as a Matter bridge once and every opted-in project appears automatically in Google Home, HomeKit, and Alexa — no Matter stack required on the ESP32.</p>
+
+        <div id="matterStatusPanel" style="margin-bottom:20px">
+          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+            <span id="matterRunBadge" class="badge" style="font-size:13px"></span>
+            <span id="matterCommBadge" class="badge" style="font-size:13px"></span>
+            <span id="matterEndpointCount" style="font-size:12px;color:var(--color-text-muted)"></span>
+          </div>
+        </div>
+
+        <!-- QR code commissioning panel -->
+        <div id="matterQrPanel" style="display:none;margin-bottom:24px">
+          <p class="section-heading">Commission to fabric</p>
+          <p style="font-size:13px;color:var(--color-text-muted);margin:0 0 12px">Scan this QR code in Google Home, HomeKit, or Alexa to add the ESPAI hub to your fabric.</p>
+          <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap">
+            <div id="matterQrSvg"></div>
+            <div>
+              <div style="font-size:12px;color:var(--color-text-muted);margin-bottom:4px">Manual pairing code</div>
+              <div id="matterManualCode" style="font-family:monospace;font-size:18px;letter-spacing:2px"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Registered endpoints -->
+        <div id="matterEndpointSection">
+          <p class="section-heading">Registered endpoints</p>
+          <div id="matterEndpointList" style="display:flex;flex-direction:column;gap:8px">
+            <div class="empty-state">No endpoints — enable Matter on individual projects to register them.</div>
+          </div>
         </div>
       </section>
 
