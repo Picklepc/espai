@@ -36,7 +36,8 @@ SCHEMAS_DIR          = USER_DIR / "schemas"
 AGENTS_DIR           = USER_DIR / "agents"
 AGENT_BENCH_DIR      = USER_DIR / "agent-bench"
 
-DB_PATH = DATA_DIR / "espai.db"
+MEDIA_DIR = DATA_DIR / "media"
+DB_PATH   = DATA_DIR / "espai.db"
 
 HOST = os.environ.get("ESPAI_HOST", "0.0.0.0")
 PORT = int(os.environ.get("ESPAI_PORT", "7888"))

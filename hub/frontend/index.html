@@ -214,6 +214,16 @@
             <div id="projFirmwareList"><div class="empty-state">Loading…</div></div>
           </div>
 
+          <!-- Project media gallery -->
+          <div id="projMediaSection" style="margin-top:24px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+              <p class="section-heading" style="margin:0">Media</p>
+              <span id="projMediaQuota" style="font-size:11px;color:var(--color-text-muted)"></span>
+              <button class="btn btn-secondary btn-sm" id="btnUploadMedia" data-tip="Upload an image, audio clip, or binary file to this project's media store">⬆ Upload</button>
+            </div>
+            <div id="projMediaList" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+          </div>
+
           <!-- Project-scoped agent tasks -->
           <div id="projAgentSection" style="margin-top:28px">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">

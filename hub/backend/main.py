@@ -29,9 +29,11 @@ from .db import get_conn, init_db
 from . import __version__ as HUB_VERSION
 from .discovery.mdns import mdns_manager
 from . import mqtt_publisher, theme_scheduler, ws_broker
-from .routers import admin, agent_bench, caddy, cards, data, design, devices, events, jobs, ota, packages, projects, recipes, rules, services, terminal, workers
+from .routers import admin, agent_bench, caddy, cards, commands, data, design, devices, events, jobs, media, ota, packages, projects, recipes, rules, services, terminal, workers
 from .workers.runner import start_runner, start_services
 from .routers.services import start_health_poller
+from .rules import scheduler as cron_scheduler
+from .routers.commands import expire_stale_commands
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +93,20 @@ async def lifespan(app: FastAPI):
     start_runner()
     start_services()
     start_health_poller()
+    cron_scheduler.start()
+    # Background TTL sweeper for device commands (every 60 s)
+    import threading as _threading
+    def _cmd_ttl_loop():
+        import time as _time
+        while True:
+            try:
+                n = expire_stale_commands()
+                if n:
+                    log.debug("Expired %d stale device commands", n)
+            except Exception:
+                pass
+            _time.sleep(60)
+    _threading.Thread(target=_cmd_ttl_loop, daemon=True, name="ESPAI-cmd-ttl").start()
     # Run blocking zeroconf calls in a thread so they don't deadlock uvicorn's
     # event loop. On some network stacks (e.g. OpenWrt) register_service() times
     # out inside the async context and raises EventLoopBlocked.
@@ -153,6 +169,8 @@ app.include_router(services.router,    prefix="/api/services",      tags=["servi
 app.include_router(caddy.router,       prefix="/api/caddy",         tags=["caddy"])
 app.include_router(terminal.router,    prefix="/api/terminal",     tags=["terminal"])
 app.include_router(data.router,        prefix="/api/projects",     tags=["project-data"])
+app.include_router(media.router,       prefix="/api/projects",     tags=["project-media"])
+app.include_router(commands.router,    prefix="/api/devices",      tags=["commands"])
 
 
 @app.websocket("/api/ws")

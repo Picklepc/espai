@@ -20,7 +20,7 @@ from ..db import get_conn
 
 router = APIRouter()
 
-_VALID_ACTION_TYPES = {"log_event", "run_worker", "webhook"}
+_VALID_ACTION_TYPES = {"log_event", "run_worker", "webhook", "theme_change", "send_command"}
 
 
 def _now() -> str:
@@ -40,11 +40,12 @@ def _row_to_dict(row) -> dict:
 
 class RuleCreate(BaseModel):
     name: str
-    event_type: str
+    event_type: str           # use "system.clock" for scheduled rules
     source_filter: str | None = None
     action_type: str
     action_config: dict = {}
     enabled: bool = True
+    schedule: str | None = None   # 5-field cron expression, e.g. "0 6 * * *"
 
 
 class RuleUpdate(BaseModel):
@@ -52,6 +53,7 @@ class RuleUpdate(BaseModel):
     enabled: bool | None = None
     source_filter: str | None = None
     action_config: dict | None = None
+    schedule: str | None = None
 
 
 @router.get("/")
@@ -70,6 +72,25 @@ def get_rule(rule_id: str):
     return _row_to_dict(row)
 
 
+@router.get("/upcoming")
+def upcoming_fires(limit: int = 5):
+    """Return the next N scheduled fire times for all cron rules."""
+    from ..rules.scheduler import next_fires
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, name, schedule FROM rules WHERE enabled=1 AND schedule IS NOT NULL AND schedule != ''"
+        ).fetchall()
+    result = []
+    for r in rows:
+        result.append({
+            "rule_id": r["id"],
+            "name":    r["name"],
+            "schedule": r["schedule"],
+            "next_fires": next_fires(r["schedule"], limit),
+        })
+    return result
+
+
 @router.post("/")
 def create_rule(data: RuleCreate):
     if data.action_type not in _VALID_ACTION_TYPES:
@@ -83,12 +104,14 @@ def create_rule(data: RuleCreate):
     now = _now()
     with get_conn() as conn:
         conn.execute(
-            """INSERT INTO rules (id, name, enabled, event_type, source_filter, action_type, action_config, created)
-               VALUES (?,?,?,?,?,?,?,?)""",
+            """INSERT INTO rules
+               (id, name, enabled, event_type, source_filter, action_type, action_config, schedule, created)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (
                 rule_id, data.name.strip(), int(data.enabled),
                 data.event_type.strip(), data.source_filter or None,
-                data.action_type, json.dumps(data.action_config), now,
+                data.action_type, json.dumps(data.action_config),
+                data.schedule or None, now,
             ),
         )
     return {"id": rule_id, "name": data.name, "created": now}
@@ -105,6 +128,8 @@ def update_rule(rule_id: str, data: RuleUpdate):
         updates.append("source_filter=?"); vals.append(data.source_filter or None)
     if data.action_config is not None:
         updates.append("action_config=?"); vals.append(json.dumps(data.action_config))
+    if data.schedule is not None:
+        updates.append("schedule=?"); vals.append(data.schedule or None)
     if not updates:
         return {"status": "no-op"}
     vals.append(rule_id)

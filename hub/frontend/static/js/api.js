@@ -32,6 +32,10 @@ const api = {
     patch:  (id, body) => apiFetch(`/api/devices/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
     scan:   (subnet) => apiFetch("/api/devices/scan" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""), { method: "POST" }),
     browse: (subnet) => apiFetch("/api/devices/browse" + (subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""), { method: "POST" }),
+    // Command channel
+    sendCommand:    (id, body) => apiFetch(`/api/devices/${encodeURIComponent(id)}/commands`, { method: "POST", body: JSON.stringify(body) }),
+    commands:       (id, status) => apiFetch(`/api/devices/${encodeURIComponent(id)}/commands${status ? "?status=" + status : ""}`),
+    cancelCommand:  (id, cmdId) => apiFetch(`/api/devices/${encodeURIComponent(id)}/commands/${cmdId}`, { method: "DELETE" }),
   },
 
   // Projects
@@ -71,8 +75,18 @@ const api = {
       const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();
       return apiFetch(`/api/projects/${id}/data${q ? "?" + q : ""}`);
     },
-    dataPush:    (id, body)       => apiFetch(`/api/projects/${id}/data`, { method: "POST", body: JSON.stringify(body) }),
-    dataClear:   (id)             => apiFetch(`/api/projects/${id}/data`, { method: "DELETE" }),
+    dataPush:      (id, body)     => apiFetch(`/api/projects/${id}/data`, { method: "POST", body: JSON.stringify(body) }),
+    dataClear:     (id)           => apiFetch(`/api/projects/${id}/data`, { method: "DELETE" }),
+    dataAggregate: (id, params)   => {
+      const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();
+      return apiFetch(`/api/projects/${id}/data/aggregate${q ? "?" + q : ""}`);
+    },
+    // Media store
+    listMedia:    (id, ct)       => apiFetch(`/api/projects/${id}/media${ct ? "?content_type=" + encodeURIComponent(ct) : ""}`),
+    mediaUrl:     (id, fileId)   => `/api/projects/${id}/media/${fileId}`,
+    deleteMedia:  (id, fileId)   => apiFetch(`/api/projects/${id}/media/${fileId}`, { method: "DELETE" }),
+    mediaQuota:   (id)           => apiFetch(`/api/projects/${id}/media/quota`),
+    uploadMedia:  (id, formData) => apiFetch(`/api/projects/${id}/media`, { method: "POST", body: formData, headers: {} }),
   },
 
   // Local Network Services
@@ -192,11 +206,12 @@ const api = {
 
   // Rules
   rules: {
-    list:   ()           => apiFetch("/api/rules/"),
-    get:    (id)         => apiFetch(`/api/rules/${id}`),
-    create: (body)       => apiFetch("/api/rules/",   { method: "POST",   body: JSON.stringify(body) }),
-    update: (id, body)   => apiFetch(`/api/rules/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-    delete: (id)         => apiFetch(`/api/rules/${id}`, { method: "DELETE" }),
+    list:     ()           => apiFetch("/api/rules/"),
+    get:      (id)         => apiFetch(`/api/rules/${id}`),
+    create:   (body)       => apiFetch("/api/rules/",   { method: "POST",   body: JSON.stringify(body) }),
+    update:   (id, body)   => apiFetch(`/api/rules/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    delete:   (id)         => apiFetch(`/api/rules/${id}`, { method: "DELETE" }),
+    upcoming: (n)          => apiFetch(`/api/rules/upcoming${n ? "?limit=" + n : ""}`),
   },
 
   // Admin

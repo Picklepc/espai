@@ -914,6 +914,7 @@ Rating methodology: Start at 10.0. Deduct per-gap based on how many moonshots it
 | Date | Version | Score | Blocking Issues |
 |------|---------|-------|----------------|
 | 2026-06-04 | 0.3.5 | **4.8/10** | Binary/file upload from device missing (-2.0); no hub→device command channel (-1.5); no spatial/GPS data model (-0.8); no scheduled recipe triggers/cron (-0.4); no bulk offline upload (-0.3); no data aggregation API (-0.2) |
+| 2026-06-04 | 0.4.0 | **8.0/10** | No spatial/GPS data model (-0.8); no bulk offline upload (-0.3); no rule rate limiting (-0.1); no ESP32 firmware command poll loop yet (-0.1); M25a binary upload, M25b command channel, M26a cron scheduling, M26b aggregation API all shipped |
 
 ### Gap Score Breakdown (0.3.5)
 

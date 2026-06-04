@@ -119,6 +119,11 @@ def _migrate(conn) -> None:
     if "awake_window_s" not in dev_cols:
         conn.execute("ALTER TABLE devices ADD COLUMN awake_window_s INTEGER DEFAULT 5")
 
+    # Add schedule column to rules (cron expression for time-based triggers)
+    rules_cols = {row[1] for row in conn.execute("PRAGMA table_info(rules)").fetchall()}
+    if "schedule" not in rules_cols:
+        conn.execute("ALTER TABLE rules ADD COLUMN schedule TEXT")
+
 
 def init_db() -> None:
     with get_conn() as conn:
@@ -317,6 +322,37 @@ def init_db() -> None:
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        -- ── Device command queue ─────────────────────────────────────────────
+        -- Hub enqueues commands; devices poll and ack. TTL-based expiry.
+        CREATE TABLE IF NOT EXISTS device_commands (
+            id           TEXT PRIMARY KEY,
+            device_id    TEXT NOT NULL,
+            command_type TEXT NOT NULL,       -- reboot | set_config | user_action | run_ota_check
+            payload      TEXT,               -- JSON
+            status       TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered | acked | expired | cancelled
+            created      TEXT NOT NULL,
+            ttl_seconds  INTEGER NOT NULL DEFAULT 300,
+            delivered_at TEXT,
+            acked_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_commands_device
+            ON device_commands (device_id, status, created DESC);
+
+        -- ── Project media store ───────────────────────────────────────────────
+        -- Binary files (images, audio, etc.) uploaded by devices or hub workers.
+        CREATE TABLE IF NOT EXISTS project_media (
+            id           TEXT PRIMARY KEY,
+            project_id   TEXT NOT NULL,
+            filename     TEXT NOT NULL,
+            content_type TEXT,
+            size_bytes   INTEGER NOT NULL DEFAULT 0,
+            file_path    TEXT NOT NULL,      -- relative to MEDIA_DIR/{project_id}/
+            created      TEXT NOT NULL,
+            metadata     TEXT               -- JSON: device_id, tags, etc.
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_media_pid
+            ON project_media (project_id, created DESC);
 
         -- ── Project nodes ─────────────────────────────────────────────────────
         -- Structured node membership with per-node roles and labels.

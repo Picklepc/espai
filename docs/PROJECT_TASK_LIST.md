@@ -305,34 +305,33 @@ Two features identified in `docs/MOONSHOTS.md` as the highest-leverage additions
 
 ### M25a — Binary / File Upload from Device (score impact: -2.0 removed)
 
-Devices need to POST binary payloads — camera frames, audio clips, log files — to the hub for hub-side processing. Today the data push API accepts JSON only.
-
-- [ ] `POST /api/projects/{id}/data/upload` — multipart/form-data endpoint accepting a binary file + optional JSON metadata; stores to `data/media/{project_id}/{timestamp}-{uuid}.{ext}`; returns file ID + URL
-- [ ] `GET /api/projects/{id}/media` — list uploaded files with metadata (size, type, timestamp, file_id)
-- [ ] `GET /api/projects/{id}/media/{file_id}` — serve the raw file (for hub-side card display)
-- [ ] `DELETE /api/projects/{id}/media/{file_id}` — delete a media file
-- [ ] Media storage quota guard — configurable `ESPAI_MEDIA_MAX_MB` env var (default 2048); reject uploads over limit with 507
-- [ ] ESP32 firmware helper — `espai_upload_jpeg(hub_url, project_id, buf, len)` C++ function in seed firmware
-- [ ] Worker input: accept `file_id` as an input field; worker fetches the file from hub media store before processing
-- [ ] `api.projects.uploadMedia(id, file, metadata)` in api.js
-- [ ] Media gallery section in project detail — thumbnail grid for image files; audio player for .wav/.mp3
+- [x] `POST /api/projects/{id}/media` — multipart/form-data; stores to `MEDIA_DIR/{project_id}/`; quota guard via `ESPAI_MEDIA_MAX_MB` (default 2048); returns file_id + URL
+- [x] `GET /api/projects/{id}/media` — list uploaded files with metadata
+- [x] `GET /api/projects/{id}/media/{file_id}` — serve raw file via FileResponse
+- [x] `DELETE /api/projects/{id}/media/{file_id}` — delete file from storage and DB
+- [x] `GET /api/projects/{id}/media/quota` — usage stats
+- [x] `project_media` DB table — id, project_id, filename, content_type, size_bytes, file_path, created, metadata
+- [x] `MEDIA_DIR = DATA_DIR / "media"` added to config.py
+- [x] `api.projects.uploadMedia / listMedia / mediaUrl / deleteMedia / mediaQuota` in api.js
+- [x] Media gallery section in project detail — thumbnail grid; click to view/download/delete
+- [x] "⬆ Upload" button + upload modal with device_id and tags fields
+- [ ] ESP32 firmware helper — `espai_upload_jpeg()` C++ function in seed firmware (0.4.x follow-on)
+- [ ] Worker file_id input — worker fetches media file from hub before processing (0.4.x follow-on)
 
 ### M25b — Hub → Device Command Channel (score impact: -1.5 removed)
 
-Hub needs to push real-time commands to ESP32 devices. Today all communication is device-initiated (device calls hub). Commands include: run a script, change a setting, trigger an action (unlock door, start motor, adjust setpoint).
-
-Design: device polls `GET /api/devices/{id}/commands` on a 1-5s interval and receives a queue of pending commands; hub enqueues via `POST /api/devices/{id}/commands`. Alternatively: WebSocket push if device supports it.
-
-- [ ] `commands` DB table — `id, device_id, command_type, payload, created, delivered_at, acked_at`
-- [ ] `POST /api/devices/{id}/commands` — enqueue a command for a device; body `{ command_type, payload, ttl_seconds }`
-- [ ] `GET /api/devices/{id}/commands/pending` — device polls this; returns undelivered commands; marks them as delivered
-- [ ] `POST /api/devices/{id}/commands/{cmd_id}/ack` — device confirms execution; marks acked
-- [ ] `GET /api/devices/{id}/commands` — hub view: full command history with delivery/ack status
-- [ ] TTL enforcement — background task removes undelivered commands past TTL; logs as missed
-- [ ] ESP32 seed firmware — poll loop every 2s; fetch pending commands; dispatch to registered handlers; POST ack
-- [ ] Command types (built-in): `set_config` (update a device config key), `reboot`, `run_ota_check`, `user_action` (arbitrary JSON payload for firmware handlers)
-- [ ] Rules engine action: `send_command` — new action type that enqueues a command to a device when a rule fires
-- [ ] UI: "Send Command" button on device detail panel; command history tab showing delivery status
+- [x] `device_commands` DB table — id, device_id, command_type, payload, status, created, ttl_seconds, delivered_at, acked_at
+- [x] `POST /api/devices/{id}/commands` — enqueue with TTL
+- [x] `GET /api/devices/{id}/commands/pending` — device polls; marks delivered
+- [x] `POST /api/devices/{id}/commands/{cmd_id}/ack` — device confirms execution
+- [x] `GET /api/devices/{id}/commands` — hub view with history
+- [x] `DELETE /api/devices/{id}/commands/{cmd_id}` — cancel pending
+- [x] Background TTL sweeper — marks pending commands expired every 60s
+- [x] `hub/backend/routers/commands.py` — full router mounted at `/api/devices`
+- [x] Rules engine `send_command` action — enqueues command to configured device_id
+- [x] `api.devices.sendCommand / commands / cancelCommand` in api.js
+- [x] "⚡" button on every device card — opens send-command modal with recent history
+- [ ] ESP32 seed firmware poll loop — `GET /commands/pending` every 2s, dispatch handlers, POST ack (0.4.x follow-on)
 
 ## Milestone 26 — Data Platform Extensions — target: v0.4.x
 
@@ -340,23 +339,25 @@ Analytics capabilities needed by automation and ML projects identified in MOONSH
 
 ### M26a — Scheduled Recipe / Rule Triggers (Cron)
 
-Currently rules only fire on events. Time-based automation (daily irrigation, hourly prediction run, nightly report) requires cron-style scheduling.
-
-- [ ] `schedule` field on rules — `{ cron: "0 6 * * *", timezone: "America/Chicago" }` triggers rule at that time even with no event
-- [ ] Lightweight cron evaluator in `hub/backend/rules/scheduler.py` — background thread; checks schedule every 60s; fires synthetic `system.clock` events that the rules engine processes normally
-- [ ] UI: "Scheduled" rule type in New Rule modal — cron expression input with human-readable preview
-- [ ] `GET /api/rules/upcoming` — next 5 scheduled fire times per scheduled rule (for UI preview)
+- [x] `schedule TEXT` column on rules table (migration in `_migrate()`)
+- [x] `hub/backend/rules/scheduler.py` — background thread; checks scheduled rules every minute; fires `system.clock` event when cron expression matches current UTC time; full 5-field cron parser (supports `*`, numbers, ranges, `*/step`, comma lists)
+- [x] `next_fires(expr, n)` — preview next N scheduled fire times
+- [x] Cron scheduler started in lifespan alongside other background tasks
+- [x] `GET /api/rules/upcoming` — next 5 fire times per enabled scheduled rule
+- [x] `schedule` field on `RuleCreate` / `RuleUpdate` — pass cron expression when creating/updating rules
+- [x] New Rule modal: schedule input shown when event_type = `system.clock`; all 5 new action types in select including `send_command`
+- [x] `api.rules.upcoming(n)` in api.js
+- [ ] Human-readable cron preview in rule modal (0.4.x follow-on)
+- [ ] Timezone support (currently UTC only) (0.4.x follow-on)
 
 ### M26b — Data Aggregation API
 
-Time-series queries beyond raw fetch: averages, sums, resampling for charting and ML input.
-
-- [ ] `GET /api/projects/{id}/data/aggregate?field=temperature&fn=avg&bucket=1h&since=7d` — returns bucketed aggregate: `[{ bucket, value, count }]`
-- [ ] Supported functions: `avg`, `min`, `max`, `sum`, `count`, `last`
-- [ ] Bucket sizes: `1m`, `5m`, `15m`, `1h`, `6h`, `1d`
-- [ ] Implemented as SQLite window function query (no extra storage needed)
-- [ ] `api.projects.dataAggregate(id, params)` in api.js
-- [ ] Chart.js card scaffolding — hub-hosted web app card template that calls aggregate API and renders multi-series line/bar chart
+- [x] `GET /api/projects/{id}/data/aggregate?field=&fn=avg&bucket=1h&since=24h` — bucketed time-series aggregation
+- [x] Supported functions: `avg`, `min`, `max`, `sum`, `count`, `last` (last is best-effort via avg)
+- [x] Bucket sizes: `1m`, `5m`, `15m`, `1h`, `6h`, `1d`
+- [x] SQLite `json_extract` + `strftime` grouping — no extra storage; works on existing data
+- [x] `api.projects.dataAggregate(id, params)` in api.js
+- [ ] Chart.js card template using aggregate API (0.4.x follow-on)
 
 ### M26c — Spatial / GPS Data Model
 

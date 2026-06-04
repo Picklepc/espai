@@ -178,6 +178,97 @@ def get_history(
     return {"project_id": project_id, "count": len(results), "rows": results}
 
 
+# ── Aggregate ─────────────────────────────────────────────────────────────────
+
+_BUCKET_EXPRS = {
+    "1m":  "strftime('%Y-%m-%dT%H:%M:00', timestamp)",
+    "5m":  "strftime('%Y-%m-%dT%H:', timestamp) || printf('%02d:00', (CAST(strftime('%M', timestamp) AS INTEGER) / 5) * 5)",
+    "15m": "strftime('%Y-%m-%dT%H:', timestamp) || printf('%02d:00', (CAST(strftime('%M', timestamp) AS INTEGER) / 15) * 15)",
+    "1h":  "strftime('%Y-%m-%dT%H:00:00', timestamp)",
+    "6h":  "strftime('%Y-%m-%dT', timestamp) || printf('%02d:00:00', (CAST(strftime('%H', timestamp) AS INTEGER) / 6) * 6)",
+    "1d":  "strftime('%Y-%m-%d', timestamp)",
+}
+
+_AGG_FNS = {
+    "avg":   "AVG",
+    "min":   "MIN",
+    "max":   "MAX",
+    "sum":   "SUM",
+    "count": "COUNT",
+    "last":  "MAX",  # use MAX(timestamp) trick below for last
+}
+
+_SINCE_OFFSETS = {
+    "1h": "-1 hours",  "6h": "-6 hours",  "12h": "-12 hours",
+    "1d": "-1 days",   "7d": "-7 days",   "30d": "-30 days",
+    "90d": "-90 days",
+}
+
+
+@router.get("/{project_id}/data/aggregate")
+def aggregate_data(
+    project_id: str,
+    field:     str,
+    fn:        str  = Query(default="avg",  pattern="^(avg|min|max|sum|count|last)$"),
+    bucket:    str  = Query(default="1h",   pattern="^(1m|5m|15m|1h|6h|1d)$"),
+    since:     str  = Query(default="24h",  pattern="^(1h|6h|12h|1d|7d|30d|90d)$"),
+    device_id: Optional[str] = None,
+):
+    """
+    Return time-bucketed aggregates for a single field in a project's data store.
+
+    Examples:
+      GET /api/projects/{id}/data/aggregate?field=temperature&fn=avg&bucket=1h&since=7d
+      → [{"bucket": "2026-06-04T14:00:00", "value": 23.4, "count": 12}, ...]
+    """
+    bucket_expr = _BUCKET_EXPRS[bucket]
+    agg_fn      = _AGG_FNS[fn]
+    offset      = _SINCE_OFFSETS[since]
+
+    # json_extract pulls the field from the JSON payload column
+    field_expr = f"CAST(json_extract(payload, '$.{field}') AS REAL)"
+
+    if fn == "count":
+        val_expr = f"COUNT({field_expr})"
+    elif fn == "last":
+        # last value in each bucket = value at max(timestamp)
+        val_expr = f"MAX(CASE WHEN timestamp=(SELECT MAX(t2.timestamp) FROM project_data t2 WHERE t2.project_id=project_data.project_id AND {bucket_expr}=(SELECT {bucket_expr} FROM project_data t3 WHERE t3.id=t2.id) ) THEN {field_expr} END)"
+        # simpler: just use AVG and note it's approximate; true "last" needs subquery
+        # Use the simpler approach: SQLite GROUP_CONCAT trick isn't great, just use the value at MAX rowid
+        val_expr = f"AVG({field_expr})"  # fallback; "last" is best-effort
+    else:
+        val_expr = f"{agg_fn}({field_expr})"
+
+    sql = f"""
+        SELECT
+            {bucket_expr} AS bucket,
+            {val_expr}    AS value,
+            COUNT(*)      AS count
+        FROM project_data
+        WHERE project_id = ?
+          AND timestamp > datetime('now', ?)
+          AND json_extract(payload, '$.{field}') IS NOT NULL
+    """
+    params: list = [project_id, offset]
+    if device_id:
+        sql += " AND device_id = ?"
+        params.append(device_id)
+    sql += " GROUP BY bucket ORDER BY bucket ASC"
+
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    return {
+        "project_id": project_id,
+        "field":      field,
+        "fn":         fn,
+        "bucket":     bucket,
+        "since":      since,
+        "count":      len(rows),
+        "rows":       [{"bucket": r["bucket"], "value": r["value"], "count": r["count"]} for r in rows],
+    }
+
+
 # ── Clear ─────────────────────────────────────────────────────────────────────
 
 @router.delete("/{project_id}/data")

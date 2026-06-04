@@ -94,6 +94,27 @@ def _execute_action(rule: dict, event: dict) -> None:
             theme_scheduler.trigger_event_rule(rule, event)
             _touch_triggered(rule["id"], now)
 
+        elif action_type == "send_command":
+            device_id    = config.get("device_id", "")
+            command_type = config.get("command_type", "user_action")
+            payload      = config.get("payload", {})
+            ttl          = int(config.get("ttl_seconds", 300))
+            if not device_id:
+                log.warning("Rule %r: send_command has no device_id", rule["name"])
+                return
+            cmd_id = secrets.token_hex(8)
+            with get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO device_commands
+                       (id, device_id, command_type, payload, status, created, ttl_seconds)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (cmd_id, device_id, command_type,
+                     json.dumps(payload), "pending", now, ttl),
+                )
+            log.info("Rule %r: queued command %s (%s) for device %r",
+                     rule["name"], cmd_id, command_type, device_id)
+            _touch_triggered(rule["id"], now)
+
         else:
             log.warning("Rule %r: unknown action_type %r", rule["name"], action_type)
 

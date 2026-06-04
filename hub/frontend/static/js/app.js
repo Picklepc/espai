@@ -1048,6 +1048,11 @@ function _renderDeviceCards(listEl, devices, onRefresh) {
     };
     actions.appendChild(sleepBtn);
 
+    const cmdBtn = el("button", "btn btn-secondary btn-sm", "⚡");
+    cmdBtn.dataset.tip = "Send a command to this device — reboot, config update, or custom action";
+    cmdBtn.onclick = (e) => { e.stopPropagation(); _openDeviceCommandModal(d); };
+    actions.appendChild(cmdBtn);
+
     const delBtn = el("button", "btn btn-danger btn-sm", "✕");
     delBtn.dataset.tip = "Remove this device from the hub";
     delBtn.onclick = async (e) => {
@@ -1060,6 +1065,65 @@ function _renderDeviceCards(listEl, devices, onRefresh) {
     card.appendChild(actions);
     listEl.appendChild(card);
   }
+}
+
+async function _openDeviceCommandModal(device) {
+  const deviceLabel = device.name || device.id;
+  let recent = [];
+  try { recent = (await api.devices.commands(device.id)).slice(0, 8); } catch (_) {}
+
+  const historyHtml = recent.length ? recent.map(c => {
+    const statusColor = { acked: "var(--color-success)", delivered: "var(--color-accent)",
+                          expired: "var(--color-danger)", cancelled: "var(--color-text-muted)" }[c.status] || "var(--color-text-muted)";
+    return `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--color-card-border);font-size:12px">
+      <span style="color:${statusColor};min-width:70px">${c.status}</span>
+      <span style="font-family:monospace;color:var(--color-accent)">${c.command_type}</span>
+      <span style="flex:1;color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.payload ? JSON.stringify(JSON.parse(c.payload || "{}")).slice(0,40) : ""}</span>
+      <span style="color:var(--color-text-muted)">${timeAgo(c.created)}</span>
+    </div>`;
+  }).join("") : '<div class="empty-state" style="font-size:12px">No commands sent yet.</div>';
+
+  openModal(`Commands — ${deviceLabel}`, `
+    <div class="form-field">
+      <label data-tip="Type of command to send to the device">Command type</label>
+      <select id="cmdType" style="width:100%">
+        <option value="reboot">reboot — restart the device</option>
+        <option value="run_ota_check">run_ota_check — check for firmware update</option>
+        <option value="set_config">set_config — update a config value</option>
+        <option value="user_action" selected>user_action — custom payload</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label data-tip="JSON payload sent with the command — e.g. {\"key\":\"led_brightness\",\"value\":80}">Payload (JSON, optional)</label>
+      <input type="text" id="cmdPayload" placeholder="{}" style="width:100%;font-family:monospace">
+    </div>
+    <div class="form-field">
+      <label data-tip="How long the command stays pending before expiring if the device doesn't poll">TTL (seconds)</label>
+      <input type="number" id="cmdTtl" value="300" min="10" max="86400" style="width:100px">
+    </div>
+    <p class="section-heading" style="margin-top:16px">Recent Commands</p>
+    <div style="max-height:160px;overflow-y:auto">${historyHtml}</div>
+  `, [
+    { label: "Send Command", cls: "btn btn-primary", action: async () => {
+      const command_type = document.getElementById("cmdType").value;
+      const payloadRaw   = document.getElementById("cmdPayload").value.trim() || "{}";
+      const ttl_seconds  = parseInt(document.getElementById("cmdTtl").value, 10) || 300;
+      let payload = {};
+      try { payload = JSON.parse(payloadRaw); } catch { alert("Invalid JSON payload"); return; }
+      try {
+        await api.devices.sendCommand(device.id, { command_type, payload, ttl_seconds });
+        closeModal();
+        openModal("Command Queued", `
+          <p>Command <strong>${command_type}</strong> queued for <strong>${deviceLabel}</strong>.</p>
+          <p style="font-size:12px;color:var(--color-text-muted);margin-top:8px">
+            The device will receive it on its next poll (firmware must call
+            <code>GET /api/devices/{id}/commands/pending</code> every 1-5 s).
+          </p>
+        `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+      } catch (err) { alert("Error: " + err.message); }
+    }},
+    { label: "Close", cls: "btn btn-secondary", action: closeModal },
+  ], { wide: true });
 }
 
 async function loadFleet() {
@@ -1733,6 +1797,105 @@ async function openProject(p) {
   await renderProjectDevices(p, linkedIds);
   renderProjectFirmware(p, linkedIds);
   _loadProjectApprovalMode(p.id);
+  _loadProjectMedia(p.id);
+
+  // Wire Upload Media button
+  const uploadBtn = document.getElementById("btnUploadMedia");
+  if (uploadBtn) uploadBtn.onclick = () => _openMediaUploadModal(p.id);
+}
+
+// ── Project media gallery ──────────────────────────────────────────────────────
+
+async function _loadProjectMedia(projectId) {
+  const listEl  = document.getElementById("projMediaList");
+  const quotaEl = document.getElementById("projMediaQuota");
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="empty-state" style="font-size:12px">Loading…</div>';
+  try {
+    const [{ files }, quota] = await Promise.all([
+      api.projects.listMedia(projectId),
+      api.projects.mediaQuota(projectId).catch(() => null),
+    ]);
+    if (quotaEl && quota) {
+      quotaEl.textContent = `${quota.used_mb} MB / ${quota.quota_mb} MB`;
+    }
+    if (!files.length) {
+      listEl.innerHTML = '<div class="empty-state" style="font-size:12px">No media uploaded yet.</div>';
+      return;
+    }
+    listEl.innerHTML = "";
+    for (const f of files) {
+      const tile = el("div", "media-tile");
+      const isImage = (f.content_type || "").startsWith("image/");
+      const url = api.projects.mediaUrl(projectId, f.id);
+      tile.dataset.tip = `${f.filename} · ${formatBytes(f.size_bytes)} · ${timeAgo(f.created)}`;
+      tile.innerHTML = isImage
+        ? `<img src="${url}" alt="${f.filename}" style="width:100%;height:100%;object-fit:cover;border-radius:5px">`
+        : `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;font-size:10px;color:var(--color-text-muted);gap:4px"><span style="font-size:22px">📎</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:90%">${f.filename}</span></div>`;
+      tile.onclick = () => _openMediaViewModal(projectId, f, url);
+      listEl.appendChild(tile);
+    }
+  } catch (_) {
+    listEl.innerHTML = '<div class="empty-state" style="font-size:12px">Could not load media.</div>';
+  }
+}
+
+function _openMediaViewModal(projectId, file, url) {
+  const isImage = (file.content_type || "").startsWith("image/");
+  const content = isImage
+    ? `<img src="${url}" alt="${file.filename}" style="max-width:100%;max-height:400px;border-radius:6px;display:block;margin:0 auto">`
+    : `<div class="empty-state"><a href="${url}" download="${file.filename}" class="btn btn-secondary btn-sm">⬇ Download ${file.filename}</a></div>`;
+  openModal(file.filename, `
+    ${content}
+    <div style="font-size:11px;color:var(--color-text-muted);margin-top:10px;display:flex;gap:16px">
+      <span>${formatBytes(file.size_bytes)}</span>
+      <span>${file.content_type || "unknown type"}</span>
+      <span>${file.created?.slice(0,19).replace("T"," ")} UTC</span>
+    </div>
+  `, [
+    { label: "⬇ Download", cls: "btn btn-secondary", action: () => { const a = document.createElement("a"); a.href = url; a.download = file.filename; a.click(); } },
+    { label: "🗑 Delete", cls: "btn btn-danger", action: async () => {
+      if (!confirm(`Delete "${file.filename}"?`)) return;
+      await api.projects.deleteMedia(projectId, file.id).catch(err => alert(err.message));
+      closeModal();
+      _loadProjectMedia(projectId);
+    }},
+    { label: "Close", cls: "btn btn-secondary", action: closeModal },
+  ]);
+}
+
+function _openMediaUploadModal(projectId) {
+  openModal("Upload Media", `
+    <div class="form-field">
+      <label data-tip="Image, audio clip, or any binary file — max 50 MB per file">File</label>
+      <input type="file" id="mediaFileInput" style="width:100%">
+    </div>
+    <div class="form-field">
+      <label data-tip="Optional: device ID that produced this file">Device ID (optional)</label>
+      <input type="text" id="mediaDeviceId" placeholder="e.g. node-abc123" style="width:100%">
+    </div>
+    <div class="form-field">
+      <label data-tip="Comma-separated tags for filtering">Tags (optional)</label>
+      <input type="text" id="mediaTags" placeholder="e.g. camera, motion" style="width:100%">
+    </div>
+  `, [
+    { label: "Upload", cls: "btn btn-primary", action: async () => {
+      const fileInput = document.getElementById("mediaFileInput");
+      if (!fileInput.files.length) { alert("Select a file first."); return; }
+      const fd = new FormData();
+      fd.append("file", fileInput.files[0]);
+      const deviceId = document.getElementById("mediaDeviceId").value.trim();
+      const tags     = document.getElementById("mediaTags").value.trim();
+      if (deviceId) fd.append("device_id", deviceId);
+      if (tags) fd.append("tags", tags);
+      try {
+        await api.projects.uploadMedia(projectId, fd);
+        closeModal();
+        _loadProjectMedia(projectId);
+      } catch (err) { alert("Upload failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
 }
 
 const _NODE_ROLES = ["coordinator","sensor","actuator","gateway","observer","hub-agent","relay","node"];
@@ -4169,34 +4332,51 @@ async function loadRules() {
 document.getElementById("btnNewRule").onclick = () => {
   openModal("New Automation Rule", `
     <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
-      Rules fire automatically when matching events arrive from a device or the hub.
-      Use them to run workers, call webhooks, or change the UI theme in response to
-      sensor readings, alerts, or state changes.
+      Rules fire when matching events arrive from a device or hub, or on a cron schedule.
     </p>
     <div class="form-field">
       <label data-tip="A descriptive label shown in the rule list">Rule Name</label>
       <input type="text" id="ruleNameInput" placeholder="e.g. Alert on motion detected">
     </div>
     <div class="form-field">
-      <label data-tip="Matches the event_type field exactly. Common types: device.checkin, device.motion, device.alert, sensor.reading, firmware.update">Trigger Event Type</label>
+      <label data-tip="Use 'system.clock' for scheduled rules. Common event types: device.checkin, device.motion, sensor.reading">Trigger Event Type</label>
       <input type="text" id="ruleEventType" placeholder="e.g. device.motion">
     </div>
+    <div class="form-field" id="ruleScheduleField" style="display:none">
+      <label data-tip="5-field cron expression (UTC): minute hour day-of-month month day-of-week. Examples: '0 6 * * *' = daily 6am, '*/15 * * * *' = every 15 min">Cron Schedule (UTC)</label>
+      <input type="text" id="ruleScheduleInput" placeholder="0 6 * * *" style="font-family:monospace">
+      <div id="ruleSchedulePreview" style="font-size:11px;color:var(--color-accent);margin-top:4px"></div>
+    </div>
     <div class="form-field">
-      <label data-tip="Only fire when the event source matches this value — usually a device ID or device name. Leave blank to match events from any device.">Source Filter (optional — blank matches any)</label>
+      <label data-tip="Only fire when the event source matches — usually a device ID. Leave blank to match any source.">Source Filter (optional)</label>
       <input type="text" id="ruleSourceFilter" placeholder="e.g. kitchen-sensor-abc123">
     </div>
     <div class="form-field">
       <label data-tip="What to do when this rule fires">Action</label>
       <select id="ruleActionType">
-        <option value="log_event">Log Event — record in event log, no side effects</option>
+        <option value="log_event">Log Event — record in event log</option>
         <option value="run_worker">Run Worker — execute a hub code module</option>
         <option value="webhook">Webhook POST — call an external HTTP endpoint</option>
-        <option value="theme_change">Theme Override — temporarily change the UI appearance</option>
+        <option value="send_command">Send Command — push a command to a device</option>
+        <option value="theme_change">Theme Override — temporarily change UI appearance</option>
       </select>
     </div>
     <div class="form-field" id="ruleActionConfigField">
       <label id="ruleActionConfigLabel">Worker Name</label>
       <input type="text" id="ruleActionConfig" placeholder="opencv-motion-tagger">
+    </div>
+    <div class="form-field hidden" id="ruleCmdConfigField">
+      <label data-tip="Device ID to send the command to">Device ID</label>
+      <input type="text" id="ruleCmdDeviceId" placeholder="node-abc123" style="width:100%">
+      <label style="margin-top:8px" data-tip="Command type">Command Type</label>
+      <select id="ruleCmdType" style="width:100%">
+        <option value="user_action">user_action</option>
+        <option value="reboot">reboot</option>
+        <option value="set_config">set_config</option>
+        <option value="run_ota_check">run_ota_check</option>
+      </select>
+      <label style="margin-top:8px" data-tip="JSON payload for the command">Payload (JSON)</label>
+      <input type="text" id="ruleCmdPayload" placeholder="{}" style="font-family:monospace;width:100%">
     </div>
     <div class="form-field hidden" id="ruleThemeConfigField">
       <label>Token Overrides (JSON)</label>
@@ -4208,41 +4388,70 @@ document.getElementById("btnNewRule").onclick = () => {
     </div>
   `, [
     { label: "Create Rule", cls: "btn btn-primary", action: async () => {
-      const name        = document.getElementById("ruleNameInput").value.trim();
-      const event_type  = document.getElementById("ruleEventType").value.trim();
+      const name         = document.getElementById("ruleNameInput").value.trim();
+      const event_type   = document.getElementById("ruleEventType").value.trim();
       const source_filter = document.getElementById("ruleSourceFilter").value.trim() || null;
-      const action_type = document.getElementById("ruleActionType").value;
-      const cfgRaw      = document.getElementById("ruleActionConfig").value.trim();
-      if (!name || !event_type) return;
+      const action_type  = document.getElementById("ruleActionType").value;
+      const cfgRaw       = document.getElementById("ruleActionConfig").value.trim();
+      const schedule     = document.getElementById("ruleScheduleInput")?.value.trim() || null;
+      if (!name || !event_type) { alert("Rule name and event type are required."); return; }
       let action_config = {};
       if (action_type === "run_worker")  action_config = { worker_name: cfgRaw };
       if (action_type === "webhook")     action_config = { url: cfgRaw };
-      if (action_type === "theme_change") {
-        const rawTokens  = document.getElementById("ruleThemeTokens")?.value || "{}";
-        const duration   = parseInt(document.getElementById("ruleThemeDuration")?.value || "5");
-        let tokens;
-        try { tokens = JSON.parse(rawTokens); } catch (_) { alert("Invalid JSON in token overrides"); return; }
-        action_config = { tokens, duration_minutes: duration };
+      if (action_type === "send_command") {
+        action_config = {
+          device_id:    document.getElementById("ruleCmdDeviceId").value.trim(),
+          command_type: document.getElementById("ruleCmdType").value,
+          payload:      (() => { try { return JSON.parse(document.getElementById("ruleCmdPayload").value || "{}"); } catch { return {}; } })(),
+        };
       }
-      await api.rules.create({ name, event_type, source_filter, action_type, action_config });
+      if (action_type === "theme_change") {
+        let tokens;
+        try { tokens = JSON.parse(document.getElementById("ruleThemeTokens")?.value || "{}"); } catch { alert("Invalid JSON in token overrides"); return; }
+        action_config = { tokens, duration_minutes: parseInt(document.getElementById("ruleThemeDuration")?.value || "5") };
+      }
+      await api.rules.create({ name, event_type, source_filter, action_type, action_config, schedule });
       closeModal();
       loadRules();
     }},
     { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
   ]);
 
+  // Show/hide schedule field when event_type == system.clock
+  const eventTypeInput = document.getElementById("ruleEventType");
+  const scheduleField  = document.getElementById("ruleScheduleField");
+  const scheduleInput  = document.getElementById("ruleScheduleInput");
+  const schedulePreview = document.getElementById("ruleSchedulePreview");
+  const toggleSchedule = () => {
+    const show = eventTypeInput.value.trim() === "system.clock";
+    scheduleField.style.display = show ? "" : "none";
+  };
+  eventTypeInput.addEventListener("input", toggleSchedule);
+  scheduleInput?.addEventListener("input", async () => {
+    const expr = scheduleInput.value.trim();
+    if (!expr) { schedulePreview.textContent = ""; return; }
+    try {
+      const upcoming = await api.rules.upcoming(3).catch(() => null);
+      // client-side preview only — just show format hint
+      schedulePreview.textContent = `cron: ${expr} — saves on Create`;
+    } catch (_) {}
+  });
+
   // Update config field label when action type changes
-  const sel = document.getElementById("ruleActionType");
-  const cfgField   = document.getElementById("ruleActionConfigField");
-  const cfgLabel   = document.getElementById("ruleActionConfigLabel");
-  const cfgInput   = document.getElementById("ruleActionConfig");
+  const sel       = document.getElementById("ruleActionType");
+  const cfgField  = document.getElementById("ruleActionConfigField");
+  const cfgLabel  = document.getElementById("ruleActionConfigLabel");
+  const cfgInput  = document.getElementById("ruleActionConfig");
   const themeField = document.getElementById("ruleThemeConfigField");
+  const cmdField  = document.getElementById("ruleCmdConfigField");
   const updateLabel = () => {
-    cfgField.style.display   = "";
+    cfgField.style.display = "";
     themeField.classList.add("hidden");
-    if (sel.value === "log_event")    { cfgField.style.display = "none"; }
+    cmdField.classList.add("hidden");
+    if      (sel.value === "log_event")    { cfgField.style.display = "none"; }
     else if (sel.value === "run_worker")   { cfgLabel.textContent = "Worker Name"; cfgInput.placeholder = "opencv-motion-tagger"; }
     else if (sel.value === "webhook")      { cfgLabel.textContent = "Webhook URL"; cfgInput.placeholder = "http://homeassistant.local/hook"; }
+    else if (sel.value === "send_command") { cfgField.style.display = "none"; cmdField.classList.remove("hidden"); }
     else if (sel.value === "theme_change") { cfgField.style.display = "none"; themeField.classList.remove("hidden"); }
   };
   sel.addEventListener("change", updateLabel);
