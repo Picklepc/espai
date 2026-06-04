@@ -34,6 +34,8 @@ router = APIRouter()
 
 # Keep at most this many rows per project (oldest pruned on each push)
 _MAX_ROWS_PER_PROJECT = 10_000
+# Maximum readings accepted in one bulk call
+_BULK_MAX = 500
 
 
 def _now() -> str:
@@ -145,14 +147,113 @@ async def push_data(project_id: str, request: Request):
         if _mb.is_running():
             cfg = _mb._read_matter_cfg(project_id)
             if cfg and cfg.get("matter_enabled"):
-                smap = cfg.get("matter_state_map") or {}
-                # Apply state map (hub key → Matter key); identity if no map set
+                smap   = cfg.get("matter_state_map") or {}
                 mapped = {smap.get(k, k): v for k, v in body.items()}
-                _mb.update_state(project_id, mapped)
+                if cfg.get("matter_endpoint_per_device"):
+                    ep_id = _mb._safe_endpoint_id(project_id, device_id)
+                else:
+                    ep_id = project_id
+                _mb.update_state(ep_id, mapped)
     except Exception:
         log.debug("matter state push failed for project %s", project_id, exc_info=True)
 
     return {"stored": True, "project_id": project_id, "device_id": device_id, "timestamp": now}
+
+
+# ── Bulk push ─────────────────────────────────────────────────────────────────
+
+@router.post("/{project_id}/data/bulk", status_code=201)
+async def push_data_bulk(project_id: str, request: Request):
+    """
+    Accept a batch of offline-buffered readings from a device (e.g. SD card drain).
+
+    Body: { "readings": [ { "payload": {...}, "device_id": "...", "timestamp": "..." }, ... ] }
+    - timestamp: ISO-8601 string; defaults to server receive time if omitted.
+    - device_id: falls back to X-Device-ID header then client IP.
+    - Maximum _BULK_MAX readings per call.
+
+    Geofence checks and Matter state pushes are intentionally skipped for
+    historical bulk data — only the data store is updated.
+    """
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone():
+            raise HTTPException(404, f"Project {project_id!r} not found")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Body must be JSON")
+
+    readings = body.get("readings") if isinstance(body, dict) else (body if isinstance(body, list) else None)
+    if readings is None:
+        raise HTTPException(400, "Body must be { readings: [...] } or a JSON array")
+    if len(readings) > _BULK_MAX:
+        raise HTTPException(413, f"Batch too large — max {_BULK_MAX} readings per call")
+
+    default_device = (
+        request.headers.get("X-Device-ID") or
+        request.headers.get("x-device-id") or
+        (request.client.host if request.client else "") or ""
+    )
+    server_now = _now()
+    rows: list[tuple] = []
+    latest: dict[str, tuple] = {}  # device_id → (payload_str, timestamp)
+
+    for item in readings:
+        if not isinstance(item, dict):
+            continue
+        payload = item.get("payload") or {}
+        if not isinstance(payload, dict):
+            try:
+                payload = json.loads(payload) if isinstance(payload, str) else {}
+            except Exception:
+                continue
+
+        device_id = str(item.get("device_id") or default_device)
+        ts        = str(item.get("timestamp") or server_now)
+
+        location = payload.pop("_location", None) if isinstance(payload.get("_location"), dict) else None
+        lat = location.get("lat") if location else None
+        lng = location.get("lng") if location else None
+        if not isinstance(lat, (int, float)):  lat = None
+        if not isinstance(lng, (int, float)):  lng = None
+
+        ps = json.dumps(payload)
+        rows.append((project_id, device_id, ps, lat, lng, ts))
+        # Keep only the latest timestamp per device for the cache upsert
+        if device_id not in latest or ts > latest[device_id][1]:
+            latest[device_id] = (ps, ts)
+
+    if rows:
+        with get_conn() as conn:
+            conn.executemany(
+                "INSERT INTO project_data (project_id, device_id, payload, lat, lng, timestamp)"
+                " VALUES (?,?,?,?,?,?)",
+                rows,
+            )
+            for did, (ps, ts) in latest.items():
+                conn.execute(
+                    """INSERT INTO project_data_cache (project_id, device_id, payload, timestamp)
+                       VALUES (?,?,?,?)
+                       ON CONFLICT(project_id, device_id) DO UPDATE SET
+                         payload=excluded.payload, timestamp=excluded.timestamp
+                       WHERE excluded.timestamp >= project_data_cache.timestamp""",
+                    (project_id, did, ps, ts),
+                )
+            # Prune once after the entire batch
+            count = conn.execute(
+                "SELECT COUNT(*) FROM project_data WHERE project_id=?", (project_id,)
+            ).fetchone()[0]
+            if count > _MAX_ROWS_PER_PROJECT:
+                conn.execute(
+                    """DELETE FROM project_data WHERE id IN (
+                         SELECT id FROM project_data WHERE project_id=?
+                         ORDER BY timestamp ASC LIMIT ?
+                       )""",
+                    (project_id, count - _MAX_ROWS_PER_PROJECT),
+                )
+
+    return {"stored": len(rows), "skipped": len(readings) - len(rows), "project_id": project_id}
 
 
 def _check_geofences(project_id: str, device_id: str, lat: float, lng: float, now: str) -> None:

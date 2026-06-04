@@ -546,5 +546,23 @@ Fine-grained control over how ESPai data maps to Matter attributes and how Matte
 - [x] **State map editor in UI** — per-project UI showing hub data keys (from last push) alongside Matter attribute dropdowns per device type; saves `matter_state_map` on Save
 - [x] **Command action editor in UI** — per-project table of all commandable Matter commands for the selected device type; action type dropdown (Publish event / Device API / none) + value input; saves `matter_command_actions` on Save
 - [x] **Inferred device type** — when a project has hub data, keys are matched against `_MATTER_INFER` rules; a "💡 Suggested: X — Use" hint appears in the UI if the suggestion differs from the current selection
-- [ ] **Multi-device projects** — for projects with multiple linked devices (multi-node), expose each device as a separate endpoint; `matter_endpoint_per_device: true` in project config (0.4.3)
+- [x] **Multi-device projects** — `matter_endpoint_per_device: true` in project config; `sync_project()` registers one bridge endpoint per linked node using `{project_id}_{safe_device_id}`; data push hook routes state to per-device endpoint ID; toggle in project Matter UI
 - [ ] **Matter device scenes** — support Matter Scenes cluster for on_off_plug and lighting endpoints; map ESPai event types to scene IDs (0.5.x)
+
+## Milestone 27 — Bulk Offline Data Upload — v0.4.3
+
+For GPS tracks and sensor logs buffered on SD card while out of WiFi range.
+
+- [x] `POST /api/projects/{id}/data/bulk` — accepts `{ readings: [{payload, device_id?, timestamp?}] }`; max 500 per call; uses `executemany` for efficiency; prunes once after batch; cache upsert keeps latest timestamp per device; geofence and Matter hooks intentionally skipped (historical data)
+- [x] `api.projects.dataBulk(id, readings)` in api.js
+
+## Milestone 28 — Rule Rate Limiting — v0.4.3
+
+Prevents actuator runaway (dosing pumps, relays) by capping how often a rule can fire.
+
+- [x] `max_fires_per_hour INTEGER` column on `rules` table (migration in `_migrate()`)
+- [x] `rule_fires` table — `(id, rule_id, fired_at)`; index on `(rule_id, fired_at DESC)`; pruned to 2-hour window on every write
+- [x] `_execute_action()` checks `rule_fires` count in rolling 60-minute window before executing; logs at DEBUG when throttled
+- [x] `_touch_triggered()` inserts into `rule_fires` and prunes entries older than 2 hours
+- [x] `max_fires_per_hour` field on `RuleCreate` and `RuleUpdate` Pydantic models; included in INSERT and PATCH SQL
+- [x] New Rule modal: "Rate limit (fires/hour)" number input; passed to `api.rules.create`

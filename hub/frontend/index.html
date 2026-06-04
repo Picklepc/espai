@@ -267,6 +267,13 @@
                 </label>
               </div>
               <div id="projMatterInferHint" style="display:none;margin-top:6px;font-size:12px;color:var(--color-text-muted)"></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+                <label class="toggle-label" data-tip="Expose each linked device node as its own separate Matter endpoint instead of one endpoint for the whole project">
+                  <input type="checkbox" id="projMatterPerDevice">
+                  <span></span>
+                </label>
+                <span style="font-size:12px;color:var(--color-text-muted)">One endpoint per device node</span>
+              </div>
               <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
                 <button class="btn btn-secondary btn-sm" id="btnMatterSave"
                   data-tip="Save Matter configuration for this project">Save</button>

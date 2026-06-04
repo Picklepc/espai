@@ -1965,14 +1965,16 @@ async function _renderProjectMatter(projectId) {
     hubKeys = Object.keys(merged).filter(k => !k.startsWith("_"));
   } catch (_) {}
 
-  const dtSel   = document.getElementById("projMatterDeviceType");
-  const labelIn = document.getElementById("projMatterLabel");
-  const epEl    = document.getElementById("projMatterEndpointId");
+  const dtSel     = document.getElementById("projMatterDeviceType");
+  const labelIn   = document.getElementById("projMatterLabel");
+  const epEl      = document.getElementById("projMatterEndpointId");
+  const perDevice = document.getElementById("projMatterPerDevice");
 
   toggle.checked = !!cfg.matter_enabled;
-  if (dtSel)   dtSel.value   = cfg.matter_device_type || "on_off_plug";
-  if (labelIn) labelIn.value = cfg.matter_label       || "";
-  if (epEl)    epEl.textContent = cfg.matter_endpoint_id ? `endpoint: ${cfg.matter_endpoint_id}` : "";
+  if (dtSel)     dtSel.value     = cfg.matter_device_type          || "on_off_plug";
+  if (labelIn)   labelIn.value   = cfg.matter_label                || "";
+  if (epEl)      epEl.textContent = cfg.matter_endpoint_id ? `endpoint: ${cfg.matter_endpoint_id}` : "";
+  if (perDevice) perDevice.checked = !!cfg.matter_endpoint_per_device;
   cfgDiv.style.display = cfg.matter_enabled ? "" : "none";
 
   // Bridge status badge
@@ -2022,11 +2024,12 @@ async function _renderProjectMatter(projectId) {
   if (saveBtn) saveBtn.onclick = async () => {
     try {
       await api.projects.setMatter(projectId, {
-        matter_enabled:         toggle.checked,
-        matter_device_type:     dtSel   ? dtSel.value   : cfg.matter_device_type,
-        matter_label:           labelIn ? labelIn.value  : cfg.matter_label,
-        matter_state_map:       _collectMatterStateMap(smEditor),
-        matter_command_actions: _collectMatterCmdActions(cmdEditor),
+        matter_enabled:              toggle.checked,
+        matter_device_type:          dtSel     ? dtSel.value     : cfg.matter_device_type,
+        matter_label:                labelIn   ? labelIn.value   : cfg.matter_label,
+        matter_endpoint_per_device:  perDevice ? perDevice.checked : cfg.matter_endpoint_per_device,
+        matter_state_map:            _collectMatterStateMap(smEditor),
+        matter_command_actions:      _collectMatterCmdActions(cmdEditor),
       });
       showToast("Matter settings saved");
     } catch (err) { alert(err.message); }
@@ -4744,13 +4747,17 @@ document.getElementById("btnNewRule").onclick = () => {
         <input type="number" id="ruleThemeDuration" value="5" min="1" max="1440" style="width:70px">
       </div>
     </div>
+    <div class="form-field">
+      <label data-tip="Throttle this rule — skip fires above this count in any rolling 60-minute window. Leave blank for unlimited. Useful for actuator safety (e.g. max 6 pump triggers per hour).">Rate limit (fires/hour, optional)</label>
+      <input type="number" id="ruleMaxFires" min="1" max="3600" placeholder="unlimited" style="width:120px">
+    </div>
   `, [
     { label: "Create Rule", cls: "btn btn-primary", action: async () => {
-      const name         = document.getElementById("ruleNameInput").value.trim();
-      const event_type   = document.getElementById("ruleEventType").value.trim();
+      const name          = document.getElementById("ruleNameInput").value.trim();
+      const event_type    = document.getElementById("ruleEventType").value.trim();
       const source_filter = document.getElementById("ruleSourceFilter").value.trim() || null;
-      const action_type  = document.getElementById("ruleActionType").value;
-      const cfgRaw       = document.getElementById("ruleActionConfig").value.trim();
+      const action_type   = document.getElementById("ruleActionType").value;
+      const cfgRaw        = document.getElementById("ruleActionConfig").value.trim();
       const schedule     = document.getElementById("ruleScheduleInput")?.value.trim() || null;
       const schedule_tz  = document.getElementById("ruleScheduleTz")?.value.trim() || null;
       if (!name || !event_type) { alert("Rule name and event type are required."); return; }
@@ -4769,7 +4776,9 @@ document.getElementById("btnNewRule").onclick = () => {
         try { tokens = JSON.parse(document.getElementById("ruleThemeTokens")?.value || "{}"); } catch { alert("Invalid JSON in token overrides"); return; }
         action_config = { tokens, duration_minutes: parseInt(document.getElementById("ruleThemeDuration")?.value || "5") };
       }
-      await api.rules.create({ name, event_type, source_filter, action_type, action_config, schedule, schedule_tz });
+      const maxFiresRaw = parseInt(document.getElementById("ruleMaxFires")?.value);
+      const max_fires_per_hour = (maxFiresRaw > 0) ? maxFiresRaw : null;
+      await api.rules.create({ name, event_type, source_filter, action_type, action_config, schedule, schedule_tz, max_fires_per_hour });
       closeModal();
       loadRules();
     }},

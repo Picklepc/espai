@@ -11,6 +11,7 @@ or when ESPAI_MATTER_AUTOSTART is not set — they no-op gracefully.
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import urllib.error
@@ -216,28 +217,70 @@ def remove_device(device_id: str) -> bool:
         return False
 
 
+def _safe_endpoint_id(project_id: str, device_id: str) -> str:
+    """URL-safe endpoint ID for per-device Matter endpoints."""
+    return f"{project_id}_{re.sub(r'[^a-zA-Z0-9_-]', '_', device_id)}"
+
+
+def _linked_device_ids(project_id: str) -> list[str]:
+    """Return the list of device IDs linked to a project."""
+    try:
+        from .db import get_conn
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT devices FROM projects WHERE id=?", (project_id,)
+            ).fetchone()
+        return json.loads(row["devices"] or "[]") if row else []
+    except Exception:
+        return []
+
+
 def sync_project(project_id: str) -> None:
-    """Read project matter config and register/remove its endpoint."""
+    """Read project matter config and register/remove its endpoint(s)."""
     cfg = _read_matter_cfg(project_id)
     if not cfg:
         return
 
     if cfg.get("matter_enabled"):
-        name   = cfg.get("matter_label") or project_id
-        dtype  = cfg.get("matter_device_type", "on_off_plug")
-        try:
-            result = register_device(project_id, name, dtype)
-            if result.get("created") or result.get("updated"):
-                # Persist assigned endpoint_id back into project config
-                cfg["matter_endpoint_id"] = result.get("endpoint_id")
-                _write_matter_cfg(project_id, cfg)
-        except Exception as e:
-            log.warning("matter sync_project %s: %s", project_id, e)
+        name  = cfg.get("matter_label") or project_id
+        dtype = cfg.get("matter_device_type", "on_off_plug")
+
+        if cfg.get("matter_endpoint_per_device"):
+            # One endpoint per linked device node
+            device_ids = _linked_device_ids(project_id)
+            for did in device_ids:
+                eid    = _safe_endpoint_id(project_id, did)
+                ep_name = f"{name} — {did}"
+                try:
+                    register_device(eid, ep_name, dtype)
+                except Exception as e:
+                    log.warning("matter sync_project %s device %s: %s", project_id, did, e)
+            # Remove the single-project endpoint if it exists (migration)
+            try:
+                remove_device(project_id)
+            except Exception:
+                pass
+        else:
+            # Single endpoint per project (default)
+            try:
+                result = register_device(project_id, name, dtype)
+                if result.get("created") or result.get("updated"):
+                    cfg["matter_endpoint_id"] = result.get("endpoint_id")
+                    _write_matter_cfg(project_id, cfg)
+            except Exception as e:
+                log.warning("matter sync_project %s: %s", project_id, e)
     else:
+        # Remove single-project endpoint
         try:
             remove_device(project_id)
         except Exception:
             pass
+        # Also remove any per-device endpoints that may exist
+        for did in _linked_device_ids(project_id):
+            try:
+                remove_device(_safe_endpoint_id(project_id, did))
+            except Exception:
+                pass
 
 
 def sync_all_projects() -> None:
@@ -255,12 +298,13 @@ def sync_all_projects() -> None:
 # ── Config helpers ────────────────────────────────────────────────────────────
 
 _MATTER_DEFAULTS = {
-    "matter_enabled":         False,
-    "matter_device_type":     "on_off_plug",
-    "matter_label":           "",
-    "matter_state_map":       {},
-    "matter_command_actions": {},
-    "matter_endpoint_id":     None,
+    "matter_enabled":              False,
+    "matter_device_type":          "on_off_plug",
+    "matter_label":                "",
+    "matter_state_map":            {},
+    "matter_command_actions":      {},
+    "matter_endpoint_id":          None,
+    "matter_endpoint_per_device":  False,
 }
 _MATTER_KEYS = set(_MATTER_DEFAULTS)
 

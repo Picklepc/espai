@@ -14,7 +14,7 @@ import logging
 import secrets
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ..db import get_conn
 
@@ -49,6 +49,23 @@ def _execute_action(rule: dict, event: dict) -> None:
         config = {}
 
     now = datetime.now(timezone.utc).isoformat()
+
+    # Rate limiting — skip if this rule has fired too many times in the last hour
+    max_fires = rule.get("max_fires_per_hour")
+    if max_fires and max_fires > 0:
+        window_start = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        try:
+            with get_conn() as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM rule_fires WHERE rule_id=? AND fired_at > ?",
+                    (rule["id"], window_start),
+                ).fetchone()[0]
+            if count >= max_fires:
+                log.debug("Rule %r: rate limit (%d/%d/hr) — skipping",
+                          rule["name"], count, max_fires)
+                return
+        except Exception:
+            log.exception("rules: rate limit check failed for rule %s", rule["id"])
 
     try:
         if action_type == "log_event":
@@ -124,7 +141,10 @@ def _execute_action(rule: dict, event: dict) -> None:
 
 def _touch_triggered(rule_id: str, now: str) -> None:
     try:
+        prune_before = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         with get_conn() as conn:
             conn.execute("UPDATE rules SET last_triggered=? WHERE id=?", (now, rule_id))
+            conn.execute("INSERT INTO rule_fires (rule_id, fired_at) VALUES (?,?)", (rule_id, now))
+            conn.execute("DELETE FROM rule_fires WHERE fired_at < ?", (prune_before,))
     except Exception:
         log.exception("rules: failed to update last_triggered for rule %s", rule_id)

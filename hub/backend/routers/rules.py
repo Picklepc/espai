@@ -45,8 +45,9 @@ class RuleCreate(BaseModel):
     action_type: str
     action_config: dict = {}
     enabled: bool = True
-    schedule: str | None = None     # 5-field cron expression, e.g. "0 6 * * *"
-    schedule_tz: str | None = None  # IANA timezone, e.g. "America/Chicago" (default: UTC)
+    schedule: str | None = None           # 5-field cron expression, e.g. "0 6 * * *"
+    schedule_tz: str | None = None        # IANA timezone, e.g. "America/Chicago" (default: UTC)
+    max_fires_per_hour: int | None = None # rate limit; None = unlimited
 
 
 class RuleUpdate(BaseModel):
@@ -56,6 +57,7 @@ class RuleUpdate(BaseModel):
     action_config: dict | None = None
     schedule: str | None = None
     schedule_tz: str | None = None
+    max_fires_per_hour: int | None = None
 
 
 @router.get("/")
@@ -108,13 +110,14 @@ def create_rule(data: RuleCreate):
         conn.execute(
             """INSERT INTO rules
                (id, name, enabled, event_type, source_filter, action_type, action_config,
-                schedule, schedule_tz, created)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                schedule, schedule_tz, max_fires_per_hour, created)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 rule_id, data.name.strip(), int(data.enabled),
                 data.event_type.strip(), data.source_filter or None,
                 data.action_type, json.dumps(data.action_config),
-                data.schedule or None, data.schedule_tz or None, now,
+                data.schedule or None, data.schedule_tz or None,
+                data.max_fires_per_hour or None, now,
             ),
         )
     return {"id": rule_id, "name": data.name, "created": now}
@@ -135,6 +138,8 @@ def update_rule(rule_id: str, data: RuleUpdate):
         updates.append("schedule=?"); vals.append(data.schedule or None)
     if data.schedule_tz is not None:
         updates.append("schedule_tz=?"); vals.append(data.schedule_tz or None)
+    if data.max_fires_per_hour is not None:
+        updates.append("max_fires_per_hour=?"); vals.append(data.max_fires_per_hour or None)
     if not updates:
         return {"status": "no-op"}
     vals.append(rule_id)

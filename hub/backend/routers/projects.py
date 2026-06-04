@@ -2076,12 +2076,13 @@ async def import_project_from_zip(
 # ── Matter config ──────────────────────────────────────────────────────────────
 
 _MATTER_DEFAULTS = {
-    "matter_enabled":         False,
-    "matter_device_type":     "on_off_plug",
-    "matter_label":           "",
-    "matter_state_map":       {},
-    "matter_command_actions": {},
-    "matter_endpoint_id":     None,
+    "matter_enabled":             False,
+    "matter_device_type":         "on_off_plug",
+    "matter_label":               "",
+    "matter_state_map":           {},
+    "matter_command_actions":     {},
+    "matter_endpoint_id":         None,
+    "matter_endpoint_per_device": False,
 }
 _MATTER_KEYS = set(_MATTER_DEFAULTS)
 

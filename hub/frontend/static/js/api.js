@@ -76,6 +76,7 @@ const api = {
       return apiFetch(`/api/projects/${id}/data${q ? "?" + q : ""}`);
     },
     dataPush:      (id, body)     => apiFetch(`/api/projects/${id}/data`, { method: "POST", body: JSON.stringify(body) }),
+    dataBulk:      (id, readings) => apiFetch(`/api/projects/${id}/data/bulk`, { method: "POST", body: JSON.stringify({ readings }) }),
     dataClear:     (id)           => apiFetch(`/api/projects/${id}/data`, { method: "DELETE" }),
     dataAggregate: (id, params)   => {
       const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();

@@ -139,6 +139,24 @@ def _migrate(conn) -> None:
         WHERE lat IS NOT NULL
     """)
 
+    # Add max_fires_per_hour to rules (M12 / 0.4.3 rate limiting)
+    rules_cols = {row[1] for row in conn.execute("PRAGMA table_info(rules)").fetchall()}
+    if "max_fires_per_hour" not in rules_cols:
+        conn.execute("ALTER TABLE rules ADD COLUMN max_fires_per_hour INTEGER")
+
+    # Rule fire log table (created in schema above; index is idempotent)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rule_fires (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id  TEXT    NOT NULL,
+            fired_at TEXT    NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_rule_fires_rule_time
+        ON rule_fires (rule_id, fired_at DESC)
+    """)
+
 
 def init_db() -> None:
     with get_conn() as conn:
@@ -206,16 +224,28 @@ def init_db() -> None:
         );
 
         CREATE TABLE IF NOT EXISTS rules (
-            id              TEXT PRIMARY KEY,
-            name            TEXT NOT NULL,
-            enabled         INTEGER NOT NULL DEFAULT 1,
-            event_type      TEXT NOT NULL,
-            source_filter   TEXT,
-            action_type     TEXT NOT NULL,
-            action_config   TEXT,
-            created         TEXT NOT NULL,
-            last_triggered  TEXT
+            id                  TEXT PRIMARY KEY,
+            name                TEXT NOT NULL,
+            enabled             INTEGER NOT NULL DEFAULT 1,
+            event_type          TEXT NOT NULL,
+            source_filter       TEXT,
+            action_type         TEXT NOT NULL,
+            action_config       TEXT,
+            created             TEXT NOT NULL,
+            last_triggered      TEXT,
+            max_fires_per_hour  INTEGER    -- NULL = unlimited
         );
+
+        -- ── Rule fire log ─────────────────────────────────────────────────────
+        -- Rolling log used to enforce max_fires_per_hour.
+        -- Pruned to a 2-hour window on every write.
+        CREATE TABLE IF NOT EXISTS rule_fires (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id  TEXT    NOT NULL,
+            fired_at TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_rule_fires_rule_time
+            ON rule_fires (rule_id, fired_at DESC);
 
         CREATE TABLE IF NOT EXISTS agent_tasks (
             id                  TEXT PRIMARY KEY,
