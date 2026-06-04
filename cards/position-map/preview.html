@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Position Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; height: 100vh; display: flex; flex-direction: column; }
+  #header { padding: 10px 16px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 12px; }
+  #header h2 { font-size: 14px; font-weight: 600; }
+  #status { font-size: 12px; color: #7d8590; margin-left: auto; }
+  #map { flex: 1; }
+  #info { padding: 8px 16px; background: #161b22; border-top: 1px solid #30363d; font-size: 11px; color: #7d8590; display: flex; gap: 20px; }
+  .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h2>📍 Position Map</h2>
+  <select id="deviceFilter" style="font-size:12px;padding:3px 6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px">
+    <option value="">All Devices</option>
+  </select>
+  <button onclick="refresh()" style="font-size:12px;padding:3px 10px;background:#238636;color:#fff;border:none;border-radius:4px;cursor:pointer">↻ Refresh</button>
+  <span id="status">Loading…</span>
+</div>
+<div id="map"></div>
+<div id="info">
+  <span><span class="legend-dot" style="background:#58a6ff"></span>Track</span>
+  <span><span class="legend-dot" style="background:#3fb950"></span>Latest Position</span>
+  <span id="pointCount">0 points</span>
+  <span id="deviceCount">0 devices</span>
+</div>
+
+<script>
+const PROJECT_ID = new URLSearchParams(location.search).get("project_id")
+  || document.referrer.match(/projects\/([^/]+)/)?.[1]
+  || "demo";
+const HUB = location.origin;
+
+const map = L.map("map").setView([39.5, -98.35], 5);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "© OpenStreetMap", maxZoom: 19
+}).addTo(map);
+
+let trackLayers = [], markerLayers = [];
+
+const deviceColors = ["#58a6ff","#f78166","#ffa657","#7ee787","#d2a8ff","#79c0ff"];
+const deviceColorMap = {};
+let colorIdx = 0;
+function deviceColor(id) {
+  if (!deviceColorMap[id]) deviceColorMap[id] = deviceColors[colorIdx++ % deviceColors.length];
+  return deviceColorMap[id];
+}
+
+async function refresh() {
+  document.getElementById("status").textContent = "Loading…";
+  const devFilter = document.getElementById("deviceFilter").value;
+  const params = new URLSearchParams({ limit: 500 });
+  if (devFilter) params.set("device_id", devFilter);
+
+  try {
+    const [trackResp, latestResp] = await Promise.all([
+      fetch(`${HUB}/api/projects/${PROJECT_ID}/track?${params}`).then(r => r.json()),
+      fetch(`${HUB}/api/projects/${PROJECT_ID}/data/latest`).then(r => r.json()),
+    ]);
+
+    // Clear existing layers
+    trackLayers.forEach(l => map.removeLayer(l));
+    markerLayers.forEach(l => map.removeLayer(l));
+    trackLayers = []; markerLayers = [];
+
+    const track = trackResp.track || [];
+
+    // Group by device
+    const byDevice = {};
+    for (const pt of track) {
+      if (!byDevice[pt.device_id]) byDevice[pt.device_id] = [];
+      byDevice[pt.device_id].push([pt.lat, pt.lng]);
+    }
+
+    // Populate device filter dropdown
+    const sel = document.getElementById("deviceFilter");
+    const existing = new Set([...sel.options].map(o => o.value));
+    for (const did of Object.keys(byDevice)) {
+      if (!existing.has(did)) {
+        const opt = document.createElement("option");
+        opt.value = did; opt.textContent = did;
+        sel.appendChild(opt);
+      }
+    }
+
+    // Draw tracks
+    const allPoints = [];
+    for (const [did, pts] of Object.entries(byDevice)) {
+      if (pts.length < 2) continue;
+      const color = deviceColor(did);
+      const line = L.polyline(pts, { color, weight: 2, opacity: 0.7 }).addTo(map);
+      trackLayers.push(line);
+      allPoints.push(...pts);
+    }
+
+    // Draw latest position markers
+    const devices = latestResp.devices || [];
+    for (const dev of devices) {
+      const lat = dev.latest?.lat, lng = dev.latest?.lng;
+      if (!lat || !lng) continue;
+      const color = deviceColor(dev.device_id || "");
+      const marker = L.circleMarker([lat, lng], {
+        radius: 7, fillColor: "#3fb950", color: "#fff", weight: 2, fillOpacity: 1
+      }).addTo(map);
+      marker.bindPopup(`<b>${dev.device_id || "unknown"}</b><br>${lat.toFixed(5)}, ${lng.toFixed(5)}<br>${dev.timestamp?.slice(0,19)}`);
+      markerLayers.push(marker);
+      allPoints.push([lat, lng]);
+    }
+
+    if (allPoints.length > 0) {
+      map.fitBounds(L.latLngBounds(allPoints), { padding: [20, 20] });
+    }
+
+    document.getElementById("pointCount").textContent = `${track.length} points`;
+    document.getElementById("deviceCount").textContent = `${Object.keys(byDevice).length} devices`;
+    document.getElementById("status").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    document.getElementById("status").textContent = "Error: " + e.message;
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

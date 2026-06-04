@@ -4427,14 +4427,39 @@ document.getElementById("btnNewRule").onclick = () => {
     scheduleField.style.display = show ? "" : "none";
   };
   eventTypeInput.addEventListener("input", toggleSchedule);
-  scheduleInput?.addEventListener("input", async () => {
+  let _scheduleDebounce = null;
+  scheduleInput?.addEventListener("input", () => {
+    clearTimeout(_scheduleDebounce);
     const expr = scheduleInput.value.trim();
     if (!expr) { schedulePreview.textContent = ""; return; }
-    try {
-      const upcoming = await api.rules.upcoming(3).catch(() => null);
-      // client-side preview only — just show format hint
-      schedulePreview.textContent = `cron: ${expr} — saves on Create`;
-    } catch (_) {}
+    schedulePreview.textContent = "…";
+    _scheduleDebounce = setTimeout(async () => {
+      try {
+        // Temporarily create a rule to get preview, or use the upcoming endpoint
+        // after saving — for now show a static hint with common patterns
+        const hints = {
+          "0 * * * *":    "every hour on the hour",
+          "*/15 * * * *": "every 15 minutes",
+          "0 6 * * *":    "daily at 06:00 UTC",
+          "0 12 * * *":   "daily at noon UTC",
+          "0 0 * * *":    "daily at midnight UTC",
+          "0 8,20 * * *": "08:00 and 20:00 UTC",
+          "0 6 * * 1":    "every Monday at 06:00 UTC",
+        };
+        const hint = hints[expr];
+        if (hint) {
+          schedulePreview.textContent = `↻ ${hint}`;
+        } else {
+          // Parse client-side to validate
+          const fields = expr.split(/\s+/);
+          if (fields.length === 5) {
+            schedulePreview.textContent = `✓ Valid 5-field cron — fires will show in "View All" after saving`;
+          } else {
+            schedulePreview.textContent = `⚠ Need 5 fields: minute hour day month weekday`;
+          }
+        }
+      } catch (_) {}
+    }, 400);
   });
 
   // Update config field label when action type changes

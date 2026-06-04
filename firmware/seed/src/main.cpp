@@ -284,6 +284,144 @@ int hubCheckin(const String& hubUrl) {
 #endif
 }
 
+// ── ESPAI Media Upload ─────────────────────────────────────────────────────
+// Upload a binary buffer to the hub media store as multipart/form-data.
+// Returns HTTP status code (201 = success, -1 = no HUB_URL / WiFi down).
+//
+// Usage:
+//   camera_fb_t* fb = esp_camera_fb_get();
+//   int code = espai_upload_jpeg(String(HUB_URL), "my-project", fb->buf, fb->len);
+//   esp_camera_fb_return(fb);
+//
+// The hub stores the file and returns { "file_id": "...", "url": "..." }.
+// Specify device_id and tags as empty strings to omit them.
+int espai_upload_jpeg(const String& hubUrl, const String& projectId,
+                      const uint8_t* buf, size_t len,
+                      const String& deviceId = "", const String& tags = "") {
+  if (!wifiConnected || len == 0) return -1;
+#ifdef HUB_URL
+  const String boundary = "espai" + String(millis());
+  String prefix = "--" + boundary + "\r\n"
+    "Content-Disposition: form-data; name=\"file\"; filename=\"capture.jpg\"\r\n"
+    "Content-Type: image/jpeg\r\n\r\n";
+  String suffix = "\r\n";
+  if (!deviceId.isEmpty()) {
+    suffix += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"device_id\"\r\n\r\n"
+           + deviceId + "\r\n";
+  }
+  if (!tags.isEmpty()) {
+    suffix += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"tags\"\r\n\r\n"
+           + tags + "\r\n";
+  }
+  suffix += "--" + boundary + "--\r\n";
+
+  WiFiClient client;
+  HTTPClient http;
+  http.begin(client, hubUrl + "/api/projects/" + projectId + "/media");
+  http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
+  http.addHeader("Content-Length", String(prefix.length() + len + suffix.length()));
+
+  // Stream the multipart body: prefix + binary + suffix
+  // HTTPClient::sendRequest with stream is the cleanest way on ESP32 Arduino
+  size_t totalLen = prefix.length() + len + suffix.length();
+  uint8_t* bodyBuf = (uint8_t*)malloc(totalLen);
+  if (!bodyBuf) { http.end(); return -1; }
+  memcpy(bodyBuf,                       prefix.c_str(), prefix.length());
+  memcpy(bodyBuf + prefix.length(),     buf,            len);
+  memcpy(bodyBuf + prefix.length() + len, suffix.c_str(), suffix.length());
+  int code = http.POST(bodyBuf, totalLen);
+  free(bodyBuf);
+  http.end();
+  return code;  // 201 = created
+#else
+  return -1;
+#endif
+}
+
+// ── ESPAI Command Poll ─────────────────────────────────────────────────────
+// User-supplied callback invoked for each pending command the hub sends.
+// Return true if the command was handled, false to fall through to built-ins.
+typedef bool (*espai_cmd_fn_t)(const String& cmdId, const String& cmdType,
+                               const JsonObject& payload);
+static espai_cmd_fn_t _userCmdHandler = nullptr;
+
+void espai_register_cmd_handler(espai_cmd_fn_t handler) {
+  _userCmdHandler = handler;
+}
+
+// Poll the hub for pending commands and dispatch them.
+// Call this from loop() — it self-throttles to once every POLL_INTERVAL_MS.
+#ifndef ESPAI_CMD_POLL_MS
+#define ESPAI_CMD_POLL_MS 2000
+#endif
+
+void espai_poll_commands(const String& hubUrl) {
+  if (!wifiConnected) return;
+#ifdef HUB_URL
+  static uint32_t lastPoll = 0;
+  if (millis() - lastPoll < ESPAI_CMD_POLL_MS) return;
+  lastPoll = millis();
+
+  HTTPClient http;
+  http.begin(hubUrl + "/api/devices/" + nodeId + "/commands/pending");
+  int code = http.GET();
+  if (code != 200) { http.end(); return; }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, http.getString()) != DeserializationError::Ok) {
+    http.end(); return;
+  }
+  http.end();
+
+  JsonArray cmds = doc["commands"].as<JsonArray>();
+  for (JsonObject cmd : cmds) {
+    String cmdId   = cmd["id"]           | "";
+    String cmdType = cmd["command_type"] | "";
+    JsonObject pl  = cmd["payload"]      | JsonObject();
+
+    bool handled = false;
+
+    // User handler first
+    if (_userCmdHandler) handled = _userCmdHandler(cmdId, cmdType, pl);
+
+    // Built-in handlers
+    if (!handled) {
+      if (cmdType == "reboot") {
+        Serial.println("[cmd] Reboot command received");
+        delay(500);
+        ESP.restart();
+
+      } else if (cmdType == "set_config") {
+        const char* key = pl["key"] | "";
+        const char* val = pl["value"] | "";
+        if (key[0]) {
+          Preferences prefs;
+          prefs.begin("espai", false);
+          prefs.putString(key, val);
+          prefs.end();
+          Serial.printf("[cmd] set_config: %s = %s\n", key, val);
+        }
+        handled = true;
+
+      } else if (cmdType == "run_ota_check") {
+        hubCheckin(hubUrl);
+        handled = true;
+      }
+    }
+
+    // Ack the command
+    if (!cmdId.isEmpty()) {
+      HTTPClient ack;
+      String ackUrl = hubUrl + "/api/devices/" + nodeId + "/commands/" + cmdId + "/ack";
+      ack.begin(ackUrl);
+      ack.addHeader("Content-Type", "application/json");
+      ack.POST(handled ? "{\"result\":{\"ok\":true}}" : "{\"result\":{\"ok\":false}}");
+      ack.end();
+    }
+  }
+#endif
+}
+
 // ── Deep sleep helper ──────────────────────────────────────────────────────
 // Enters deep sleep for `seconds`. GPIO16/RTC0 must be wired to RST for wake-up
 // on standard ESP32. ESP32-S3/C3 use the built-in RTC timer — no wire needed.
@@ -418,6 +556,11 @@ void setup() {
 
 void loop() {
   server.handleClient();
+
+  // Poll hub for pending commands (throttled by ESPAI_CMD_POLL_MS, default 2s)
+#ifdef HUB_URL
+  if (!apMode) espai_poll_commands(String(HUB_URL));
+#endif
 
   // Reconnect STA if dropped (skip in AP mode)
   if (!apMode && WiFi.status() != WL_CONNECTED) {

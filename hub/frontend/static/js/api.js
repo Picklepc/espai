@@ -81,6 +81,15 @@ const api = {
       const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();
       return apiFetch(`/api/projects/${id}/data/aggregate${q ? "?" + q : ""}`);
     },
+    dataSpatial:   (id, params)   => {
+      const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();
+      return apiFetch(`/api/projects/${id}/data/spatial${q ? "?" + q : ""}`);
+    },
+    dataTrack:     (id, params)   => {
+      const q = new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([,v]) => v != null))).toString();
+      return apiFetch(`/api/projects/${id}/track${q ? "?" + q : ""}`);
+    },
+    geofenceCheck: (id, body)     => apiFetch(`/api/projects/${id}/data/geofence-check`, { method: "POST", body: JSON.stringify(body) }),
     // Media store
     listMedia:    (id, ct)       => apiFetch(`/api/projects/${id}/media${ct ? "?content_type=" + encodeURIComponent(ct) : ""}`),
     mediaUrl:     (id, fileId)   => `/api/projects/${id}/media/${fileId}`,

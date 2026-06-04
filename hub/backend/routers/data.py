@@ -18,6 +18,7 @@ Pull endpoints (called by hub-hosted web apps):
 """
 
 import json
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -33,6 +34,30 @@ _MAX_ROWS_PER_PROJECT = 10_000
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Return distance in metres between two WGS-84 coordinates."""
+    R = 6_371_000.0
+    φ1, φ2 = math.radians(lat1), math.radians(lat2)
+    Δφ = math.radians(lat2 - lat1)
+    Δλ = math.radians(lng2 - lng1)
+    a = math.sin(Δφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(Δλ / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _point_in_polygon(lat: float, lng: float, polygon: list[list[float]]) -> bool:
+    """Ray-casting point-in-polygon test. polygon = [[lat,lng], ...]."""
+    n = len(polygon)
+    inside = False
+    j = n - 1
+    for i in range(n):
+        yi, xi = polygon[i][0], polygon[i][1]
+        yj, xj = polygon[j][0], polygon[j][1]
+        if ((yi > lat) != (yj > lat)) and (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
 
 
 # ── Push ─────────────────────────────────────────────────────────────────────
@@ -68,13 +93,22 @@ async def push_data(project_id: str, request: Request):
         or request.client.host
         or ""
     )
+    # Extract _location field if present — stored in lat/lng columns for spatial queries
+    location = body.pop("_location", None) if isinstance(body.get("_location"), dict) else None
+    lat = location.get("lat") if location else None
+    lng = location.get("lng") if location else None
+    if lat is not None and not isinstance(lat, (int, float)):
+        lat = None
+    if lng is not None and not isinstance(lng, (int, float)):
+        lng = None
+
     payload_str = json.dumps(body)
     now = _now()
 
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO project_data (project_id, device_id, payload, timestamp) VALUES (?,?,?,?)",
-            (project_id, device_id, payload_str, now),
+            "INSERT INTO project_data (project_id, device_id, payload, lat, lng, timestamp) VALUES (?,?,?,?,?,?)",
+            (project_id, device_id, payload_str, lat, lng, now),
         )
         # Upsert latest cache
         conn.execute(
@@ -176,6 +210,156 @@ def get_history(
         results.append(entry)
 
     return {"project_id": project_id, "count": len(results), "rows": results}
+
+
+# ── Spatial ───────────────────────────────────────────────────────────────────
+
+@router.get("/{project_id}/data/spatial")
+def spatial_query(
+    project_id: str,
+    lat:       float,
+    lng:       float,
+    radius_m:  float  = 500.0,
+    device_id: Optional[str] = None,
+    limit:     int    = 200,
+    since:     Optional[str] = None,
+):
+    """
+    Return data points within radius_m metres of (lat, lng), newest first.
+    Uses a bounding-box pre-filter then exact Haversine in Python.
+
+    Push location with your data:
+      POST /api/projects/{id}/data
+      { "_location": { "lat": 38.89, "lng": -77.04 }, "temperature": 23.5 }
+    """
+    # Approximate degree offsets for bounding box (1° lat ≈ 111 km)
+    delta_lat = radius_m / 111_000.0
+    delta_lng = radius_m / (111_000.0 * math.cos(math.radians(lat))) if abs(lat) < 89.9 else 180.0
+
+    sql = """
+        SELECT device_id, payload, lat, lng, timestamp
+        FROM project_data
+        WHERE project_id=?
+          AND lat BETWEEN ? AND ?
+          AND lng BETWEEN ? AND ?
+    """
+    params: list = [
+        project_id,
+        lat - delta_lat, lat + delta_lat,
+        lng - delta_lng, lng + delta_lng,
+    ]
+    if device_id:
+        sql += " AND device_id=?"; params.append(device_id)
+    if since:
+        sql += " AND timestamp > ?"; params.append(since)
+    sql += " ORDER BY timestamp DESC LIMIT ?"
+    params.append(limit * 3)  # over-fetch for Haversine filter
+
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    results = []
+    for row in rows:
+        d = _haversine_m(lat, lng, row["lat"], row["lng"])
+        if d > radius_m:
+            continue
+        try:
+            payload = json.loads(row["payload"])
+        except Exception:
+            payload = {}
+        results.append({
+            "device_id":  row["device_id"],
+            "lat":        row["lat"],
+            "lng":        row["lng"],
+            "distance_m": round(d, 1),
+            "payload":    payload,
+            "timestamp":  row["timestamp"],
+        })
+        if len(results) >= limit:
+            break
+
+    results.sort(key=lambda r: r["timestamp"], reverse=True)
+    return {"project_id": project_id, "center": {"lat": lat, "lng": lng},
+            "radius_m": radius_m, "count": len(results), "rows": results}
+
+
+@router.get("/{project_id}/track")
+def position_track(
+    project_id: str,
+    device_id:  Optional[str] = None,
+    limit:      int  = 500,
+    since:      Optional[str] = None,
+):
+    """
+    Return chronological position trail for location-tagged data points.
+    Use for GPS track display on a map.
+    """
+    sql = """
+        SELECT device_id, lat, lng, timestamp, payload
+        FROM project_data
+        WHERE project_id=? AND lat IS NOT NULL AND lng IS NOT NULL
+    """
+    params: list = [project_id]
+    if device_id:
+        sql += " AND device_id=?"; params.append(device_id)
+    if since:
+        sql += " AND timestamp > ?"; params.append(since)
+    sql += " ORDER BY timestamp ASC LIMIT ?"
+    params.append(limit)
+
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    track = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except Exception:
+            payload = {}
+        track.append({
+            "device_id": row["device_id"],
+            "lat":       row["lat"],
+            "lng":       row["lng"],
+            "timestamp": row["timestamp"],
+            "payload":   payload,
+        })
+    return {"project_id": project_id, "count": len(track), "track": track}
+
+
+@router.post("/{project_id}/data/geofence-check")
+def geofence_check(project_id: str, body: dict):
+    """
+    Check whether any recent data points from a device are inside or outside a polygon.
+
+    Body: { "device_id": "...", "polygon": [[lat,lng],...], "since": "ISO" (optional) }
+    Returns: { "inside": bool, "last_position": {lat, lng, timestamp} | null }
+    """
+    device_id = body.get("device_id")
+    polygon   = body.get("polygon", [])
+    since     = body.get("since")
+    if not device_id or len(polygon) < 3:
+        raise HTTPException(400, "device_id and polygon (≥3 points) required")
+
+    sql = """
+        SELECT lat, lng, timestamp FROM project_data
+        WHERE project_id=? AND device_id=? AND lat IS NOT NULL
+    """
+    params: list = [project_id, device_id]
+    if since:
+        sql += " AND timestamp > ?"; params.append(since)
+    sql += " ORDER BY timestamp DESC LIMIT 1"
+
+    with get_conn() as conn:
+        row = conn.execute(sql, params).fetchone()
+
+    if not row:
+        return {"inside": None, "last_position": None, "note": "No location data found"}
+
+    inside = _point_in_polygon(row["lat"], row["lng"], polygon)
+    return {
+        "inside": inside,
+        "last_position": {"lat": row["lat"], "lng": row["lng"], "timestamp": row["timestamp"]},
+    }
 
 
 # ── Aggregate ─────────────────────────────────────────────────────────────────

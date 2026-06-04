@@ -124,6 +124,19 @@ def _migrate(conn) -> None:
     if "schedule" not in rules_cols:
         conn.execute("ALTER TABLE rules ADD COLUMN schedule TEXT")
 
+    # Add lat/lng columns to project_data for spatial queries (M26c)
+    pd_cols = {row[1] for row in conn.execute("PRAGMA table_info(project_data)").fetchall()}
+    if "lat" not in pd_cols:
+        conn.execute("ALTER TABLE project_data ADD COLUMN lat REAL")
+    if "lng" not in pd_cols:
+        conn.execute("ALTER TABLE project_data ADD COLUMN lng REAL")
+    # Index to make spatial bbox queries fast
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_project_data_location
+        ON project_data (project_id, lat, lng)
+        WHERE lat IS NOT NULL
+    """)
+
 
 def init_db() -> None:
     with get_conn() as conn:

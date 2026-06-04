@@ -1,0 +1,23 @@
+schema: ESPAI.card.v1
+name: sensor-chart
+display_name: "Sensor Chart"
+description: >
+  Interactive time-series chart for hub project data using the aggregate API.
+  Plots averaged, min, max, or sum of any JSON field over 1-minute to 1-day
+  buckets. Uses Chart.js — no server-side rendering required.
+  Copy web/chart.html into your project's web/ folder and customise.
+version: "1.0.0"
+official: true
+category: visualization
+
+hub_api:
+  - endpoint: "GET /api/projects/{id}/data/aggregate"
+    description: "Bucketed time-series aggregation"
+    params:
+      field:     "JSON field name to aggregate (e.g. temperature)"
+      fn:        "avg | min | max | sum | count (default: avg)"
+      bucket:    "1m | 5m | 15m | 1h | 6h | 1d (default: 1h)"
+      since:     "1h | 6h | 12h | 1d | 7d | 30d (default: 24h)"
+      device_id: "optional — filter to one device"
+
+tags: [chart, sensor, visualization, time-series, analytics]

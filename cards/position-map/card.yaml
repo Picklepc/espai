@@ -1,0 +1,45 @@
+schema: ESPAI.card.v1
+name: position-map
+display_name: "Position Map"
+description: >
+  Real-time and historical GPS position map for location-tagged projects.
+  Plots device tracks, latest positions, and sensor readings on an
+  interactive Leaflet.js map. Devices push location with any data payload:
+    { "_location": { "lat": 38.89, "lng": -77.04 }, "speed_kmh": 12 }
+  The hub stores lat/lng alongside the JSON payload for spatial queries.
+version: "1.0.0"
+official: true
+category: visualization
+
+hub_api:
+  - endpoint: "GET /api/projects/{id}/track"
+    description: "Chronological position trail — use for polyline / trail display"
+    params:
+      device_id: "filter to one device"
+      limit: "max points (default 500)"
+      since: "ISO timestamp cutoff"
+
+  - endpoint: "GET /api/projects/{id}/data/spatial"
+    description: "Points within a radius of a coordinate"
+    params:
+      lat: "center latitude"
+      lng: "center longitude"
+      radius_m: "search radius in metres (default 500)"
+      device_id: "optional device filter"
+
+  - endpoint: "POST /api/projects/{id}/data/geofence-check"
+    description: "Check if a device's last position is inside a polygon"
+    body: '{ "device_id": "...", "polygon": [[lat,lng],...] }'
+
+device_firmware:
+  push_with_location: |
+    // Include _location in any data push:
+    String payload = "{\"_location\":{\"lat\":" + String(gps.lat(),6)
+      + ",\"lng\":" + String(gps.lng(),6) + "},\"speed_kmh\":"
+      + String(gps.speed.kmph()) + "}";
+    http.POST(payload);
+  note: >
+    _location is extracted server-side and stored in lat/lng columns.
+    It does not appear in the payload JSON stored in the data store.
+
+tags: [map, gps, location, tracking, spatial, visualization]

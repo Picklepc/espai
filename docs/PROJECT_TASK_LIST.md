@@ -315,7 +315,7 @@ Two features identified in `docs/MOONSHOTS.md` as the highest-leverage additions
 - [x] `api.projects.uploadMedia / listMedia / mediaUrl / deleteMedia / mediaQuota` in api.js
 - [x] Media gallery section in project detail — thumbnail grid; click to view/download/delete
 - [x] "⬆ Upload" button + upload modal with device_id and tags fields
-- [ ] ESP32 firmware helper — `espai_upload_jpeg()` C++ function in seed firmware (0.4.x follow-on)
+- [x] ESP32 firmware helper — `espai_upload_jpeg(hubUrl, projectId, buf, len, deviceId, tags)` — builds multipart/form-data body, POSTs to `/api/projects/{id}/media`; returns HTTP status code
 - [ ] Worker file_id input — worker fetches media file from hub before processing (0.4.x follow-on)
 
 ### M25b — Hub → Device Command Channel (score impact: -1.5 removed)
@@ -331,7 +331,7 @@ Two features identified in `docs/MOONSHOTS.md` as the highest-leverage additions
 - [x] Rules engine `send_command` action — enqueues command to configured device_id
 - [x] `api.devices.sendCommand / commands / cancelCommand` in api.js
 - [x] "⚡" button on every device card — opens send-command modal with recent history
-- [ ] ESP32 seed firmware poll loop — `GET /commands/pending` every 2s, dispatch handlers, POST ack (0.4.x follow-on)
+- [x] ESP32 seed firmware command poll loop — `espai_poll_commands(hubUrl)` called from `loop()`; polls `/commands/pending` every `ESPAI_CMD_POLL_MS` (default 2s); dispatches built-in handlers (reboot, set_config, run_ota_check) and user callback via `espai_register_cmd_handler()`; POSTs ack for each command
 
 ## Milestone 26 — Data Platform Extensions — target: v0.4.x
 
@@ -347,7 +347,7 @@ Analytics capabilities needed by automation and ML projects identified in MOONSH
 - [x] `schedule` field on `RuleCreate` / `RuleUpdate` — pass cron expression when creating/updating rules
 - [x] New Rule modal: schedule input shown when event_type = `system.clock`; all 5 new action types in select including `send_command`
 - [x] `api.rules.upcoming(n)` in api.js
-- [ ] Human-readable cron preview in rule modal (0.4.x follow-on)
+- [x] Cron preview in New Rule modal — hints for common patterns; 5-field validation; debounced live feedback
 - [ ] Timezone support (currently UTC only) (0.4.x follow-on)
 
 ### M26b — Data Aggregation API
@@ -357,17 +357,18 @@ Analytics capabilities needed by automation and ML projects identified in MOONSH
 - [x] Bucket sizes: `1m`, `5m`, `15m`, `1h`, `6h`, `1d`
 - [x] SQLite `json_extract` + `strftime` grouping — no extra storage; works on existing data
 - [x] `api.projects.dataAggregate(id, params)` in api.js
-- [ ] Chart.js card template using aggregate API (0.4.x follow-on)
+- [x] `cards/sensor-chart/` — Chart.js card with field/fn/bucket/since selectors; preview.html queries aggregate API; auto-configures from URL param `?project_id=`
 
 ### M26c — Spatial / GPS Data Model
 
-Location-tagged data and geofence rules for projects with GPS-enabled nodes.
-
-- [ ] `location` metadata field on data push — `{ lat, lng, alt, accuracy_m }` stored alongside JSON payload in new `data_location` column
-- [ ] `GET /api/projects/{id}/data/spatial?lat=&lng=&radius_m=` — return data points within radius
-- [ ] Geofence rule condition — `{ type: "geofence_breach", polygon: [[lat,lng],...], device_id }` fires when a device exits/enters the polygon
-- [ ] Map card template — hub-hosted web app card with Leaflet.js; plots latest device positions; shows sensor value as marker label
-- [ ] `GET /api/projects/{id}/track` — returns chronological position trail for a device (lat/lng/timestamp)
+- [x] `_location` extraction in `push_data()` — if payload contains `{"_location":{"lat":…,"lng":…}, …}`, lat/lng stored in dedicated columns; `_location` stripped from JSON payload
+- [x] `lat REAL`, `lng REAL` columns added to `project_data` via additive migration; spatial index on `(project_id, lat, lng) WHERE lat IS NOT NULL`
+- [x] `GET /api/projects/{id}/data/spatial?lat=&lng=&radius_m=` — bounding-box SQL pre-filter + Haversine Python post-filter
+- [x] `GET /api/projects/{id}/track?device_id=&limit=&since=` — chronological position trail
+- [x] `POST /api/projects/{id}/data/geofence-check` — point-in-polygon (ray-casting) for latest device position
+- [x] `api.projects.dataSpatial / dataTrack / geofenceCheck` in api.js
+- [x] `cards/position-map/` — Leaflet.js card with device tracks, latest position markers, 10s auto-refresh, device filter dropdown, full preview.html
+- [ ] Geofence rule condition integrated with rules engine (0.4.x follow-on — use geofence-check endpoint from a worker for now)
 
 ## Milestone 23 — Matter Bridge (hub-hosted) — target: v0.4.0
 

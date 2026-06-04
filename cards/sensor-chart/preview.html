@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sensor Chart</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3;
+         height: 100vh; display: flex; flex-direction: column; }
+  #toolbar { padding: 8px 14px; background: #161b22; border-bottom: 1px solid #30363d;
+             display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #toolbar h2 { font-size: 13px; font-weight: 600; margin-right: 4px; }
+  select, input { font-size: 12px; padding: 3px 6px; background: #0d1117; color: #e6edf3;
+                  border: 1px solid #30363d; border-radius: 4px; }
+  button { font-size: 12px; padding: 3px 10px; background: #238636; color: #fff;
+           border: none; border-radius: 4px; cursor: pointer; }
+  #chartWrap { flex: 1; padding: 12px; position: relative; }
+  #status { font-size: 11px; color: #7d8590; margin-left: auto; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <h2>📈 Sensor Chart</h2>
+  <label style="font-size:12px">Field</label>
+  <input type="text" id="cfgField" value="temperature" style="width:110px">
+  <label style="font-size:12px">Fn</label>
+  <select id="cfgFn">
+    <option value="avg" selected>avg</option>
+    <option value="min">min</option>
+    <option value="max">max</option>
+    <option value="sum">sum</option>
+    <option value="count">count</option>
+  </select>
+  <label style="font-size:12px">Bucket</label>
+  <select id="cfgBucket">
+    <option value="1m">1 min</option>
+    <option value="5m">5 min</option>
+    <option value="15m">15 min</option>
+    <option value="1h" selected>1 hour</option>
+    <option value="6h">6 hours</option>
+    <option value="1d">1 day</option>
+  </select>
+  <label style="font-size:12px">Since</label>
+  <select id="cfgSince">
+    <option value="1h">1h</option>
+    <option value="6h">6h</option>
+    <option value="12h">12h</option>
+    <option value="1d" selected>24h</option>
+    <option value="7d">7d</option>
+    <option value="30d">30d</option>
+  </select>
+  <button onclick="loadChart()">↻ Load</button>
+  <span id="status"></span>
+</div>
+<div id="chartWrap">
+  <canvas id="chart"></canvas>
+</div>
+
+<script>
+const PROJECT_ID = new URLSearchParams(location.search).get("project_id")
+  || document.referrer.match(/projects\/([^/]+)/)?.[1]
+  || "demo";
+const HUB = location.origin;
+
+let chartInst = null;
+
+async function loadChart() {
+  const field  = document.getElementById("cfgField").value.trim() || "temperature";
+  const fn     = document.getElementById("cfgFn").value;
+  const bucket = document.getElementById("cfgBucket").value;
+  const since  = document.getElementById("cfgSince").value;
+  document.getElementById("status").textContent = "Loading…";
+
+  try {
+    const resp = await fetch(
+      `${HUB}/api/projects/${PROJECT_ID}/data/aggregate?field=${encodeURIComponent(field)}&fn=${fn}&bucket=${bucket}&since=${since}`
+    ).then(r => r.json());
+
+    const labels = resp.rows.map(r => {
+      const d = new Date(r.bucket + "Z");
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    });
+    const values = resp.rows.map(r => r.value != null ? parseFloat(r.value.toFixed(3)) : null);
+
+    const ctx = document.getElementById("chart").getContext("2d");
+    if (chartInst) chartInst.destroy();
+    chartInst = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: `${field} (${fn})`,
+          data: values,
+          borderColor: "#58a6ff",
+          backgroundColor: "rgba(88,166,255,0.1)",
+          pointRadius: values.length > 100 ? 0 : 3,
+          tension: 0.3,
+          spanGaps: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: "#e6edf3", font: { size: 12 } } },
+        },
+        scales: {
+          x: { ticks: { color: "#7d8590", maxTicksLimit: 12 }, grid: { color: "#21262d" } },
+          y: { ticks: { color: "#7d8590" }, grid: { color: "#21262d" } },
+        },
+      },
+    });
+
+    document.getElementById("status").textContent =
+      `${resp.count} buckets · updated ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    document.getElementById("status").textContent = "Error: " + e.message;
+  }
+}
+
+loadChart();
+</script>
+</body>
+</html>
