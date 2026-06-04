@@ -911,8 +911,8 @@ Milestones 0–28 complete. Key shipped capabilities:
 - **M28** — Rule rate limiting (`max_fires_per_hour`)
 - Port-to-hub porting workflow: 4-phase structured task + provision snippets embedded in ESPAI.md
 
-**Open priorities (0.5.x):**
-- Matter device scenes (Scenes cluster for lighting/plug endpoints)
-- Docker sidecar runner for workers
-- Firmware CI builds in release pipeline
-- Linux `.deb` package
+**Open priorities (next 0.4.x):**
+- M29 — Device NVS Config Bridge (operational settings + injected secrets + platform-managed boundary)
+- M30 — Docker sidecar worker runner
+- M31 — Linux `.deb` package
+- Matter device scenes (Scenes cluster for lighting/plug endpoints — M24 item 5)

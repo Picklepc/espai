@@ -63,7 +63,7 @@
 - [x] job queue (SQLite-backed, status tracking)
 - [x] ~~quarantine state~~ — removed; git is the safety net
 - [x] native subprocess runner (poll loop, timeout, job status updates)
-- [ ] Docker sidecar runner (TODO)
+- [ ] Docker sidecar runner — target: v0.4.x (see M30 below)
 - [x] permission enforcement at runtime (permissions.py — policy cap check, env sanitization, process priority)
 
 ## Milestone 7 — Design System
@@ -221,7 +221,7 @@
 
 ### Linux experience
 - [x] **Linux: AppImage** — CI assembles `AppDir` from PyInstaller one-dir output; generates teal-diamond icon via PIL; adds `AppRun` + `.desktop`; builds `ESPAI-{version}-x86_64.AppImage` using appimagetool (FUSE-free extract method for CI compatibility); attached to GitHub Release
-- [ ] **Linux: `.deb` package** — installs binary to `/usr/local/bin/espai`, data skeleton to `/etc/espai/` (read-only defaults) and `~/.local/share/espai/` (user data); systemd service unit included
+- [ ] **Linux: `.deb` package** — installs binary to `/usr/local/bin/espai`, data skeleton to `/etc/espai/` (read-only defaults) and `~/.local/share/espai/` (user data); systemd service unit included — target: v0.4.x
 - [x] **Firmware CI builds** — `build-firmware` matrix job in `.github/workflows/release.yml`; PlatformIO matrix over `seeed_xiao_esp32s3`, `esp32dev`, `lolin_s3`; PIO cache keyed by platformio.ini hash; artifacts `ESPAI-firmware-seed-{env}-{version}.bin`; downloaded and attached by `release` job; release notes include firmware section; empty Wi-Fi → AP mode default
 
 ### First-run experience
@@ -547,7 +547,7 @@ Fine-grained control over how ESPai data maps to Matter attributes and how Matte
 - [x] **Command action editor in UI** — per-project table of all commandable Matter commands for the selected device type; action type dropdown (Publish event / Device API / none) + value input; saves `matter_command_actions` on Save
 - [x] **Inferred device type** — when a project has hub data, keys are matched against `_MATTER_INFER` rules; a "💡 Suggested: X — Use" hint appears in the UI if the suggestion differs from the current selection
 - [x] **Multi-device projects** — `matter_endpoint_per_device: true` in project config; `sync_project()` registers one bridge endpoint per linked node using `{project_id}_{safe_device_id}`; data push hook routes state to per-device endpoint ID; toggle in project Matter UI
-- [ ] **Matter device scenes** — support Matter Scenes cluster for on_off_plug and lighting endpoints; map ESPai event types to scene IDs (0.5.x)
+- [ ] **Matter device scenes** — support Matter Scenes cluster for on_off_plug and lighting endpoints; map ESPai event types to scene IDs — target: v0.4.x
 
 ## Milestone 27 — Bulk Offline Data Upload — v0.4.3
 
@@ -836,3 +836,52 @@ checkin response. No new code needed — but agents need to know this is handled
 - [ ] `.agent/ESP32_RULES.md`: add "Do not register `sta_ssid`, `sta_pass`, `sleep_s`,
   `awake_s`, or any `espai_` prefixed key via `espai_register_config()` — these are
   platform-managed and will be blocked"
+
+---
+
+## M30 — Docker Sidecar Worker Runner — target: v0.4.x
+
+Currently workers run as plain subprocesses spawned by `hub/backend/workers/runner.py`.
+A Docker sidecar runner would execute each worker inside an isolated container, providing
+stronger filesystem and network isolation than permission policy caps alone.
+
+### Architecture
+
+```
+hub/backend/workers/runner.py
+  ├── SubprocessRunner (existing)     — plain subprocess, policy-capped env
+  └── DockerRunner (new)              — docker run --rm per job, volume-mounted inputs/outputs
+```
+
+The runner selects based on `worker.yaml`:
+```yaml
+runner: docker    # or "subprocess" (default)
+image: python:3.12-slim   # base image; hub adds ESPAI worker lib layer
+```
+
+### Checklist
+
+- [ ] `DockerRunner` class in `hub/backend/workers/runner.py` — wraps `docker run --rm`; mounts job inputs as JSON env var or stdin; captures stdout/stderr; honours timeout
+- [ ] `runner` field in worker YAML schema (`subprocess` default, `docker` opt-in)
+- [ ] `image` field in worker YAML — base Docker image to use (default: `python:3.12-slim`)
+- [ ] Hub builds a thin ESPAI layer image on first use (installs worker lib, copies worker files)
+- [ ] Volume mount for worker files (read-only) and output capture
+- [ ] `GET /api/workers/{name}/compat` checks if Docker is available when `runner: docker`
+- [ ] Worker card shows "🐳 Docker" badge when using sidecar runner
+- [ ] Graceful fallback: if Docker not available, log warning and fall back to subprocess runner
+
+---
+
+## M31 — Linux `.deb` Package — target: v0.4.x
+
+Provide a first-class Debian/Ubuntu install path alongside the existing AppImage.
+
+### Checklist
+
+- [ ] `installer/linux/` directory with `build-deb.sh` script
+- [ ] Package layout: binary to `/usr/local/bin/espai`; data skeleton to `/etc/espai/` (read-only defaults); user data to `~/.local/share/espai/`
+- [ ] `systemd` service unit: `espai-hub.service` — starts on login, restarts on failure
+- [ ] `postinst` script: creates data dir, sets permissions, enables service
+- [ ] `.github/workflows/release.yml` — add `build-deb` job producing `ESPAI-{version}-amd64.deb`
+- [ ] Release notes template updated to list `.deb` as a download option alongside AppImage
+- [ ] `docs/NATIVE_FAST_START.md` — add `.deb` install instructions
