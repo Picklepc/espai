@@ -19,6 +19,7 @@ Pull endpoints (called by hub-hosted web apps):
 
 import json
 import math
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -28,6 +29,7 @@ from pydantic import BaseModel
 
 from ..db import get_conn
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 # Keep at most this many rows per project (oldest pruned on each push)
@@ -148,7 +150,7 @@ async def push_data(project_id: str, request: Request):
                 mapped = {smap.get(k, k): v for k, v in body.items()}
                 _mb.update_state(project_id, mapped)
     except Exception:
-        pass
+        log.debug("matter state push failed for project %s", project_id, exc_info=True)
 
     return {"stored": True, "project_id": project_id, "device_id": device_id, "timestamp": now}
 
@@ -164,6 +166,7 @@ def _check_geofences(project_id: str, device_id: str, lat: float, lng: float, no
                 (project_id, device_id),
             ).fetchall()
     except Exception:
+        log.warning("geofence: DB error loading geofences for project %s", project_id)
         return
 
     for gf in rows:
@@ -203,7 +206,8 @@ def _check_geofences(project_id: str, device_id: str, lat: float, lng: float, no
                 )
             evaluate_rules(event)
         except Exception:
-            pass
+            log.exception("geofence: error processing geofence %s for device %s",
+                          gf.get("id"), device_id)
 
 
 # ── Latest ────────────────────────────────────────────────────────────────────

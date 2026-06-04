@@ -2103,6 +2103,12 @@ def get_project_matter(project_id: str):
     return result
 
 
+_MATTER_DEVICE_TYPES = {
+    "on_off_plug", "dimmable_light", "color_light",
+    "temperature_sensor", "humidity_sensor", "occupancy_sensor", "contact_sensor",
+}
+
+
 @router.put("/{project_id}/matter")
 def set_project_matter(project_id: str, body: dict):
     """Write per-project Matter configuration; sync bridge on enable/disable."""
@@ -2111,6 +2117,14 @@ def set_project_matter(project_id: str, body: dict):
     cfg_file = PROJECTS_DIR / project_id / ".ESPAI-project.json"
     if not cfg_file.exists():
         raise HTTPException(404, "Project not found")
+
+    dtype = body.get("matter_device_type")
+    if dtype is not None and dtype not in _MATTER_DEVICE_TYPES:
+        raise HTTPException(
+            400,
+            f"Unknown matter_device_type {dtype!r}. "
+            f"Valid types: {sorted(_MATTER_DEVICE_TYPES)}",
+        )
 
     try:
         full = json.loads(cfg_file.read_text(encoding="utf-8"))

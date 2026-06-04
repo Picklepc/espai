@@ -5,12 +5,15 @@ Provides bridge control, commissioning QR code, and the command webhook
 that the Node.js bridge calls when Matter sends a command to a device.
 """
 
+import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
 from .. import matter_bridge, ws_broker
-from ..rules.engine import fire_event
+from ..db import get_conn
+from ..rules.engine import evaluate_rules
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,7 +60,7 @@ def matter_sync():
 
 
 @router.post("/command")
-async def matter_command(body: dict):
+def matter_command(body: dict):
     """
     Webhook called by the bridge when Matter sends a command to a device.
     Body: { device_id, command, args }
@@ -65,46 +68,69 @@ async def matter_command(body: dict):
     """
     device_id = body.get("device_id", "")
     command   = body.get("command", "")
-    args      = body.get("args", {})
+    args      = body.get("args", {}) or {}
 
     if not device_id or not command:
         raise HTTPException(400, "device_id and command required")
 
     # Read command actions for this project
-    cfg = matter_bridge._read_matter_cfg(device_id)
-    action = None
-    if cfg:
-        action = cfg.get("matter_command_actions", {}).get(command)
+    cfg    = matter_bridge._read_matter_cfg(device_id)
+    action = cfg.get("matter_command_actions", {}).get(command) if cfg else None
 
     if action:
         atype = action.get("type")
         if atype == "event":
-            event_type = action.get("event_type", f"matter.{command}")
-            await fire_event(event_type, {"device_id": device_id, "command": command, **args})
+            _fire_matter_event(
+                action.get("event_type", f"matter.{command}"),
+                {"device_id": device_id, "command": command, **args},
+            )
         elif atype == "device_api":
-            _call_device_api(device_id, action.get("endpoint", ""), command, args)
+            _call_device_api(device_id, action.get("endpoint", ""), args)
         else:
-            log.warning("matter command: unknown action type %s", atype)
+            log.warning("matter command: unknown action type %r", atype)
     else:
-        # Default: fire a generic matter.command event
-        event_type = f"matter.{command}"
-        await fire_event(event_type, {"device_id": device_id, "command": command, **args})
+        # Default: fire a generic matter.<command> event
+        _fire_matter_event(
+            f"matter.{command}",
+            {"device_id": device_id, "command": command, **args},
+        )
 
     # Broadcast over WebSocket so the dashboard can react in real time
-    ws_broker.publish({"type": "matter.command",
-                       "device_id": device_id,
-                       "command": command,
-                       "args": args})
+    ws_broker.broadcast_event_sync({
+        "type":      "matter.command",
+        "device_id": device_id,
+        "command":   command,
+        "args":      args,
+    })
 
     return {"routed": True, "device_id": device_id, "command": command}
 
 
-def _call_device_api(project_id: str, endpoint: str, command: str, args: dict) -> None:
-    """Best-effort call to a device HTTP endpoint based on a command action."""
-    import json as _json
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _fire_matter_event(event_type: str, payload: dict) -> None:
+    """Persist a Matter command as an event and evaluate rules against it."""
+    now = datetime.now(timezone.utc).isoformat()
+    ev  = {
+        "source":     "matter",
+        "event_type": event_type,
+        "payload":    payload,
+        "timestamp":  now,
+    }
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT INTO events (source, event_type, payload, timestamp) VALUES (?,?,?,?)",
+                (ev["source"], event_type, json.dumps(payload), now),
+            )
+    except Exception:
+        log.warning("matter: failed to persist event %s", event_type)
+    evaluate_rules(ev)
+
+
+def _call_device_api(project_id: str, endpoint: str, args: dict) -> None:
+    """Best-effort POST to a device HTTP endpoint based on a command action."""
     import urllib.request
-    from ..db import get_conn
-    from ..config import PROJECTS_DIR
 
     if not endpoint:
         return
@@ -115,15 +141,17 @@ def _call_device_api(project_id: str, endpoint: str, command: str, args: dict) -
             ).fetchone()
         if not proj:
             return
-        dev_ids = _json.loads(proj["devices"] or "[]")
+        dev_ids = json.loads(proj["devices"] or "[]")
         for did in dev_ids:
             with get_conn() as conn:
                 dev = conn.execute("SELECT ip FROM devices WHERE id=?", (did,)).fetchone()
             if dev and dev["ip"]:
                 url = f"http://{dev['ip']}{endpoint}"
-                req = urllib.request.Request(url, method="POST",
-                                             data=_json.dumps(args).encode(),
-                                             headers={"Content-Type": "application/json"})
+                req = urllib.request.Request(
+                    url, method="POST",
+                    data=json.dumps(args).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
                 with urllib.request.urlopen(req, timeout=5):
                     pass
                 return
