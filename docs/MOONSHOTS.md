@@ -747,6 +747,151 @@ A realistic summary of what the ESP32 family can and can't do, based on the proj
 
 ---
 
+---
+
+## M-16 — Mammotion RTK Integration (Local NTRIP Caster)
+
+**Vision:** Tap the existing Mammotion RTK base station (already installed and servicing the Luba robot) to provide centimeter-grade GNSS corrections to any ESP32 project on the local network. The hub acts as an NTRIP caster — a standard TCP server on port 2101 that streams RTCM 3.x correction data. Any project with an RTK-capable GNSS module subscribes as an NTRIP client. The Luba and the RTK base are completely unaffected; this is read-only access to correction data that the base is already generating.
+
+**Why this works:** RTCM corrections are data, not a physical signal. The base station will be broadcasting them to Mammotion's cloud (or directly to the Luba). We intercept a copy. Passive observation — nothing changes for the production system.
+
+### Hardware Stack
+- Mammotion RTK base station (existing production unit — no interruption to Luba)
+- ESPai hub on the same LAN (existing)
+- ESP32 project nodes: **requires RTK-capable GNSS module** — u-blox ZED-F9P (~$25 bare module) or Unicore UM982. Standard GPS modules (NEO-M8N etc.) cannot use RTCM corrections regardless of software. This is the only hardware addition needed per rover/node.
+
+### Discovery Phase (Step 0) — What Is the RTK Base Actually Doing?
+
+Before writing the relay worker, we need to know the protocol. A passive network capture answers this with zero risk to the production system.
+
+**ESPai diagnostic worker: `mammotion-rtk-probe`** (see `workers/mammotion-rtk-probe/`) — a one-shot worker that:
+1. Resolves the RTK base IP (by hostname `mammotion-base.local` or ARP scan)
+2. Runs `tcpdump` for 120 seconds capturing all traffic to/from that IP
+3. Parses the capture looking for: RTCM 0xD3 frames, MQTT connections (port 1883/8883/443), local TCP servers, UDP broadcasts
+4. Reports findings as structured JSON: protocol type, endpoints, RTCM present (yes/no), sample message types
+
+**Expected findings — two likely scenarios:**
+
+**Scenario A: Cloud MQTT relay** (most likely for WiFi-only Mammotion base)
+- Base connects outbound to `mqtt.mammotion.com` or AWS IoT endpoint via TLS 443 or 8883
+- Publishes RTCM corrections wrapped in Protobuf messages
+- Luba robot subscribes to same MQTT topic
+- ESPai path: subscribe to Mammotion MQTT with user credentials, extract RTCM from Protobuf envelope, serve NTRIP locally
+
+**Scenario B: Local radio link** (if base has sub-GHz radio to Luba)
+- Base shows minimal WiFi traffic (only cloud heartbeat/status)
+- RTCM goes out via 868/915 MHz radio — not accessible via WiFi
+- ESPai path: access the base's internal GNSS chip via serial port (requires opening the **spare** unit — production untouched), feed to hub via USB-serial adapter
+
+**Scenario C: Local TCP/UDP RTCM server on the base itself**
+- Base exposes a port on the LAN broadcasting raw RTCM
+- ESPai path: simplest — worker connects and forwards directly to NTRIP
+
+### Two-Stage Worker Architecture
+
+#### Stage 1: `mammotion-rtk-probe` (one-shot diagnostic)
+```
+mode: oneshot
+Purpose: Discover the RTK base's protocol before writing the relay
+Outputs:
+  - protocol: "mqtt_cloud" | "local_tcp" | "local_udp" | "radio_only" | "unknown"
+  - rtcm_present: bool
+  - mqtt_endpoint: str (if found)
+  - local_port: int (if found)
+  - sample_messages: list of decoded frame types
+  - recommendation: str
+```
+
+#### Stage 2: `mammotion-rtk-relay` (service worker — built after probe)
+```
+mode: service
+startup: manual
+Purpose: Continuous NTRIP caster serving RTCM to any local client
+Outputs (events):
+  - rtk.corrections_active: { base_lat, base_lng, fix_quality, corrections_age_ms }
+  - rtk.corrections_lost: { last_good_timestamp, reason }
+  - rtk.client_connected: { client_ip, mountpoint }
+  - rtk.client_disconnected: { client_ip, session_duration_s }
+```
+
+NTRIP server listens on `0.0.0.0:2101`. Mountpoint: `/MAMMOTION` (standard NTRIP convention). Any client connects with `GET /MAMMOTION HTTP/1.0` and receives raw RTCM binary stream.
+
+### ESPai Platform Readiness
+
+| Feature | Status |
+|---------|--------|
+| Service worker infrastructure | ✅ Ready |
+| MQTT client in Python (paho-mqtt) | ✅ Available in hub venv |
+| Serial port access from worker | ✅ pyserial available; USB-serial shows as `/dev/ttyUSB0` |
+| NTRIP caster (TCP server in Python) | ✅ ~50 lines, no dependencies |
+| `pymammotion` Protobuf definitions | 🔧 Install from PyPI: `pip install pymammotion` |
+| Worker outputs RTK status events | ✅ Worker emits JSON events to hub |
+| Recipe: "RTK corrections for project X" | 🔧 Recipe template needed |
+| Project data: position history | ✅ Data push API (M26c spatial model would improve this) |
+| NTRIP client on ESP32 (ZED-F9P) | ✅ Arduino NTRIP client library exists |
+
+### Recipe Pattern: `rtk-enabled-project`
+
+Once the relay worker is running, a recipe describes how a project uses it:
+
+```yaml
+name: RTK-Enabled Outdoor Project
+requires_workers:
+  - mammotion-rtk-relay
+triggers:
+  - event: project.activated
+    actions:
+      - run_worker: mammotion-rtk-relay  # ensure relay is running
+  - event: rtk.corrections_lost
+    actions:
+      - log_event: "RTK corrections lost — position accuracy degraded"
+      - webhook: "{{ project.alert_url }}"
+  - event: rtk.corrections_active
+    actions:
+      - log_event: "RTK active — corrections age {{ corrections_age_ms }}ms"
+```
+
+### ESP32 Firmware Side
+
+Once the hub is serving NTRIP on port 2101, the ESP32 firmware:
+
+```cpp
+// In firmware/src/main.cpp — NTRIP client connecting to hub
+WiFiClient ntripClient;
+ntripClient.connect(HUB_IP, 2101);
+ntripClient.println("GET /MAMMOTION HTTP/1.0");
+ntripClient.println("User-Agent: ESPAI/1.0");
+ntripClient.println();
+
+// Feed RTCM bytes directly to ZED-F9P UART
+while (ntripClient.available()) {
+  uint8_t b = ntripClient.read();
+  gpsSerial.write(b);  // ZED-F9P processes corrections internally
+}
+// ZED-F9P NMEA output now reports RTK Fixed/Float with cm accuracy
+```
+
+### Hub Requirements (RockChip OpenWrt)
+- NTRIP caster: single TCP socket, <1 KB/s of RTCM data. Essentially zero load.
+- Mammotion MQTT relay: one persistent TCP connection. Negligible.
+- If using `pymammotion`: Protobuf decode in Python is fast (<1ms per message).
+
+### Accuracy Expectation
+- RTK Fixed: 1-3 cm horizontal, 2-5 cm vertical
+- RTK Float (base online but < 4 minutes initialization): 20-50 cm
+- Corrections lost (base offline): reverts to standard GPS (2-5 m)
+- Baseline to rover: Mammotion RTK base is typically rated to 10-30 km baseline. For on-property use this is never a constraint.
+
+### Platform Gaps Exposed
+1. **Serial/USB peripheral device type** — hub needs a way to register "USB-serial adapter → GNSS chip" as a hub-attached device (for Scenario B). Currently no model for USB peripherals attached to the hub itself.
+2. **NTRIP-as-a-service** — once this worker exists, it becomes infrastructure that multiple projects share. ESPai has no concept of "shared infrastructure workers" vs "per-project workers" — both use the same worker model, which is fine, but the recipe pattern for "this project depends on this shared worker being running" needs documentation.
+3. M26c (spatial data model) would make the position history much more useful once RTK data is flowing.
+
+### Moonshot Factor: 🌕🌕🌕🌕 (Very High — centimeter accuracy on ESP32 for ~$25 GNSS module)
+### MVP Path: 2-4 weeks after probe confirms Scenario A (cloud MQTT). Scenario B (radio) adds ~2 weeks for serial tap on spare unit.
+
+---
+
 ## Future Moonshots (Stubs — Needs Full Spec)
 
 - **ESP32 Seismograph** — ADXL355 high-precision accelerometer; detect micro-earthquakes, footsteps, machinery vibration. Hub correlation across multiple nodes to triangulate source.
