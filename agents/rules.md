@@ -61,7 +61,7 @@ projects. Unmarked rules apply to all project types.
   coords, personal network names, or device IPs anywhere in source files.
 - **Never read or write**: `.env`, `secrets/`, `*.private.yaml`, `*.private.json`,
   `data/`, `backups/`, `captures/private/`.
-- **Never mark a worker trusted/unquarantined** — quarantine is lifted by a human.
+- **Never delete or bypass git history on workers** — changes are tracked automatically; use `POST /api/workers/{name}/git/rollback` to revert, never `git reset --hard`.
 - **Never bypass safety checks** — no `--force`, `--no-verify`, or similar flags
   unless the task explicitly permits it and the reason is documented.
 - **Never modify pairing state, OTA targets, or release promotion** — human-only.
@@ -200,6 +200,34 @@ env_required:
   - INTEGRATION_BASE_URL
   - INTEGRATION_API_KEY
 ```
+
+## Registry Primitives — when to use what
+
+Every hub-side artefact lives in one of four places. Choose based on what it does, not what it contains.
+
+| Primitive | Location | Use when… |
+|---|---|---|
+| **Worker** | `workers/{name}/` or `projects/{id}/workers/{name}/` | Code needs to *run* — data processing, API polling, event generation, image/audio analysis, persistent MQTT/WebSocket connections |
+| **Card** | `cards/{name}/` | A sensor reading or device state needs a *visual component* — gauge, chart, position map, log viewer, media gallery. Each card has a `preview.html` for testing with simulated data. |
+| **Recipe** | `recipes/{name}/` | A multi-step device + hub *workflow* needs to be documented, validated, and shared. Recipes describe *what* a project does; workers implement the logic. |
+| **Project-scoped worker** | `projects/{id}/workers/{name}/` | Same as a worker, but only one project uses it. The job runner checks here first and falls back to the global `workers/` copy. |
+
+### Decision tree
+
+1. Does it need to **execute Python code**? → **Worker** (global if reusable, project-scoped if specific to one project)
+2. Does it need to **display data visually** in the dashboard? → **Card**
+3. Does it describe a **repeatable device + hub workflow** for documentation or sharing? → **Recipe**
+4. Could an existing card, recipe, or worker serve the purpose with small config changes? → **Reuse it** — the registry summary at the top of your prompt lists what is available.
+
+### Important rules
+
+- **Check the registry summary in your prompt before creating anything new** — it lists all existing cards, recipes, and workers. Duplicates waste tokens and confuse the hub.
+- **Cards read from `/api/projects/{id}/data`** — they never contain business logic. Keep them purely visual.
+- **Recipes validate against `schemas/recipe.schema.json`** — run `GET /api/recipes/{name}/validate` after creating one.
+- **Workers expose a `run(inputs) → dict` function** — return `{"events": [...], ...}`. Never `sys.exit()` or `os._exit()` inside a worker.
+- **Never quarantine** — quarantine was removed. Workers that need review use git rollback instead (`POST /api/workers/{name}/git/rollback`).
+
+---
 
 ## Matter Bridge (M23 — hub-hosted, all project types)
 

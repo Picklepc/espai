@@ -1,6 +1,7 @@
 schema: ESPAI.worker.v1
 name: ffmpeg-compressor
 display_name: FFmpeg Compressor
+version: "1.0.0"
 description: >
   Compresses video files using FFmpeg with configurable codec (H.264/H.265/VP9),
   quality, and resolution. Extracts a thumbnail. Returns file size comparison

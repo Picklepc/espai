@@ -592,8 +592,8 @@ The hub runs *in* Docker; checking for Docker from within the hub is circular. D
 Workers are seeded into the bind-mount only on first run. Pulling a new image doesn't update existing workers. Only workers already present in the old volume are shown; new bundled workers are invisible.
 
 - [x] Docker entrypoint: per-item seeding (always copies new items); version-compare updates official items when bundled version differs; preserves user `enabled`/`startup` fields
-- [ ] Ensure all bundled workers ship with correct `official: true` and a semver `version` field in their YAML
-- [ ] Document the update behaviour in `hub/Dockerfile` comments
+- [x] Ensure all bundled workers ship with correct `official: true` and a semver `version` field — added `version: "1.0.0"` to ffmpeg-compressor and opencv-motion-tagger
+- [x] Document the update behaviour in `hub/Dockerfile` comments
 
 ### W1 — Worker detail view UX
 
@@ -619,7 +619,7 @@ Users accumulate large queues of stale jobs with no way to clean them up.
 Agents don't know cards and recipes exist; `_build_prompt()` never mentions them and `allowed_paths` never includes `cards/` or `recipes/`.
 
 - [x] Add `cards/`, `recipes/`, `workers/` to default `allowed_paths` for `hub-feature`, `port-to-hub`, `api-integration` templates; `workers/` also added for `firmware-feature`
-- [ ] Add a "Registry primitives" paragraph to `agents/rules.md`: when to create a card (display widget), recipe (YAML pipeline), or worker (Python logic)
+- [x] Add a "Registry primitives" section to `agents/rules.md`: decision table (worker/card/recipe/project-scoped worker), decision tree, and rules — including fix of stale quarantine reference
 - [x] `_build_prompt()`: injects registry summary listing existing card, recipe, and worker names so agents know what's available to reuse
 
 ### A2 — Agent task resume and conversation thread

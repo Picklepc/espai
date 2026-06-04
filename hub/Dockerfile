@@ -79,8 +79,13 @@ RUN if [ -f hub/matter/package.json ]; then \
 COPY hub/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Keep a read-only copy of bundled content packs so the entrypoint can seed
-# them into empty bind-mounted directories on first run.
+# Keep a read-only copy of bundled content packs so docker-entrypoint.sh can
+# seed and update them at runtime:
+#   - New items (not present in the bind-mount) are always copied in on start.
+#   - Existing official items are updated when the bundled YAML version differs.
+#   - User-configured fields (enabled, startup) are preserved on updates.
+# Each bundled worker/recipe/card YAML must declare: official: true  and a
+# semver version: "x.y.z" field so the entrypoint can compare versions.
 RUN cp -r workers recipes cards /app-bundled-workers/ 2>/dev/null || true; \
     mkdir -p /app-bundled && \
     cp -r workers  /app-bundled/workers  && \

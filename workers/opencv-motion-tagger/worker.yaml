@@ -1,6 +1,7 @@
 schema: ESPAI.worker.v1
 name: opencv-motion-tagger
 display_name: OpenCV Motion Tagger
+version: "1.0.0"
 description: >
   Detects and tags motion in images, image sequences, or video files using
   background subtraction and contour analysis. Emits motion_detected events.
