@@ -9,7 +9,9 @@ description: >
 version: "1.0.0"
 entrypoint: main.py
 mode: service
-quarantine: true
+startup: manual
+official: true
+enabled: true
 
 permissions:
   network: true

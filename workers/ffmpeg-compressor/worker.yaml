@@ -71,6 +71,8 @@ sandbox:
   preferred: docker
   native_allowed: true
 entrypoint: main.py
+official: true
+enabled: true
 system_deps:
   - name: ffmpeg
     command: ffmpeg

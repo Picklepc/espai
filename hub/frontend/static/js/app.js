@@ -2722,6 +2722,9 @@ async function loadWorkers() {
     const fs        = item.permissions?.filesystem || "—";
     const net       = item.permissions?.network    || "—";
     const isService = item.mode === "service";
+    const isEnabled = item.enabled !== false;
+    const isOfficial = item.official === true;
+    const startupManual = item.startup === "manual";
     const svcInfo   = isService ? (_serviceStatus[wname] || {}) : null;
     const svcState  = svcInfo?.status || "stopped";
     const tags  = [
@@ -2733,13 +2736,16 @@ async function loadWorkers() {
                             crashed: "var(--color-danger)", restarting: "var(--color-warning)",
                             starting: "var(--color-accent)" }[svcState] || "var(--color-text-muted)";
 
-    const card = el("div", "reg-card");
+    const card = el("div", isEnabled ? "reg-card" : "reg-card reg-card-disabled");
 
     card.innerHTML = `
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-        <div class="reg-card-title">${title}</div>
-        <div style="display:flex;gap:5px;flex-shrink:0">
+        <div class="reg-card-title" style="${isEnabled ? "" : "opacity:.55"}">${title}</div>
+        <div style="display:flex;gap:5px;flex-shrink:0;align-items:center">
+          ${!isEnabled ? `<span class="tag" style="color:var(--color-text-muted)" data-tip="Worker is disabled — it will not run jobs or auto-start">⏸ Disabled</span>` : ""}
+          ${isOfficial ? `<span class="tag" style="color:var(--color-accent)" data-tip="Official worker included with ESPAI — copied from the bundled set">✦ Official</span>` : ""}
           ${isService ? `<span class="tag" style="color:${svcStateColor}" data-tip="Service worker — runs persistently, auto-restarts on crash. Status: ${svcState}">● SERVICE</span>` : ""}
+          ${isService && startupManual ? `<span class="tag" style="color:var(--color-text-muted)" data-tip="startup: manual — will not auto-start at hub boot; click Start to run">manual</span>` : ""}
           ${_packBadge(item)}
         </div>
       </div>
@@ -2755,7 +2761,7 @@ async function loadWorkers() {
     const btnRow = el("div", "");
     btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:10px";
 
-    if (isService) {
+    if (isService && isEnabled) {
       // Service worker controls
       const isRunning = ["running", "starting", "restarting"].includes(svcState);
       const startBtn = el("button", "btn btn-secondary btn-sm", "▶ Start");
@@ -2774,12 +2780,40 @@ async function loadWorkers() {
       btnRow.appendChild(stopBtn);
       btnRow.appendChild(restartBtn);
 
-    } else {
+      // Logs button for service workers
+      const logsBtn = el("button", "btn btn-secondary btn-sm", "📋 Logs");
+      logsBtn.dataset.tip = "View recent stdout/stderr from this service worker";
+      logsBtn.onclick = async () => {
+        try {
+          const { lines } = await api.workers.logs(wname, 200);
+          const content = lines.length
+            ? `<pre style="font-size:11px;line-height:1.5;max-height:420px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;background:var(--color-card);border:1px solid var(--color-card-border);border-radius:6px;padding:10px">${lines.map(l => l.replace(/</g,"&lt;")).join("\n")}</pre>`
+            : '<div class="empty-state">No log output captured yet — service may not be running.</div>';
+          openModal(`Logs — ${title}`, content, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }], { wide: true });
+        } catch (err) { alert("Error: " + err.message); }
+      };
+      btnRow.appendChild(logsBtn);
+
+    } else if (!isService && isEnabled) {
       const testBtn = el("button", "btn btn-secondary btn-sm", "▶ Test");
       testBtn.dataset.tip = "Run this worker with test inputs and see the output immediately";
       testBtn.onclick = () => openWorkerTestModal(item);
       btnRow.appendChild(testBtn);
     }
+
+    // Enable/disable toggle
+    const enableBtn = el("button", isEnabled ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm",
+                         isEnabled ? "⏸ Disable" : "▶ Enable");
+    enableBtn.dataset.tip = isEnabled
+      ? "Disable this worker — it will not run jobs or auto-start until re-enabled"
+      : "Enable this worker — it will accept jobs and auto-start if it is a service worker";
+    enableBtn.onclick = async () => {
+      try {
+        await api.workers.patch(wname, { enabled: !isEnabled });
+        loadWorkers();
+      } catch (err) { alert("Error: " + err.message); }
+    };
+    btnRow.appendChild(enableBtn);
 
     const editBtn = el("button", "btn btn-secondary btn-sm", "📁 Edit");
     editBtn.dataset.tip = "Browse and edit this worker's files in the hub editor";

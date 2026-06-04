@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..config import POLICIES_DIR, ROOT, WORKERS_DIR
+from ..config import POLICIES_DIR, WORKERS_DIR
 from .. import git_helper
 from ..registry.loader import scan_folder
 from ..reg_files import (FileWrite, NewItemRequest,
@@ -28,10 +28,24 @@ class WorkerTestRequest(BaseModel):
     timeout: int = 30   # seconds; capped at 60 for test runs
 
 
+class WorkerPatch(BaseModel):
+    enabled: bool | None = None
+    startup: str | None = None  # "auto" | "manual" (service workers only)
+
+
+def _ensure_workers_git() -> None:
+    """Init a git repo at WORKERS_DIR on first use if one doesn't exist."""
+    if not git_helper.is_repo(WORKERS_DIR):
+        git_helper.git_init(WORKERS_DIR, "init: workers registry")
+
+
 @router.post("/new")
 def create_worker(body: NewItemRequest):
     """Scaffold a new worker folder with worker.yaml + main.py + requirements.txt."""
-    return scaffold_worker(WORKERS_DIR, body)
+    result = scaffold_worker(WORKERS_DIR, body)
+    _ensure_workers_git()
+    git_helper.git_commit(WORKERS_DIR, f"init: {body.slug} worker scaffold")
+    return result
 
 
 @router.get("/")
@@ -47,6 +61,44 @@ def get_worker(worker_name: str):
             return w
     raise HTTPException(404, f"Worker {worker_name!r} not found")
 
+
+@router.patch("/{worker_name}")
+def patch_worker(worker_name: str, body: WorkerPatch):
+    """Update enabled/startup fields in a worker's YAML manifest."""
+    folder = _worker_folder(worker_name)
+    yaml_path = WORKERS_DIR / folder / "worker.yaml"
+    if not yaml_path.exists():
+        raise HTTPException(404, f"worker.yaml not found for {worker_name!r}")
+
+    import yaml as _yaml
+    try:
+        with open(yaml_path, encoding="utf-8") as fh:
+            data = _yaml.safe_load(fh) or {}
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to read worker.yaml: {exc}")
+
+    if body.enabled is not None:
+        data["enabled"] = body.enabled
+    if body.startup is not None:
+        if body.startup not in ("auto", "manual"):
+            raise HTTPException(400, "startup must be 'auto' or 'manual'")
+        data["startup"] = body.startup
+
+    try:
+        with open(yaml_path, "w", encoding="utf-8") as fh:
+            _yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to write worker.yaml: {exc}")
+
+    git_helper.git_commit(ROOT, f"config: workers/{folder}/worker.yaml")
+    return {"worker": worker_name, "enabled": data.get("enabled", True), "startup": data.get("startup", "auto")}
+
+
+@router.get("/{worker_name}/logs")
+def get_worker_logs(worker_name: str, lines: int = 100):
+    """Return recent log lines for a running service worker."""
+    from ..workers.runner import get_worker_logs as _get_logs
+    return {"worker": worker_name, "lines": _get_logs(worker_name, min(lines, 500))}
 
 
 @router.get("/{worker_name}/compat")
@@ -229,9 +281,10 @@ def read_worker_file(worker_name: str, file_path: str):
 
 @router.put("/{worker_name}/files/{file_path:path}")
 def write_worker_file(worker_name: str, file_path: str, body: FileWrite):
-    result = write_file(WORKERS_DIR, _worker_folder(worker_name), file_path, body)
     folder = _worker_folder(worker_name)
-    git_helper.git_commit(ROOT, f"edit: workers/{folder}/{file_path}")
+    result = write_file(WORKERS_DIR, folder, file_path, body)
+    _ensure_workers_git()
+    git_helper.git_commit(WORKERS_DIR, f"edit: {folder}/{file_path}")
     return result
 
 

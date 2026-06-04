@@ -9,7 +9,8 @@ description: >
 version: "1.0.0"
 entrypoint: main.py
 mode: oneshot
-quarantine: true
+official: true
+enabled: true
 
 permissions:
   network: true

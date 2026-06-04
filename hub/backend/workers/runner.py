@@ -20,6 +20,7 @@ Workers receive context via environment variables:
 On success, job-mode entrypoints should print a single JSON object to stdout.
 Service-mode entrypoints run indefinitely; stderr is captured for status display.
 """
+import collections
 import json
 import logging
 import os
@@ -42,9 +43,15 @@ POLL_INTERVAL_S      = 5
 MAX_CONCURRENT       = 1
 MAX_SERVICE_RESTARTS = 5
 SERVICE_BASE_DELAY_S = 5   # initial restart delay; doubles each attempt, caps at 60 s
+SERVICE_LOG_LINES    = 500 # ring buffer size for in-memory service logs
 
 _running_count = 0
 _lock          = threading.Lock()
+
+# ── Service log buffers ────────────────────────────────────────────────────────
+# { worker_name: deque[str] } — last N lines of combined stdout+stderr
+_service_logs: dict[str, collections.deque] = {}
+_log_lock = threading.Lock()
 
 # ── Service tracker ───────────────────────────────────────────────────────────
 # { worker_name: { status, restarts, pid, proc, last_error, _stop_requested } }
@@ -121,6 +128,10 @@ def _run_job(job_id: str, worker_name: str, inputs: dict) -> None:
     worker = _resolve_worker(worker_name, project_id)
     if not worker:
         _fail_job(job_id, f"Worker {worker_name!r} not found in registry")
+        return
+
+    if worker.get("enabled") is False:
+        _fail_job(job_id, f"Worker {worker_name!r} is disabled — enable it in the Workers view to run jobs")
         return
 
     violations = check_permissions(worker, policy)
@@ -266,6 +277,26 @@ def start_runner() -> threading.Thread:
 
 # ── Service mode ──────────────────────────────────────────────────────────────
 
+def _append_log(worker_name: str, line: str) -> None:
+    with _log_lock:
+        if worker_name not in _service_logs:
+            _service_logs[worker_name] = collections.deque(maxlen=SERVICE_LOG_LINES)
+        _service_logs[worker_name].append(line)
+
+
+def _pipe_reader(worker_name: str, pipe, label: str) -> None:
+    """Read a pipe line-by-line into the service log buffer."""
+    try:
+        for line in iter(pipe.readline, ""):
+            line = line.rstrip("\n")
+            if line:
+                _append_log(worker_name, line)
+    except Exception:
+        pass
+    finally:
+        pipe.close()
+
+
 def _supervise_service(
     worker_name: str,
     worker_dir: Path,
@@ -276,6 +307,9 @@ def _supervise_service(
     """Supervisor loop: starts the service process and restarts it on crash."""
     restarts = 0
     delay    = SERVICE_BASE_DELAY_S
+
+    with _log_lock:
+        _service_logs[worker_name] = collections.deque(maxlen=SERVICE_LOG_LINES)
 
     while True:
         with _service_lock:
@@ -293,6 +327,8 @@ def _supervise_service(
             _service_tracker[worker_name]["restarts"] = restarts
 
         log.info("Service %r starting (attempt %d)", worker_name, restarts + 1)
+        _append_log(worker_name, f"[ESPAI] Starting (attempt {restarts + 1})")
+        last_err = ""
         try:
             proc = subprocess.Popen(
                 [sys.executable, str(entrypoint)],
@@ -304,25 +340,32 @@ def _supervise_service(
                 _service_tracker[worker_name]["proc"] = proc
                 _service_tracker[worker_name]["pid"]  = proc.pid
 
-            _, stderr = proc.communicate()  # blocks until process exits
+            # Stream stdout + stderr to the log buffer in background threads
+            t_out = threading.Thread(target=_pipe_reader, args=(worker_name, proc.stdout, "out"), daemon=True)
+            t_err = threading.Thread(target=_pipe_reader, args=(worker_name, proc.stderr, "err"), daemon=True)
+            t_out.start(); t_err.start()
+            proc.wait()
+            t_out.join(timeout=2); t_err.join(timeout=2)
+            last_err = f"exited with code {proc.returncode}"
 
         except Exception as exc:
-            stderr = str(exc)
-            with _service_lock:
-                _service_tracker[worker_name]["last_error"] = stderr
+            last_err = str(exc)
+            _append_log(worker_name, f"[ESPAI] Error: {last_err}")
 
         with _service_lock:
             stopped = _service_tracker.get(worker_name, {}).get("_stop_requested")
-            _service_tracker[worker_name]["proc"] = None
-            _service_tracker[worker_name]["pid"]  = None
-            _service_tracker[worker_name]["last_error"] = (stderr or "").strip()[-500:]
+            _service_tracker[worker_name]["proc"]       = None
+            _service_tracker[worker_name]["pid"]        = None
+            _service_tracker[worker_name]["last_error"] = last_err[-500:]
 
         if stopped:
             with _service_lock:
                 _service_tracker[worker_name]["status"] = "stopped"
+            _append_log(worker_name, "[ESPAI] Stopped")
             log.info("Service %r stopped", worker_name)
             return
 
+        _append_log(worker_name, f"[ESPAI] Exited — restarting in {delay}s")
         log.warning("Service %r exited, restarting in %ds", worker_name, delay)
         with _service_lock:
             _service_tracker[worker_name]["status"] = "restarting"
@@ -358,7 +401,7 @@ def _launch_service(worker_name: str, worker: dict) -> bool:
 
 
 def start_services() -> None:
-    """Start all service-mode workers. Called from hub lifespan on startup."""
+    """Start all service-mode workers with startup: auto (default). Called from hub lifespan."""
     policy  = _load_policy()
     workers = scan_folder(WORKERS_DIR, "worker")
     for worker in workers:
@@ -366,6 +409,12 @@ def start_services() -> None:
             continue
         wname = worker.get("name") or worker.get("_folder")
         if not wname:
+            continue
+        if worker.get("enabled") is False:
+            log.info("Service %r is disabled — skipping auto-start", wname)
+            continue
+        if worker.get("startup", "auto") == "manual":
+            log.info("Service %r has startup: manual — skipping auto-start", wname)
             continue
         _launch_service(wname, worker)
 
@@ -379,6 +428,16 @@ def get_service_status() -> dict[str, dict]:
             name: {k: v for k, v in info.items() if k not in ("proc", "_stop_requested")}
             for name, info in _service_tracker.items()
         }
+
+
+def get_worker_logs(worker_name: str, lines: int = 100) -> list[str]:
+    """Return the last N lines of the service log buffer for a worker."""
+    with _log_lock:
+        buf = _service_logs.get(worker_name)
+        if not buf:
+            return []
+        items = list(buf)
+    return items[-lines:] if len(items) > lines else items
 
 
 def service_start(worker_name: str) -> tuple[bool, str]:
@@ -396,6 +455,8 @@ def service_start(worker_name: str) -> tuple[bool, str]:
     )
     if not worker or worker.get("mode") != "service":
         return False, "not a service worker"
+    if worker.get("enabled") is False:
+        return False, "worker is disabled — enable it first"
     ok = _launch_service(worker_name, worker)
     return ok, "started" if ok else "entrypoint not found"
 

@@ -61,8 +61,8 @@
 - [x] worker YAML parser (registry loader)
 - [x] worker registry API
 - [x] job queue (SQLite-backed, status tracking)
-- [x] quarantine state (policy-enforced default)
-- [x] native subprocess runner (poll loop, quarantine guard, timeout, job status updates)
+- [x] ~~quarantine state~~ — removed; git is the safety net
+- [x] native subprocess runner (poll loop, timeout, job status updates)
 - [ ] Docker sidecar runner (TODO)
 - [x] permission enforcement at runtime (permissions.py — policy cap check, env sanitization, process priority)
 
@@ -203,6 +203,7 @@
 - [x] Version history view in project detail — `GET /api/projects/{id}/git/log`; "📋 History" button shows last 40 commits with hash, message, author, timestamp; shows "no git repo" message for projects without own .git
 - [x] OTA firmware version pinned to git SHA — `ota_log.git_sha` column (additive migration); `git_helper.get_head_sha()` captures project HEAD SHA at push time; stored in `push_complete` audit log entry; linked to the firmware's `project_id`
 - [x] Git-SHA-tagged OTA rollback — `import_build` stores `git_sha` (HEAD at build time) in `firmware.json`; git history modal loads project catalog in parallel, builds `sha→entry` map, shows 🎯 Flash button on commits with matching catalog entries; `_openGitFlashModal()` shows device picker and calls `POST /api/ota/push`
+- [x] **Project git card in file listing** — last 8 commits shown inline above file list; Roll Back button per commit calls `POST /api/projects/{id}/git/rollback` (git reset --hard); `.git` folder excluded from file listing; `git_rollback()` in git_helper.py
 
 ## Milestone 19 — Standalone Installer and GitHub Releases
 
@@ -276,7 +277,27 @@ Cleanup, polish, and M18/M19/M20 follow-ons before the 0.4.0 Matter release.
 - [x] **Firmware CI builds** (M19) — PlatformIO matrix job, three board envs, attached to GitHub Release (0.3.2)
 - [x] **RELEASE_CHECKLIST.md** — updated for 0.3.1 with all M17–M22 items (0.3.1)
 - [ ] **Codex CLI adapter first-run login** — `_codex_authenticated()` check; Doctor shows Codex login button; `list_adapters` returns auth state; run_task pre-checks auth and offers login instead of failing
-- [ ] **Auto-apply UX** — prominent indicator in Agent Bench main view when auto-apply is ON; clearer settings label; not just buried in settings modal
+- [x] **Auto-apply (remove human review)** — all agent runs auto-apply on success; review panel, diff view, approve/reject buttons, and `require_human_review` config removed; git rollback replaces diff+approve workflow
+
+## Milestone 22.7 — Worker Management (v0.3.4)
+
+Frictionless worker development with proper lifecycle controls, git history, and observability.
+
+### Shipped in 0.3.4
+- [x] **Official worker flag** — `official: true` in all 8 bundled worker.yaml files; shown as "✦ Official" badge in worker cards; survives `_sync_workers()` version-aware copy
+- [x] **Worker enable/disable** — `enabled: true/false` in worker.yaml (default: true); runner skips disabled workers for jobs and auto-start; `⏸ Disable` / `▶ Enable` toggle button on every worker card; `PATCH /api/workers/{name}` endpoint writes to YAML
+- [x] **Service startup policy** — `startup: auto | manual` in worker.yaml (default: auto); `auto` starts at hub boot; `manual` requires explicit Start click; "manual" badge shown in service worker cards; `start_services()` respects policy
+- [x] **Remove worker quarantine** — quarantine flag, endpoint, and runner enforcement removed; `_worker_is_quarantined` deleted; `quarantine: true` removed from scaffold template; trust model replaced by git rollback
+- [x] **Real-time service worker logs** — stderr streamed line-by-line into an in-memory ring buffer (last 500 lines) per worker; `get_worker_logs()` in runner.py; `GET /api/workers/{name}/logs` endpoint; "📋 Logs" button on running service worker cards
+- [x] **One git repo for all user workers** — `git_init(WORKERS_DIR)` on first worker create or file write; `git_commit(WORKERS_DIR, ...)` on every worker file save and config patch; `_ensure_workers_git()` helper in workers.py
+- [x] **Workers view description updated** — no longer references quarantine; references git rollback
+- [x] **zigbee2mqtt-bridge** defaults to `startup: manual` — MQTT service requiring external broker; should not fail at boot by default
+- [x] **Bundled workers ship with `enabled: true`** — explicit default; scaffold template also writes `enabled: true`
+
+### Pending (pre-0.4.0)
+- [ ] **Workers git card** — show last N commits with Roll Back per commit in the worker file editor (same as project git card); requires WORKERS_DIR git repo (now initialized)
+- [ ] **Worker startup policy UI** — dropdown to toggle `startup: auto / manual` from worker card without editing YAML
+- [ ] **`_sync_workers()` preserves user `enabled`/`startup`** — when bundle version is higher and worker is overwritten, copy user's `enabled` and `startup` values back into the fresh YAML
 
 ## Milestone 23 — Matter Bridge (hub-hosted) — target: v0.4.0
 
