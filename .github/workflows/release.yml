@@ -228,9 +228,61 @@ jobs:
           cache-from: type=gha,scope=docker-${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=docker-${{ matrix.variant }}
 
+  # ── Firmware CI builds (PlatformIO matrix) ──────────────────────────────
+  #
+  # Builds the seed firmware for each supported board env and attaches the
+  # resulting .bin files to the GitHub Release.
+  #
+  # Board envs match platformio.ini [env:*] sections in firmware/seed/.
+  # Wi-Fi credentials are intentionally left empty — the firmware falls back
+  # to AP mode when no SSID is provided, which is the correct CI default.
+  build-firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [seeed_xiao_esp32s3, esp32dev, lolin_s3]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.env }}-${{ hashFiles('firmware/seed/platformio.ini') }}
+          restore-keys: pio-${{ matrix.env }}-
+
+      - name: Build firmware — ${{ matrix.env }}
+        working-directory: firmware/seed
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Rename artifact
+        run: |
+          VER="${{ github.ref_name }}"
+          VER="${VER#v}"
+          ENV="${{ matrix.env }}"
+          cp "firmware/seed/.pio/build/${ENV}/firmware.bin" \
+             "ESPAI-firmware-seed-${ENV}-${VER}.bin"
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: ESPAI-firmware-seed-${{ matrix.env }}-*.bin
+          retention-days: 5
+
   # ── GitHub Release ────────────────────────────────────────────────────────
   release:
-    needs: [build-windows, build-linux, build-docker]
+    needs: [build-windows, build-linux, build-docker, build-firmware]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -250,6 +302,13 @@ jobs:
         with:
           name: ESPAI-linux
           path: artifacts/
+
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-*
+          path: artifacts/
+          merge-multiple: true
 
       - name: Generate release notes
         id: notes
@@ -287,6 +346,17 @@ jobs:
             **Linux:** Works on Ubuntu, Fedora, Arch, and most x86-64 distros.
             System tray requires a compatible desktop environment.
 
+            **ESP32 Seed Firmware** — pre-built binaries, flash via OTA catalog or USB:
+
+            | File | Board |
+            |---|---|
+            | `ESPAI-firmware-seed-seeed_xiao_esp32s3-{version}.bin` | Seeed XIAO ESP32-S3 |
+            | `ESPAI-firmware-seed-esp32dev-{version}.bin` | Generic ESP32-DevKit |
+            | `ESPAI-firmware-seed-lolin_s3-{version}.bin` | LOLIN S3 |
+
+            Built with empty Wi-Fi credentials — device starts in AP mode (`ESPAI-xxxxxx`).
+            Set credentials via NVS (provision firmware) or rebuild with `-D WIFI_SSID=...` flags.
+
             **Docker** — headless, amd64 + arm64, three variants:
 
             | Tag | Includes | Size |
@@ -308,5 +378,6 @@ jobs:
           files: |
             artifacts/ESPAI-Setup-*.exe
             artifacts/ESPAI-*-x86_64.AppImage
+            artifacts/ESPAI-firmware-seed-*.bin
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

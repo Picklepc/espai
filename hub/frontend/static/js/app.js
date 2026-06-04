@@ -2073,7 +2073,10 @@ document.getElementById("projModeSeg").addEventListener("click", async (e) => {
 document.getElementById("btnProjGitLog").onclick = async () => {
   if (!_currentProject) return;
   try {
-    const { commits, is_repo } = await api.projects.gitLog(_currentProject.id, 40);
+    const [{ commits, is_repo }, catalog] = await Promise.all([
+      api.projects.gitLog(_currentProject.id, 40),
+      api.ota.catalogByProject(_currentProject.id).catch(() => []),
+    ]);
     if (!is_repo) {
       openModal("No Git History", `
         <div class="empty-state">
@@ -2083,24 +2086,89 @@ document.getElementById("btnProjGitLog").onclick = async () => {
       `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
       return;
     }
+
+    // Build short-sha → catalog entry map for quick lookup
+    const catalogBySha = new Map();
+    for (const e of catalog) {
+      if (e.git_sha) catalogBySha.set(e.git_sha.substring(0, 7), e);
+    }
+
     const rows = commits.length
-      ? commits.map(c => `
-          <div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--color-card-border)">
-            <code style="font-size:10px;color:var(--color-accent);white-space:nowrap;margin-top:2px">${c.hash}</code>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.message}</div>
-              <div style="font-size:11px;color:var(--color-text-muted)">${c.author} · ${timeAgo(c.timestamp)}</div>
-            </div>
-          </div>`).join("")
+      ? commits.map(c => {
+          const entry = catalogBySha.get(c.hash);
+          const flashBtn = entry
+            ? `<button class="btn btn-secondary btn-sm git-flash-btn"
+                 data-folder="${entry._folder}"
+                 data-label="${(entry.label || entry._folder).replace(/"/g, '&quot;')}"
+                 data-tip="Flash ${entry.label || entry._folder} (${entry.board}) to a linked device"
+                 style="white-space:nowrap">🎯 Flash</button>`
+            : "";
+          return `
+            <div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--color-card-border)">
+              <code style="font-size:10px;color:var(--color-accent);white-space:nowrap;margin-top:2px">${c.hash}</code>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.message}</div>
+                <div style="font-size:11px;color:var(--color-text-muted)">${c.author} · ${timeAgo(c.timestamp)}</div>
+              </div>
+              ${flashBtn}
+            </div>`;
+        }).join("")
       : '<div class="empty-state">No commits yet.</div>';
+
     openModal(`Git History — ${_currentProject.name}`, `
       <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px">
-        Last ${commits.length} commit${commits.length !== 1 ? "s" : ""}. Every file save and approved agent task is auto-committed.
+        Last ${commits.length} commit${commits.length !== 1 ? "s" : ""}.
+        Every file save and approved agent task is auto-committed.
+        ${catalogBySha.size ? `<strong>${catalogBySha.size}</strong> commit${catalogBySha.size !== 1 ? "s have" : " has"} an importable build in the OTA catalog (🎯).` : ""}
       </p>
       <div style="max-height:400px;overflow-y:auto">${rows}</div>
-    `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+    `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }], { wide: true });
+
+    // Wire Flash buttons after modal is rendered
+    document.querySelectorAll(".git-flash-btn").forEach(btn => {
+      btn.onclick = () => _openGitFlashModal(btn.dataset.folder, btn.dataset.label);
+    });
   } catch (err) { alert("Error: " + err.message); }
 };
+
+async function _openGitFlashModal(firmwareId, firmwareLabel) {
+  const linkedIds = Array.isArray(_currentProject?.devices) ? _currentProject.devices : [];
+  if (!linkedIds.length) {
+    openModal("No Linked Devices", `
+      <div class="empty-state">Link a device to this project first — use the Linked Devices section in the project detail.</div>
+    `, [{ label: "Close", cls: "btn btn-secondary", action: closeModal }]);
+    return;
+  }
+  let devices = [];
+  try { devices = await api.devices.list(); } catch (_) {}
+  const linked = devices.filter(d => linkedIds.includes(d.id));
+  const devOpts = linked.map(d =>
+    `<option value="${d.id}">${d.name || d.id} (${d.board || "unknown"})</option>`
+  ).join("");
+
+  openModal(`Flash Build — ${firmwareLabel}`, `
+    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      Push the firmware built at this commit to a linked device over WiFi.
+    </p>
+    <div class="form-field">
+      <label data-tip="Device to receive the firmware over OTA">Target Device</label>
+      <select id="gitFlashDevice">${devOpts}</select>
+    </div>
+    <p style="font-size:12px;color:var(--color-warning);margin-top:8px">
+      The device must be online and paired. It will reboot after flashing.
+    </p>
+  `, [
+    { label: "Flash", cls: "btn btn-primary", action: async () => {
+      const device_id = document.getElementById("gitFlashDevice").value;
+      if (!device_id) return;
+      try {
+        await api.ota.push({ firmware_id: firmwareId, device_id, operator: "git-log" });
+        closeModal();
+      } catch (err) { alert("Flash failed: " + err.message); }
+    }},
+    { label: "Cancel", cls: "btn btn-secondary", action: closeModal },
+  ]);
+}
 
 document.getElementById("btnProjApplyTheme").onclick = async () => {
   if (!_currentProject) return;

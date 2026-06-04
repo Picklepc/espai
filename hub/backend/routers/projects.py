@@ -1162,6 +1162,10 @@ def import_build(project_id: str, channel: str = "dev"):
     proj_name = proj_row["name"] if proj_row else project_id
     label = f"{proj_name} v{version}"
 
+    # Capture the project git SHA at build time so the OTA catalog entry can
+    # be traced back to a specific commit in the project git log.
+    git_sha = git_helper.get_head_sha(proj_dir) or None
+
     meta = {
         "schema":     "ESPAI.firmware.v1",
         "board":      board,
@@ -1175,6 +1179,7 @@ def import_build(project_id: str, channel: str = "dev"):
         "uploaded":   _now(),
         "known_good": False,
         "source_bin": str(latest),
+        "git_sha":    git_sha,
     }
     (entry_dir / "firmware.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta

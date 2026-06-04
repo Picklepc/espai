@@ -202,7 +202,7 @@
 - [x] Auto-commit on file save — `write_project_file` calls `git_helper.git_commit` with message `edit: {path}` after each save; also on agent task approval via `submit_review` with message `agent: {title} (approved)`
 - [x] Version history view in project detail — `GET /api/projects/{id}/git/log`; "📋 History" button shows last 40 commits with hash, message, author, timestamp; shows "no git repo" message for projects without own .git
 - [x] OTA firmware version pinned to git SHA — `ota_log.git_sha` column (additive migration); `git_helper.get_head_sha()` captures project HEAD SHA at push time; stored in `push_complete` audit log entry; linked to the firmware's `project_id`
-- [ ] Rollback to prior firmware tied to git branch / tag
+- [x] Git-SHA-tagged OTA rollback — `import_build` stores `git_sha` (HEAD at build time) in `firmware.json`; git history modal loads project catalog in parallel, builds `sha→entry` map, shows 🎯 Flash button on commits with matching catalog entries; `_openGitFlashModal()` shows device picker and calls `POST /api/ota/push`
 
 ## Milestone 19 — Standalone Installer and GitHub Releases
 
@@ -221,7 +221,7 @@
 ### Linux experience
 - [x] **Linux: AppImage** — CI assembles `AppDir` from PyInstaller one-dir output; generates teal-diamond icon via PIL; adds `AppRun` + `.desktop`; builds `ESPAI-{version}-x86_64.AppImage` using appimagetool (FUSE-free extract method for CI compatibility); attached to GitHub Release
 - [ ] **Linux: `.deb` package** — installs binary to `/usr/local/bin/espai`, data skeleton to `/etc/espai/` (read-only defaults) and `~/.local/share/espai/` (user data); systemd service unit included
-- [ ] **Firmware CI builds** — add `build-firmware` matrix job to `release.yml`; PlatformIO matrix over board envs (`esp32`, `esp32s3`, `esp32c3` to start); artifacts named `ESPAI-firmware-seed-{board}-{version}.bin`; attached to GitHub Release; audit `firmware/seed/platformio.ini` envs first; wire `board:` field in catalog metadata JSON to match OTA router's existing compatibility check
+- [x] **Firmware CI builds** — `build-firmware` matrix job in `.github/workflows/release.yml`; PlatformIO matrix over `seeed_xiao_esp32s3`, `esp32dev`, `lolin_s3`; PIO cache keyed by platformio.ini hash; artifacts `ESPAI-firmware-seed-{env}-{version}.bin`; downloaded and attached by `release` job; release notes include firmware section; empty Wi-Fi → AP mode default
 
 ### First-run experience
 - [x] **First-run scaffold** — `_first_run_scaffold()` in espai.py; when `sys.frozen` and `data/.espai-initialized` absent: copies content packs (recipes/workers/cards/design/agents/policies/schemas) from PyInstaller bundle (_MEIPASS) to exe dir; writes default .env; creates sentinel file; prints welcome message with paths
@@ -272,8 +272,8 @@ Cleanup, polish, and M18/M19/M20 follow-ons before the 0.4.0 Matter release.
 - [ ] **Service health polling** (M20) — background thread in `services.py` started at hub launch; pings pinned services every 60 s with a HEAD or TCP probe; stores result in new `reachable BOOLEAN` column; services view and home grid show green/red dot per tile
 - [ ] **`app-url` uses stored slug** — `project_app_url` reads `slug` column directly instead of re-deriving via `_safe_slug(name)`; removes the one divergence point
 - [ ] **Remove dead `_origOpenSvcEdit`** — line 822 of `app.js` captures an unused reference; delete it
-- [ ] **Git-tagged OTA rollback** (M18) — `import_build` stores current `git_sha` in `firmware.json`; git log view shows 🎯 Flash button on commits that have a matching catalog entry; fleet/project flash modal gains a "prior builds" tab filtered by project + sha
-- [ ] **Firmware CI builds** (M19) — add `build-firmware` matrix job to `release.yml`; PlatformIO matrix over `seeed_xiao_esp32s3`, `esp32dev`, `lolin_s3`; artifacts `ESPAI-firmware-seed-{env}-{version}.bin` attached to GitHub Release
+- [x] **Git-tagged OTA rollback** (M18) — completed; see M18 entry above
+- [x] **Firmware CI builds** (M19) — completed; see M19 entry above
 - [ ] **RELEASE_CHECKLIST.md** — add Section 4/5 items for M17–M22 features; update version strings to 0.3.x
 
 ## Milestone 23 — Matter Bridge (hub-hosted) — target: v0.4.0
