@@ -19,6 +19,26 @@
 
 set -e
 
+# ── Seed bundled content packs into empty bind-mounts ────────────────────────
+# When workers/, recipes/, or cards/ are bind-mounted from the NVMe they start
+# empty, hiding the bundled starters.  Copy them in on first run (sentinel guards
+# against overwriting user edits on subsequent restarts).
+SENTINEL=/app/data/.content-seeded
+if [ ! -f "$SENTINEL" ]; then
+    for dir in workers recipes cards; do
+        target="/app/${dir}"
+        # Only seed if the bind-mount exists but is empty (no subdirectories)
+        if [ -d "$target" ] && [ -z "$(find "$target" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)" ]; then
+            src="/app-bundled/${dir}"
+            if [ -d "$src" ]; then
+                echo "[ESPAI] Seeding ${dir}/ from bundled image content…"
+                cp -rn "${src}/." "${target}/" 2>/dev/null || true
+            fi
+        fi
+    done
+    mkdir -p /app/data && touch "$SENTINEL"
+fi
+
 # ── File-based preload ────────────────────────────────────────────────────────
 if [ -f /preload/requirements.txt ]; then
     echo "[ESPAI] Pre-installing worker dependencies from /preload/requirements.txt…"

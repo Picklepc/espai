@@ -72,6 +72,14 @@ COPY . .
 COPY hub/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
+# Keep a read-only copy of bundled content packs so the entrypoint can seed
+# them into empty bind-mounted directories on first run.
+RUN cp -r workers recipes cards /app-bundled-workers/ 2>/dev/null || true; \
+    mkdir -p /app-bundled && \
+    cp -r workers  /app-bundled/workers  && \
+    cp -r recipes  /app-bundled/recipes  && \
+    cp -r cards    /app-bundled/cards
+
 # Runtime data directories — override with volume mounts in docker-compose
 # so user data lands on the SSD rather than the container layer.
 RUN mkdir -p data projects firmware-catalog

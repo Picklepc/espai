@@ -289,3 +289,39 @@ def create_worker_file(worker_name: str, file_path: str, body: FileWrite):
 @router.delete("/{worker_name}/files/{file_path:path}")
 def delete_worker_file(worker_name: str, file_path: str):
     return delete_file(WORKERS_DIR, _worker_folder(worker_name), file_path)
+
+
+# ── Service worker control ─────────────────────────────────────────────────────
+
+@router.get("/services/status")
+def list_service_status():
+    """Return runtime status of all service-mode workers."""
+    from ..workers.runner import get_service_status
+    return get_service_status()
+
+
+@router.post("/{worker_name}/service/start")
+def start_service_worker(worker_name: str):
+    from ..workers.runner import service_start
+    ok, msg = service_start(worker_name)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"worker": worker_name, "action": "start", "status": msg}
+
+
+@router.post("/{worker_name}/service/stop")
+def stop_service_worker(worker_name: str):
+    from ..workers.runner import service_stop
+    ok, msg = service_stop(worker_name)
+    if not ok:
+        raise HTTPException(404, msg)
+    return {"worker": worker_name, "action": "stop", "status": msg}
+
+
+@router.post("/{worker_name}/service/restart")
+def restart_service_worker(worker_name: str):
+    from ..workers.runner import service_restart
+    ok, msg = service_restart(worker_name)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"worker": worker_name, "action": "restart", "status": msg}

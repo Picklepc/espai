@@ -27,7 +27,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
-from ..config import ROOT, AGENTS_DIR, AGENT_BENCH_DIR, PROJECTS_DIR
+from ..config import ROOT, AGENTS_DIR, AGENT_BENCH_DIR, PROJECTS_DIR, WORKERS_DIR
 from ..db import get_conn
 from .. import git_helper
 
@@ -139,6 +139,37 @@ def _is_blocked(path: str) -> bool:
             if p.endswith(pattern) or pattern in p:
                 return True
     return False
+
+
+def _auto_lift_worker_quarantine(allowed_paths: list[str]) -> None:
+    """
+    When a task is auto-approved (require_human_review=false), lift quarantine
+    on any workers the task was allowed to create or modify.
+    Matches paths like 'workers/{name}/' or 'projects/{id}/workers/{name}/'.
+    """
+    import re as _re
+    import yaml as _yaml
+    worker_names: list[str] = []
+    for p in allowed_paths:
+        m = _re.search(r"workers/([^/]+)/?$", p)
+        if m:
+            worker_names.append(m.group(1))
+
+    for wname in worker_names:
+        yaml_path = WORKERS_DIR / wname / "worker.yaml"
+        if not yaml_path.exists():
+            continue
+        try:
+            with open(yaml_path, encoding="utf-8") as fh:
+                data = _yaml.safe_load(fh) or {}
+            if data.get("quarantine"):
+                data["quarantine"] = False
+                data["trusted"]    = True
+                with open(yaml_path, "w", encoding="utf-8") as fh:
+                    _yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
+                log.info("Auto-lifted quarantine on worker %r (auto-approved task)", wname)
+        except Exception as exc:
+            log.warning("Auto-quarantine-lift failed for %r: %s", wname, exc)
 
 
 def _extra_tool_dirs() -> list[str]:
@@ -1060,8 +1091,11 @@ def run_task(task_id: str, data: RunCreate):
 
     # Build subprocess env: inherit current env + augmented PATH so the CLI can
     # find its own dependencies (node, npm-linked tools, etc.)
+    # HOME must be explicit so Claude Code finds ~/.claude/settings.json even
+    # when spawned as a subprocess (some environments strip HOME from inherited env).
+    _home = os.path.expanduser("~")
     cli_env = {**os.environ, "PATH": augmented_path,
-               "CI": "true", "NO_COLOR": "1", "TERM": "dumb"}
+               "HOME": _home, "CI": "true", "NO_COLOR": "1", "TERM": "dumb"}
 
     # Post a "starting" message so the thread shows activity immediately
     with get_conn() as conn:
@@ -1123,9 +1157,16 @@ def run_task(task_id: str, data: RunCreate):
                 stdout, stderr = "", "Unknown adapter"
                 proc = type("P", (), {"returncode": 1})()
 
-            finished = _now()
-            output = (stdout or "").strip() or (stderr or "").strip() or "(no output)"
+            finished       = _now()
+            output         = (stdout or "").strip() or (stderr or "").strip() or "(no output)"
             snapshot_after = _snapshot_paths(allowed)
+            success        = proc.returncode == 0
+
+            # Respect the require_human_review setting.
+            # When false: auto-approve on success — git commits and quarantine
+            # is lifted automatically; task goes straight to 'approved'.
+            require_review = os.environ.get("ESPAI_AGENT_REQUIRE_REVIEW", "true").lower() != "false"
+            new_task_status = "awaiting_review" if (require_review or not success) else "approved"
 
             with get_conn() as conn:
                 conn.execute(
@@ -1137,18 +1178,46 @@ def run_task(task_id: str, data: RunCreate):
                        SET status=?, finished=?, exit_code=?, snapshot_after=?, log=?
                        WHERE id=?""",
                     (
-                        "completed" if proc.returncode == 0 else "failed",
-                        finished,
-                        proc.returncode,
+                        "completed" if success else "failed",
+                        finished, proc.returncode,
                         json.dumps(snapshot_after),
                         stderr[:4096] if stderr else None,
                         run_id,
                     ),
                 )
                 conn.execute(
-                    "UPDATE agent_tasks SET status='awaiting_review', updated=? WHERE id=?",
-                    (finished, task_id),
+                    "UPDATE agent_tasks SET status=?, updated=? WHERE id=?",
+                    (new_task_status, finished, task_id),
                 )
+                if new_task_status == "approved":
+                    conn.execute(
+                        "INSERT INTO agent_reviews (id, task_id, run_id, decision, notes, created) VALUES (?,?,?,?,?,?)",
+                        (str(uuid.uuid4()), task_id, run_id, "approved",
+                         "auto-applied (require_human_review=false)", finished),
+                    )
+
+            # Auto-approve side-effects: git commit + quarantine lift
+            if new_task_status == "approved":
+                try:
+                    proj_id = None
+                    with get_conn() as conn:
+                        t_row = conn.execute(
+                            "SELECT context_type, context_id, project_id, title FROM agent_tasks WHERE id=?",
+                            (task_id,),
+                        ).fetchone()
+                    if t_row:
+                        proj_id = (t_row["context_id"] if t_row["context_type"] == "project"
+                                   else t_row["project_id"])
+                    if proj_id:
+                        import hub.backend.git_helper as _gh
+                        _gh.git_commit(
+                            PROJECTS_DIR / proj_id,
+                            f"agent: {(t_row['title'] or task_id)[:60]} (auto-applied)",
+                        )
+                except Exception as _exc:
+                    log.warning("Auto-approve git commit failed: %s", _exc)
+                # Lift quarantine on any workers the task created/modified
+                _auto_lift_worker_quarantine(allowed)
 
         except subprocess.TimeoutExpired:
             if proc:

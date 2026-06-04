@@ -2286,11 +2286,9 @@ document.getElementById("btnImportProject").onclick = () => {
 // ── Registry views (recipes, workers, cards) ───────────────────────────────
 
 function _packBadge(item) {
-  const pack = item._pack || "official";
-  const tip  = pack === "custom"
-    ? "Custom (local only) — stored in custom/ subfolder, gitignored"
-    : "Official — tracked in git and published to GitHub";
-  return `<span class="pack-badge ${pack}" data-tip="${tip}">${pack === "custom" ? "⚙ Custom" : "★ Official"}</span>`;
+  // Only show a badge for custom items — "official" is the default and adds noise.
+  if ((item._pack || "official") !== "custom") return "";
+  return `<span class="pack-badge custom" data-tip="Custom (local only) — stored in custom/ subfolder, gitignored">⚙ Custom</span>`;
 }
 
 function renderRegistry(items, containerId, fields) {
@@ -2367,42 +2365,122 @@ async function loadRecipes() {
   }
 }
 
+let _serviceStatus = {};
+
 async function loadWorkers() {
-  const items = await api.workers.list().catch(() => []);
+  const [items, svcStatus] = await Promise.all([
+    api.workers.list().catch(() => []),
+    api.workers.serviceStatus().catch(() => ({})),
+  ]);
+  _serviceStatus = svcStatus || {};
+
   const el_ = document.getElementById("workerList");
   if (!items.length) { el_.innerHTML = '<div class="empty-state">Nothing found.</div>'; return; }
   el_.innerHTML = "";
+
   for (const item of items) {
-    const card  = el("div", "reg-card");
-    const title = item.display_name || item.name || item._folder || "—";
-    const sub   = [item.category, item.runtime].filter(Boolean).join(" · ");
-    const fs    = item.permissions?.filesystem || "—";
-    const net   = item.permissions?.network    || "—";
+    const wname     = item.name || item._folder;
+    const title     = item.display_name || wname || "—";
+    const sub       = [item.category, item.runtime].filter(Boolean).join(" · ");
+    const fs        = item.permissions?.filesystem || "—";
+    const net       = item.permissions?.network    || "—";
+    const isService = item.mode === "service";
+    const svcInfo   = isService ? (_serviceStatus[wname] || {}) : null;
+    const svcState  = svcInfo?.status || "stopped";
     const tags  = [
       ...(item.inputs  || []).map(i => `<span class="tag">${i}</span>`),
       ...(item.outputs || []).map(o => `<span class="tag accent">${o}</span>`),
     ].slice(0, 6).join("");
+
+    const svcStateColor = { running: "var(--color-success)", stopped: "var(--color-text-muted)",
+                            crashed: "var(--color-danger)", restarting: "var(--color-warning)",
+                            starting: "var(--color-accent)" }[svcState] || "var(--color-text-muted)";
+
+    const card = el("div", item.quarantine ? "reg-card reg-card-quarantined" : "reg-card");
+
     card.innerHTML = `
+      ${item.quarantine ? `
+        <div class="quarantine-banner" data-tip="This worker is quarantined — it cannot run jobs until you review and trust it">
+          ⚠ Quarantined — review code before enabling
+        </div>` : ""}
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
         <div class="reg-card-title">${title}</div>
-        ${_packBadge(item)}
+        <div style="display:flex;gap:5px;flex-shrink:0">
+          ${isService ? `<span class="tag" style="color:${svcStateColor}" data-tip="Service worker — runs persistently, auto-restarts on crash. Status: ${svcState}">● SERVICE</span>` : ""}
+          ${_packBadge(item)}
+        </div>
       </div>
       ${sub ? `<div class="reg-card-sub">${sub}</div>` : ""}
+      ${isService && svcInfo?.last_error ? `<div style="font-size:11px;color:var(--color-danger);margin-top:4px;white-space:pre-wrap;max-height:40px;overflow:hidden" data-tip="${svcInfo.last_error}">${svcInfo.last_error.slice(0,120)}…</div>` : ""}
       <div class="tag-row">
         ${tags}
-        <span class="tag" data-tip="Filesystem access level: ${fs}" style="opacity:.7">fs:${fs}</span>
-        <span class="tag" data-tip="Network access level: ${net}" style="opacity:.7">net:${net}</span>
-        ${item.quarantine ? '<span class="tag" data-tip="Imported or generated worker — runs sandboxed until reviewed" style="color:var(--color-warning)">quarantined</span>' : ""}
+        <span class="tag" data-tip="Filesystem access: ${fs}" style="opacity:.7">fs:${fs}</span>
+        <span class="tag" data-tip="Network access: ${net}" style="opacity:.7">net:${net}</span>
       </div>
     `;
-    const wname = item.name || item._folder;
+
     const btnRow = el("div", "");
     btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:10px";
 
-    const testBtn = el("button", "btn btn-secondary btn-sm", "▶ Test");
-    testBtn.dataset.tip = "Run this worker with test inputs and see the output immediately";
-    testBtn.onclick = () => openWorkerTestModal(item);
-    btnRow.appendChild(testBtn);
+    if (item.quarantine) {
+      // Primary CTA for quarantined workers: review and trust
+      const trustBtn = el("button", "btn btn-primary btn-sm", "🔓 Review & Trust");
+      trustBtn.dataset.tip = "View the worker code, then lift quarantine to enable it for production jobs";
+      trustBtn.onclick = async () => {
+        // Show code preview then offer to trust
+        let codePreview = "(could not read files)";
+        try {
+          const files = await api.workers.files(wname);
+          const mainFile = (files || []).find(f => f.path?.endsWith(".py") || f.name?.endsWith(".py"));
+          if (mainFile) {
+            const content = await api.workers.readFile(wname, mainFile.path || mainFile.name);
+            codePreview = (content.content || "").slice(0, 2000);
+          }
+        } catch (_) {}
+        openModal(`Review — ${title}`, `
+          <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:10px;line-height:1.6">
+            Review the worker code below. If it looks safe, click <strong>Trust & Enable</strong>
+            to lift quarantine and allow this worker to run production jobs.
+          </p>
+          <pre style="font-size:11px;line-height:1.5;max-height:300px;overflow-y:auto;background:var(--color-card);border:1px solid var(--color-card-border);border-radius:6px;padding:10px;white-space:pre-wrap;word-break:break-word">${codePreview.replace(/</g,"&lt;")}</pre>
+        `, [
+          { label: "Trust & Enable", cls: "btn btn-primary",
+            tip: "Set quarantine: false, trusted: true in worker.yaml — enables production job execution",
+            action: async () => {
+              try { await api.workers.setQuarantine(wname, false); closeModal(); loadWorkers(); }
+              catch (err) { alert("Error: " + err.message); }
+            }
+          },
+          { label: "Keep Quarantined", cls: "btn btn-secondary", action: closeModal },
+        ]);
+      };
+      btnRow.appendChild(trustBtn);
+
+    } else if (isService) {
+      // Service worker controls
+      const isRunning = ["running", "starting", "restarting"].includes(svcState);
+      const startBtn = el("button", "btn btn-secondary btn-sm", "▶ Start");
+      startBtn.dataset.tip = "Start this service worker"; startBtn.disabled = isRunning;
+      startBtn.onclick = async () => { await api.workers.serviceStart(wname).catch(e => alert(e.message)); loadWorkers(); };
+
+      const stopBtn = el("button", "btn btn-secondary btn-sm", "⏹ Stop");
+      stopBtn.dataset.tip = "Stop this service worker (will not auto-restart)"; stopBtn.disabled = !isRunning;
+      stopBtn.onclick = async () => { await api.workers.serviceStop(wname).catch(e => alert(e.message)); setTimeout(loadWorkers, 800); };
+
+      const restartBtn = el("button", "btn btn-secondary btn-sm", "↺ Restart");
+      restartBtn.dataset.tip = "Restart this service worker";
+      restartBtn.onclick = async () => { await api.workers.serviceRestart(wname).catch(e => alert(e.message)); setTimeout(loadWorkers, 800); };
+
+      btnRow.appendChild(startBtn);
+      btnRow.appendChild(stopBtn);
+      btnRow.appendChild(restartBtn);
+
+    } else {
+      const testBtn = el("button", "btn btn-secondary btn-sm", "▶ Test");
+      testBtn.dataset.tip = "Run this worker with test inputs and see the output immediately";
+      testBtn.onclick = () => openWorkerTestModal(item);
+      btnRow.appendChild(testBtn);
+    }
 
     const editBtn = el("button", "btn btn-secondary btn-sm", "📁 Edit");
     editBtn.dataset.tip = "Browse and edit this worker's files in the hub editor";
@@ -2411,9 +2489,7 @@ async function loadWorkers() {
 
     const taskBtn = el("button", "btn btn-secondary btn-sm", "⚡ Agent Task");
     taskBtn.dataset.tip = "Create an agent task scoped to this worker — modify, extend, or debug it";
-    taskBtn.onclick = () => _openAgentTaskModal({
-      context_type: "worker", context_id: wname, context_label: title,
-    });
+    taskBtn.onclick = () => _openAgentTaskModal({ context_type: "worker", context_id: wname, context_label: title });
     btnRow.appendChild(taskBtn);
 
     const delBtn = el("button", "btn btn-danger btn-sm", "✕");
@@ -3785,6 +3861,7 @@ document.getElementById("btnNewRule").onclick = () => {
 // ── Agent Bench view ───────────────────────────────────────────────────────
 
 let _abCurrentTask = null;
+let _abConfig = { require_human_review: true, claude_tool_mode: "full", enabled: false };
 let _abStatusFilter = "";
 let _abPollTimer = null;
 let _abTaskProjectMode = "dev"; // approval mode of the current task's project
@@ -3832,6 +3909,7 @@ async function loadAgentBench() {
   let config;
   try {
     config = await api.agentBench.getConfig();
+    _abConfig = config;
   } catch (_) {
     config = { enabled: false };
   }
@@ -4027,15 +4105,35 @@ function _abUpdateRunControls(task) {
   const adapterDesc = document.getElementById("abAdapterDesc");
   const resetBtn    = document.getElementById("btnAbReset");
 
-  const canRun      = ["draft", "needs_changes"].includes(task.status);
-  const isStuck     = task.status === "running";
-  const needsPaste  = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
-  const needsReview = task.status === "awaiting_review" && !needsPaste;
+  const requireReview = _abConfig.require_human_review !== false;
+  const canRun        = ["draft", "needs_changes"].includes(task.status);
+  const isStuck       = task.status === "running";
+  const needsPaste    = task.status === "awaiting_review" && task.latest_run?.status === "awaiting_input";
+  // Show review panel only when review is required and task is awaiting it
+  const needsReview   = task.status === "awaiting_review" && !needsPaste && requireReview;
+  // Auto-applied: task approved without human review
+  const autoApplied   = task.status === "approved" && !requireReview;
 
   runPanel.style.display = canRun ? "" : "none";
   pastePanel.classList.toggle("hidden", !needsPaste);
   reviewPanel.classList.toggle("hidden", !needsReview);
   if (resetBtn) resetBtn.style.display = isStuck ? "" : "none";
+
+  // Show auto-applied banner when review is disabled and task completed
+  let autoBanner = document.getElementById("abAutoAppliedBanner");
+  if (autoApplied) {
+    if (!autoBanner) {
+      autoBanner = document.createElement("div");
+      autoBanner.id = "abAutoAppliedBanner";
+      autoBanner.style.cssText = "padding:10px 14px;background:rgba(26,175,196,.1);border:1px solid rgba(26,175,196,.3);border-radius:6px;font-size:13px;color:var(--color-accent);margin-top:10px";
+      autoBanner.dataset.tip = "Changes were applied automatically because require_human_review is off — use git log in the project to review history";
+      reviewPanel.parentNode?.insertBefore(autoBanner, reviewPanel);
+    }
+    autoBanner.textContent = "✓ Auto-applied — changes committed to git. View Diff to review or use ↩ Continue in Terminal for follow-ups.";
+    autoBanner.style.display = "";
+  } else if (autoBanner) {
+    autoBanner.style.display = "none";
+  }
 
   if (needsReview) _abApplyReviewMode(_abTaskProjectMode);
 
@@ -4384,7 +4482,7 @@ function _abWireEvents() {
       </label>
       <label style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px">
         <input type="checkbox" id="abSetDevDeploy" ${cfg.allow_dev_device_deploy ? "checked" : ""}
-          data-tip="Allow agent tasks to push firmware to dev-lane devices"> Allow dev device deployment
+          data-tip="Allow agent tasks to push firmware to dev-lane devices — enforcement coming in a future release"> Allow dev device deployment <span style="font-size:10px;color:var(--color-text-muted);margin-left:4px">(not yet enforced)</span>
       </label>
       <div class="form-field">
         <label data-tip="Comma-separated list of adapter IDs Claude can use — e.g. manual, claude-code-cli">Allowed adapters</label>

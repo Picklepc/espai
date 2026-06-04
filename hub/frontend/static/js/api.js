@@ -97,6 +97,10 @@ const api = {
     writeFile:     (n, path, c) => apiFetch(`/api/workers/${encodeURIComponent(n)}/files/${path}`, { method: "PUT",  body: JSON.stringify({ content: c }) }),
     createFile:    (n, path, c) => apiFetch(`/api/workers/${encodeURIComponent(n)}/files/${path}`, { method: "POST", body: JSON.stringify({ content: c || "" }) }),
     deleteFile:    (n, path)  => apiFetch(`/api/workers/${encodeURIComponent(n)}/files/${path}`, { method: "DELETE" }),
+    serviceStatus: ()         => apiFetch("/api/workers/services/status"),
+    serviceStart:  (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/service/start`,   { method: "POST" }),
+    serviceStop:   (n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/service/stop`,    { method: "POST" }),
+    serviceRestart:(n)        => apiFetch(`/api/workers/${encodeURIComponent(n)}/service/restart`, { method: "POST" }),
   },
   recipes: {
     list:      ()      => apiFetch("/api/recipes/"),

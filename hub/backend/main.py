@@ -30,7 +30,7 @@ from . import __version__ as HUB_VERSION
 from .discovery.mdns import mdns_manager
 from . import mqtt_publisher, theme_scheduler, ws_broker
 from .routers import admin, agent_bench, cards, data, design, devices, events, jobs, ota, packages, projects, recipes, rules, services, terminal, workers
-from .workers.runner import start_runner
+from .workers.runner import start_runner, start_services
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +88,7 @@ async def lifespan(app: FastAPI):
         conn.execute("UPDATE agent_tasks SET status='draft', updated=? WHERE status='running'", (now,))
         conn.execute("UPDATE agent_runs  SET status='failed', finished=? WHERE status='running'", (now,))
     start_runner()
+    start_services()
     # Run blocking zeroconf calls in a thread so they don't deadlock uvicorn's
     # event loop. On some network stacks (e.g. OpenWrt) register_service() times
     # out inside the async context and raises EventLoopBlocked.
