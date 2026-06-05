@@ -80,6 +80,75 @@ static bool                  g_otaError  = false;
 static mbedtls_md_context_t  g_shaCtx;
 static bool                  g_shaActive = false;
 
+// ── ESPAI NVS Config Registration ─────────────────────────────────────────
+// Declared here (before route handlers) so handleManifest, hubCheckinFull,
+// and espai_poll_commands can all reference these types and globals.
+
+#define ESPAI_CONFIG_OPERATIONAL  0   // readable and writable from hub (default)
+#define ESPAI_CONFIG_SECRET       1   // hub can write but NEVER read back
+
+static const char* _CONFIG_BLOCKLIST[] = {
+    "sta_ssid", "sta_pass", "sleep_s", "awake_s", "awake_w", nullptr
+};
+
+static bool _isBlockedConfigKey(const char* key) {
+    for (int i = 0; _CONFIG_BLOCKLIST[i] != nullptr; i++) {
+        if (strcmp(key, _CONFIG_BLOCKLIST[i]) == 0) return true;
+    }
+    return strncmp(key, "espai_", 6) == 0;
+}
+
+typedef void (*espai_config_cb_t)(const char* new_value);
+
+struct _EspaiConfigEntry {
+    char      key[16];
+    char      type[8];
+    char      default_val[32];
+    char      description[64];
+    espai_config_cb_t cb;
+    uint8_t   flags;
+};
+
+static _EspaiConfigEntry _configRegistry[24];
+static int               _configCount = 0;
+
+void espai_register_config(
+    const char*       key,
+    const char*       type,
+    const char*       default_val,
+    const char*       description,
+    espai_config_cb_t on_change = nullptr,
+    uint8_t           flags     = ESPAI_CONFIG_OPERATIONAL
+) {
+    if (_configCount >= 24 || !key || _isBlockedConfigKey(key)) return;
+    _EspaiConfigEntry& e = _configRegistry[_configCount++];
+    strncpy(e.key,         key,         sizeof(e.key)         - 1);
+    strncpy(e.type,        type,        sizeof(e.type)        - 1);
+    strncpy(e.default_val, default_val, sizeof(e.default_val) - 1);
+    strncpy(e.description, description, sizeof(e.description) - 1);
+    e.key[sizeof(e.key)-1]                 = '\0';
+    e.type[sizeof(e.type)-1]               = '\0';
+    e.default_val[sizeof(e.default_val)-1] = '\0';
+    e.description[sizeof(e.description)-1] = '\0';
+    e.cb    = on_change;
+    e.flags = flags;
+}
+
+void espai_init_config() {
+    if (_configCount == 0) return;
+    Preferences prefs;
+    prefs.begin("espai", false);
+    for (int i = 0; i < _configCount; i++) {
+        _EspaiConfigEntry& e = _configRegistry[i];
+        String val = prefs.getString(e.key, e.default_val);
+        if (!prefs.isKey(e.key)) prefs.putString(e.key, e.default_val);
+        if (e.cb) e.cb(val.c_str());
+        Serial.printf("[cfg] %s = %s%s\n", e.key, val.c_str(),
+                      e.flags == ESPAI_CONFIG_SECRET ? " (secret)" : "");
+    }
+    prefs.end();
+}
+
 // ── Node ID — derived from MAC, not the raw MAC ─────────────────────────────
 
 String deriveNodeId() {
@@ -405,84 +474,6 @@ int espai_upload_jpeg(const String& hubUrl, const String& projectId,
 #else
   return -1;
 #endif
-}
-
-// ── ESPAI NVS Config Registration ─────────────────────────────────────────
-// Allows firmware code to declare configurable NVS keys with type, default,
-// description, and an on-change callback. The hub reads the schema from
-// /api/manifest and writes values via the set_config command.
-
-#define ESPAI_CONFIG_OPERATIONAL  0   // readable and writable from hub (default)
-#define ESPAI_CONFIG_SECRET       1   // hub can write but NEVER read back
-
-// Platform-managed keys the config API must never expose or accept writes for.
-static const char* _CONFIG_BLOCKLIST[] = {
-    "sta_ssid", "sta_pass", "sleep_s", "awake_s", "awake_w", nullptr
-};
-
-static bool _isBlockedConfigKey(const char* key) {
-    for (int i = 0; _CONFIG_BLOCKLIST[i] != nullptr; i++) {
-        if (strcmp(key, _CONFIG_BLOCKLIST[i]) == 0) return true;
-    }
-    // Block any key prefixed "espai_"
-    return strncmp(key, "espai_", 6) == 0;
-}
-
-typedef void (*espai_config_cb_t)(const char* new_value);
-
-struct _EspaiConfigEntry {
-    char      key[16];
-    char      type[8];
-    char      default_val[32];
-    char      description[64];
-    espai_config_cb_t cb;
-    uint8_t   flags;
-};
-
-static _EspaiConfigEntry _configRegistry[24];
-static int               _configCount = 0;
-
-// Register a configurable NVS setting. Call once per key in setup() before
-// connectWifi(). The callback fires at boot AND on every set_config command.
-void espai_register_config(
-    const char*       key,
-    const char*       type,
-    const char*       default_val,
-    const char*       description,
-    espai_config_cb_t on_change = nullptr,
-    uint8_t           flags     = ESPAI_CONFIG_OPERATIONAL
-) {
-    if (_configCount >= 24 || !key || _isBlockedConfigKey(key)) return;
-    _EspaiConfigEntry& e = _configRegistry[_configCount++];
-    strncpy(e.key,         key,         sizeof(e.key)         - 1);
-    strncpy(e.type,        type,        sizeof(e.type)        - 1);
-    strncpy(e.default_val, default_val, sizeof(e.default_val) - 1);
-    strncpy(e.description, description, sizeof(e.description) - 1);
-    e.key[sizeof(e.key)-1]               = '\0';
-    e.type[sizeof(e.type)-1]             = '\0';
-    e.default_val[sizeof(e.default_val)-1] = '\0';
-    e.description[sizeof(e.description)-1] = '\0';
-    e.cb    = on_change;
-    e.flags = flags;
-}
-
-// Called once in setup(). Reads each registered key from NVS, writes the
-// compiled-in default if absent, then fires the callback so the app applies
-// the value without any extra boot-time code paths.
-void espai_init_config() {
-    if (_configCount == 0) return;
-    Preferences prefs;
-    prefs.begin("espai", false);
-    for (int i = 0; i < _configCount; i++) {
-        _EspaiConfigEntry& e = _configRegistry[i];
-        String val = prefs.getString(e.key, e.default_val);
-        // Write default to NVS if the key was absent
-        if (!prefs.isKey(e.key)) prefs.putString(e.key, e.default_val);
-        if (e.cb) e.cb(val.c_str());
-        Serial.printf("[cfg] %s = %s%s\n", e.key, val.c_str(),
-                      e.flags == ESPAI_CONFIG_SECRET ? " (secret)" : "");
-    }
-    prefs.end();
 }
 
 // ── GET /api/config — operational keys only ───────────────────────────────

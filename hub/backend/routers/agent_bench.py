@@ -727,6 +727,14 @@ def install_tool(tool_name: str):
 
     cmd = meta["cmd_fn"](npm)
 
+    # Pass the augmented PATH to the subprocess so that npm's own child
+    # processes (e.g. `node install.cjs` in postinstall scripts) can find
+    # node, python, etc. even when the hub was launched with a stripped PATH.
+    augmented_env = os.environ.copy()
+    augmented_env["PATH"] = os.pathsep.join(
+        [os.environ.get("PATH", "")] + _extra_tool_dirs()
+    )
+
     try:
         proc = subprocess.run(
             cmd,
@@ -734,6 +742,7 @@ def install_tool(tool_name: str):
             text=True,
             timeout=180,
             cwd=str(ROOT),
+            env=augmented_env,
         )
         output = ((proc.stdout or "") + (proc.stderr or "")).strip()
         success = proc.returncode == 0

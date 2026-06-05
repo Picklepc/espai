@@ -25,6 +25,21 @@
 #define MyAppPublisher "ESPAI Project"
 #define MyAppURL       "https://github.com/espai/espai"
 
+; ── Code signing ─────────────────────────────────────────────────────────────
+; Windows Smart App Control (SAC) and SmartScreen both require a code-signing
+; certificate to trust unsigned executables. Without one, SAC may block the
+; installer, the app, and the uninstaller.
+;
+; To enable signing, set SIGNTOOL_PATH and SIGNTOOL_PARAMS in your environment
+; and uncomment the SignTool= line below:
+;
+;   SignTool=signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f "cert.pfx" /p "%CERT_PASS%" $f
+;
+; Workaround when SAC blocks the uninstaller:
+;   Settings → Privacy & Security → Windows Security →
+;   App & browser control → Smart App Control → Off
+;   Then uninstall, then re-enable SAC if desired.
+
 [Setup]
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -33,6 +48,13 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
+; Stable GUID — never change this; Windows uses it to associate installer/uninstaller.
+AppId={{8F3C2A1B-4D7E-4F9A-B2C3-D1E5F6A7B8C9}
+; Version info embedded in the generated uninstaller exe.
+VersionInfoVersion={#MyAppVersion}.0
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} Hub — Local-first ESP32 fleet management
+VersionInfoProductName={#MyAppName}
 ; Install to per-user Programs folder — no elevation required.
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -92,47 +114,41 @@ Filename: "taskkill"; Parameters: "/F /IM {#MyAppExe}"; \
 [Code]
 var
   DeleteUserData: Boolean;
+  DataPromptShown: Boolean;
 
-// Ask the user whether to delete their data directory before uninstall begins.
-// Called once by Inno Setup before the uninstall progress UI appears.
-procedure InitializeUninstallProgressForm();
-var
-  DataDir: String;
-begin
-  DataDir := ExpandConstant('{userdocs}\{#MyAppName}');
-  if DirExists(DataDir) then
-  begin
-    DeleteUserData := MsgBox(
-      'Do you want to delete your ESPAI user data?' + #13#10#13#10 +
-      DataDir + #13#10#13#10 +
-      'This folder contains your projects, database, firmware catalog,' + #13#10 +
-      'content packs, and settings.' + #13#10#13#10 +
-      'Click Yes to permanently delete your data.' + #13#10 +
-      'Click No to keep it (you can re-use it after reinstalling).',
-      mbConfirmation,
-      MB_YESNO or MB_DEFBUTTON2   // default = No (keep data)
-    ) = IDYES;
-  end
-  else
-    DeleteUserData := False;
-end;
-
-// Clean up autostart registry key and optionally delete user data.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;
 begin
+  // usUninstall fires just before files are removed — reliable hook regardless
+  // of whether uninstall was triggered from Settings, Control Panel, or directly.
+  if (CurUninstallStep = usUninstall) and (not DataPromptShown) then
+  begin
+    DataPromptShown := True;
+    DataDir := ExpandConstant('{userdocs}\{#MyAppName}');
+    if DirExists(DataDir) then
+    begin
+      DeleteUserData := MsgBox(
+        'Remove ESPAI user data?' + #13#10#13#10 +
+        DataDir + #13#10#13#10 +
+        'This contains your projects, database, firmware catalog,' + #13#10 +
+        'content packs, and settings.' + #13#10#13#10 +
+        'Yes = delete everything     No = keep (can re-use after reinstall)',
+        mbConfirmation,
+        MB_YESNO or MB_DEFBUTTON2
+      ) = IDYES;
+    end;
+  end;
+
   if CurUninstallStep = usPostUninstall then
   begin
-    // Always clean up the autostart registry key even if the user toggled it
-    // via the tray menu after installation.
+    // Always remove the autostart registry entry.
     RegDeleteValue(
       HKEY_CURRENT_USER,
       'Software\Microsoft\Windows\CurrentVersion\Run',
       '{#MyAppName}'
     );
-
-    // Delete user data only if the user explicitly chose Yes above.
+    // Delete user data only if user explicitly chose Yes.
     if DeleteUserData then
     begin
       DataDir := ExpandConstant('{userdocs}\{#MyAppName}');
