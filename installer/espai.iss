@@ -90,14 +90,54 @@ Filename: "taskkill"; Parameters: "/F /IM {#MyAppExe}"; \
   Flags: runhidden; RunOnceId: "KillESPAI"
 
 [Code]
-// Clean up autostart registry key on uninstall even if the user toggled it
-// via the tray menu after installation (which doesn't carry an uninsdeletevalue flag).
+var
+  DeleteUserData: Boolean;
+
+// Ask the user whether to delete their data directory before uninstall begins.
+// Called once by Inno Setup before the uninstall progress UI appears.
+procedure InitializeUninstallProgressForm();
+var
+  DataDir: String;
+begin
+  DataDir := ExpandConstant('{userdocs}\{#MyAppName}');
+  if DirExists(DataDir) then
+  begin
+    DeleteUserData := MsgBox(
+      'Do you want to delete your ESPAI user data?' + #13#10#13#10 +
+      DataDir + #13#10#13#10 +
+      'This folder contains your projects, database, firmware catalog,' + #13#10 +
+      'content packs, and settings.' + #13#10#13#10 +
+      'Click Yes to permanently delete your data.' + #13#10 +
+      'Click No to keep it (you can re-use it after reinstalling).',
+      mbConfirmation,
+      MB_YESNO or MB_DEFBUTTON2   // default = No (keep data)
+    ) = IDYES;
+  end
+  else
+    DeleteUserData := False;
+end;
+
+// Clean up autostart registry key and optionally delete user data.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDir: String;
 begin
   if CurUninstallStep = usPostUninstall then
+  begin
+    // Always clean up the autostart registry key even if the user toggled it
+    // via the tray menu after installation.
     RegDeleteValue(
       HKEY_CURRENT_USER,
       'Software\Microsoft\Windows\CurrentVersion\Run',
       '{#MyAppName}'
     );
+
+    // Delete user data only if the user explicitly chose Yes above.
+    if DeleteUserData then
+    begin
+      DataDir := ExpandConstant('{userdocs}\{#MyAppName}');
+      if DirExists(DataDir) then
+        DelTree(DataDir, True, True, True);
+    end;
+  end;
 end;

@@ -457,13 +457,23 @@ def cmd_serve(args):
         t.start()
 
     os.chdir(INSTALL_DIR)
-    uvicorn.run(
-        HUB_MODULE,
-        host=host,
-        port=port,
-        reload=reload,
-        log_level="info",
-    )
+
+    if getattr(sys, "frozen", False):
+        # Frozen build: import the app object directly.
+        # Using the string "hub.backend.main:app" would cause uvicorn to call
+        # importlib.import_module at runtime — which fails because PyInstaller's
+        # static analysis never followed that string into hub/backend/.
+        # This explicit import forces PyInstaller to bundle the full hub tree.
+        from hub.backend.main import app as _hub_app  # noqa: F401 (pyinstaller hook)
+        uvicorn.run(_hub_app, host=host, port=port, log_level="info")
+    else:
+        uvicorn.run(
+            HUB_MODULE,
+            host=host,
+            port=port,
+            reload=reload,
+            log_level="info",
+        )
 
 
 def cmd_tray(args):

@@ -25,6 +25,15 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH)
 
+# Make hub.* importable during analysis so collect_submodules can find it.
+# This is needed because espai.py references hub.backend.main as a string
+# in the non-frozen path; without this, PyInstaller won't follow the imports.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
+_hub_hidden = collect_submodules("hub")
+
 block_cipher = None
 
 
@@ -61,6 +70,9 @@ a = Analysis(
     binaries=[],
     datas=_datas(),
     hiddenimports=[
+        # ── hub.backend — all submodules (belt-and-suspenders alongside the
+        # direct import in espai.py; catches dynamically-loaded routers) ──
+        *_hub_hidden,
         # FastAPI + uvicorn internals not always auto-detected
         "uvicorn.lifespan.on",
         "uvicorn.protocols.http.auto",
