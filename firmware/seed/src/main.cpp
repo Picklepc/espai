@@ -350,8 +350,6 @@ void hubCheckinFull(const String& hubUrl) {
     prefs.end();
   }
   http.end();
-#else
-  return 0;
 #endif
 }
 
@@ -566,15 +564,16 @@ void espai_poll_commands(const String& hubUrl) {
             prefs.begin("espai", false);
             prefs.putString(key, val);
             prefs.end();
+            // Don't log secret values
+            bool _isSecret = false;
+            for (int _si = 0; _si < _configCount; _si++) {
+              if (strcmp(_configRegistry[_si].key, key) == 0 &&
+                  _configRegistry[_si].flags == ESPAI_CONFIG_SECRET) {
+                _isSecret = true; break;
+              }
+            }
             Serial.printf("[cmd] set_config: %s = %s\n", key,
-                          // Don't log secret values
-                          ([&](){
-                            for(int i=0;i<_configCount;i++)
-                              if(strcmp(_configRegistry[i].key,key)==0 &&
-                                 _configRegistry[i].flags==ESPAI_CONFIG_SECRET)
-                                return "***";
-                            return val;
-                          })());
+                          _isSecret ? "***" : val);
             // Fire registered callback immediately — no reboot required
             for (int i = 0; i < _configCount; i++) {
               if (strcmp(_configRegistry[i].key, key) == 0) {
