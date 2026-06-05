@@ -1785,7 +1785,16 @@ async function openProject(p) {
   document.getElementById("projDetailName").textContent = p.name;
   document.getElementById("projDetailDesc").textContent = p.description || "";
   const slugEl = document.getElementById("projDetailSlug");
-  if (slugEl) slugEl.textContent = p.slug ? `hostname: ${p.slug}.local` : "";
+  if (slugEl) {
+    const slug = p.slug || p.name;
+    const hubUrl = `${location.origin}/app/${encodeURIComponent(slug)}/`;
+    slugEl.innerHTML = p.slug
+      ? `<a href="${hubUrl}" target="_blank" style="color:var(--color-accent);text-decoration:none;font-size:12px"
+           data-tip="Open project web app — always works on this hub">${hubUrl}</a>
+         <button onclick="_openCaddySetupModal('${slug}')" style="background:none;border:none;cursor:pointer;color:var(--color-text-muted);font-size:11px;padding:0 0 0 8px;text-decoration:underline dotted"
+           data-tip="Get ${slug}.local working in any browser — requires Caddy setup (takes 2 minutes)">${slug}.local?</button>`
+      : "";
+  }
 
   await refreshProjectFiles(p.id);
   _startFilesPoller(p.id);
@@ -6004,6 +6013,58 @@ async function _openDeviceSettingsModal(device) {
     footer.appendChild(saveBtn);
     footer.appendChild(closeBtn);
   }
+}
+
+// ── Caddy setup guide modal ───────────────────────────────────────────────
+function _openCaddySetupModal(slug) {
+  const isWindows = navigator.platform.toLowerCase().includes("win");
+  const installCmd = isWindows
+    ? "winget install Caddy.Caddy"
+    : 'brew install caddy  # macOS\nsudo apt install caddy  # Ubuntu/Debian';
+  const hubUrl = `${location.origin}/app/${encodeURIComponent(slug)}/`;
+
+  openModal(`${slug}.local — Setup Guide`, `
+    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:14px;line-height:1.6">
+      <strong style="color:var(--color-text)">${slug}.local</strong> is already advertised on your LAN via mDNS —
+      your OS can resolve the name, but the browser defaults to port 80 and the hub is on port 7888.
+      Caddy acts as a reverse proxy on port 80, forwarding <code>${slug}.local</code> to the hub.
+      <br><br>
+      <strong>The hub URL always works without Caddy:</strong><br>
+      <a href="${hubUrl}" target="_blank" style="color:var(--color-accent)">${hubUrl}</a>
+    </p>
+
+    <p class="section-heading" style="margin-bottom:8px">Option A — Use the hub URL (no setup needed)</p>
+    <div style="background:var(--color-card);padding:10px;border-radius:6px;font-size:12px;font-family:monospace;margin-bottom:14px">
+      ${hubUrl}
+    </div>
+    <p style="font-size:11px;color:var(--color-text-muted);margin-bottom:14px">Bookmark this. Works from any browser on the LAN immediately.</p>
+
+    <p class="section-heading" style="margin-bottom:8px">Option B — Enable ${slug}.local (requires Caddy)</p>
+    <ol style="font-size:12px;line-height:2;padding-left:18px;color:var(--color-text-muted)">
+      <li><strong style="color:var(--color-text)">Install Caddy</strong>
+        <pre style="margin:4px 0 8px;background:var(--color-card);padding:8px;border-radius:5px;font-size:11px;overflow:auto">${installCmd}</pre>
+      </li>
+      <li><strong style="color:var(--color-text)">Download the Caddyfile</strong> —
+        <a href="/api/caddy/download" download="Caddyfile" style="color:var(--color-accent)">⬇ Download Caddyfile</a>
+        (auto-generated for all your projects)
+      </li>
+      <li><strong style="color:var(--color-text)">Run Caddy</strong>
+        <pre style="margin:4px 0 8px;background:var(--color-card);padding:8px;border-radius:5px;font-size:11px;overflow:auto">caddy run --config /path/to/Caddyfile --adapter caddyfile</pre>
+      </li>
+      <li><strong style="color:var(--color-text)">Open</strong>
+        <a href="http://${slug}.local/" target="_blank" style="color:var(--color-accent)">http://${slug}.local/</a>
+      </li>
+    </ol>
+    <div style="background:rgba(26,175,196,.07);border-left:3px solid var(--color-accent);padding:8px 10px;border-radius:0 5px 5px 0;font-size:11px;color:var(--color-text-muted);margin-top:10px">
+      The Caddyfile is regenerated automatically when you add or rename projects.
+      Re-download it whenever your project list changes.
+      <br>On Linux you can auto-reload with <code style="font-family:monospace">caddy reload</code> after writing to
+      <code style="font-family:monospace">/etc/caddy/Caddyfile</code>.
+    </div>
+  `, [
+    { label: "⬇ Download Caddyfile", cls: "btn btn-secondary", action: () => { window.location.href = "/api/caddy/download"; } },
+    { label: "Close", cls: "btn btn-secondary", action: closeModal },
+  ], { wide: true });
 }
 
 async function _promptSecretUpdate(deviceId, key) {
