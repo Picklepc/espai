@@ -497,7 +497,31 @@ async def proxy_device(project_id: str, path: str, request: Request):
 
 # ── Frontend static files ─────────────────────────────────────────────────────
 # Mounted LAST so /api/* and /app/* routes always take precedence.
+#
+# index.html is served via a dedicated route (not StaticFiles) so we can
+# inject ?v=VERSION cache-busters into the <script>/<link> tags. This prevents
+# browsers from showing a stale app.js or app.css after a Docker image update.
 
 _frontend = Path(__file__).parent.parent / "frontend"
+
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+async def serve_index():
+    index = _frontend / "index.html"
+    if not index.exists():
+        return Response("Frontend not found", status_code=404)
+    html = index.read_text(encoding="utf-8")
+    # Inject version query-string into CSS and JS imports so the browser
+    # fetches fresh assets whenever the hub version changes.
+    v = HUB_VERSION.replace('"', "")
+    html = html.replace('href="/static/css/app.css"',
+                        f'href="/static/css/app.css?v={v}"')
+    html = html.replace('src="/static/js/app.js"',
+                        f'src="/static/js/app.js?v={v}"')
+    html = html.replace('src="/static/js/api.js"',
+                        f'src="/static/js/api.js?v={v}"')
+    return Response(html, media_type="text/html",
+                    headers={"Cache-Control": "no-cache"})
+
 if _frontend.exists():
     app.mount("/", StaticFiles(directory=str(_frontend), html=True), name="frontend")

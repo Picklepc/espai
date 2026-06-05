@@ -19,13 +19,18 @@ async function loadTokens() {
 
 // ── Hub status ─────────────────────────────────────────────────────────────
 
-const statusEl = document.getElementById("hubStatus");
+const statusEl  = document.getElementById("hubStatus");
+const versionEl = document.getElementById("hubVersion");
 
 async function checkHubStatus() {
   try {
-    await api.status();
+    const s = await api.status();
     statusEl.textContent = "● Hub online";
     statusEl.className = "hub-status online";
+    if (versionEl && s.version) {
+      versionEl.textContent = `v${s.version}`;
+      versionEl.style.display = "block";
+    }
   } catch (_) {
     statusEl.textContent = "● Hub offline";
     statusEl.className = "hub-status offline";

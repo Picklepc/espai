@@ -130,6 +130,15 @@ html, body {
 .hub-status.online  { color: var(--color-success); }
 .hub-status.offline { color: var(--color-danger); }
 
+.hub-version {
+  display: none;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  opacity: 0.55;
+  font-family: monospace;
+  letter-spacing: 0.03em;
+}
+
 .btn-notif {
   background: none;
   border: none;
