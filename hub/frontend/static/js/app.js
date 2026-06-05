@@ -5396,7 +5396,7 @@ function _abWireEvents() {
     node: {
       label: "Node.js",
       tier: "optional",
-      desc: "Needed to install Codex CLI or Claude Code CLI via npm. Not required if you only use the Manual adapter.",
+      desc: "Required before you can install Claude CLI or Codex CLI. Install this first — then the Install buttons for those tools will activate. Not needed if you only use the Manual adapter.",
     },
     // Adapters
     manual: {
@@ -5460,21 +5460,38 @@ function _abWireEvents() {
     }
 
     const _PORTAL_UNINSTALLABLE = new Set(["pio", "codex", "claude"]);
+    const nodeFound = d.tools?.node?.found ?? false;
+    const _NEEDS_NODE = new Set(["codex", "claude"]);
     const toolRows = Object.entries(d.tools || {}).map(([name, info]) => {
       const ok = info.found;
-      const canInstall   = !ok && _PORTAL_INSTALLABLE.has(name);
+      const needsNode    = _NEEDS_NODE.has(name) && !nodeFound;
+      const canInstall   = !ok && _PORTAL_INSTALLABLE.has(name) && !needsNode;
       const canUninstall = ok  && _PORTAL_UNINSTALLABLE.has(name);
-      const installBtn = canInstall
-        ? `<button class="btn btn-secondary btn-sm doctor-install-btn" data-tool="${name}" style="margin-left:auto" data-tip="Install ${name} via npm or pip">Install</button>` : "";
-      const uninstallBtn = canUninstall
-        ? `<button class="btn btn-secondary btn-sm doctor-uninstall-btn" data-tool="${name}" style="margin-left:auto;opacity:.7" data-tip="Uninstall ${name}">Remove</button>` : "";
-      const hint = !ok && !canInstall && info.install_hint
+
+      let actionBtn = "";
+      if (name === "node" && !ok) {
+        // Node.js: open nodejs.org directly — can't install via the hub
+        actionBtn = `<a href="https://nodejs.org/" target="_blank" rel="noopener"
+          class="btn btn-secondary btn-sm" style="margin-left:auto"
+          data-tip="Download Node.js from nodejs.org — required for Claude and Codex CLI">Get Node.js ↗</a>`;
+      } else if (canInstall) {
+        actionBtn = `<button class="btn btn-secondary btn-sm doctor-install-btn" data-tool="${name}"
+          style="margin-left:auto" data-tip="Install ${name} via npm or pip">Install</button>`;
+      } else if (needsNode) {
+        actionBtn = `<span style="margin-left:auto;font-size:11px;color:var(--color-warning)"
+          data-tip="Install Node.js first — click Get Node.js in the node row above">Needs Node.js</span>`;
+      } else if (canUninstall) {
+        actionBtn = `<button class="btn btn-secondary btn-sm doctor-uninstall-btn" data-tool="${name}"
+          style="margin-left:auto;opacity:.7" data-tip="Uninstall ${name}">Remove</button>`;
+      }
+
+      const hint = !ok && !canInstall && !needsNode && name !== "node" && info.install_hint
         ? `<div class="doctor-hint"><code>${info.install_hint}</code></div>` : "";
       return `<div class="doctor-row" data-tool="${name}">
         <span class="doctor-icon ${ok ? "ok" : "miss"}">${ok ? "✓" : "✗"}</span>
         <span class="doctor-name">${name}</span>
         <span class="doctor-val">${ok ? (info.version || "found") : '<span style="color:var(--color-danger)">not found</span>'}</span>
-        ${installBtn}${uninstallBtn}
+        ${actionBtn}
       </div>${hint}`;
     }).join("");
 

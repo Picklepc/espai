@@ -161,6 +161,13 @@ def _extra_tool_dirs() -> list[str]:
     for pyver in ("Python313", "Python312", "Python311", "Python310", "Python39"):
         dirs.append(str(appdata / "Python" / pyver / "Scripts"))
 
+    # PlatformIO — VSCode extension installs pio here (not on PATH)
+    # Cross-platform: ~/.platformio/penv/Scripts (Windows) or .../bin (Unix)
+    dirs.append(str(home / ".platformio" / "penv" / "Scripts"))  # Windows
+    dirs.append(str(home / ".platformio" / "penv" / "bin"))      # Linux/macOS
+    # Also the raw .platformio/packages path some versions use
+    dirs.append(str(home / ".platformio" / "packages" / "tool-scons" / "bin"))
+
     # GitHub Desktop bundled git — pick the newest app-x.y.z folder
     gh_pattern = str(local / "GitHubDesktop" / "app-*" / "resources" / "app" / "git" / "cmd")
     for d in sorted(glob.glob(gh_pattern), reverse=True):
@@ -172,8 +179,13 @@ def _extra_tool_dirs() -> list[str]:
         r"C:\Program Files (x86)\Git\cmd",
     ])
 
-    # Node.js system install
+    # Node.js system install (Windows installer default)
     dirs.append(r"C:\Program Files\nodejs")
+    # nvm-windows puts node versions here
+    dirs.append(str(appdata / "nvm"))
+    nvm_glob = str(appdata / "nvm" / "v*")
+    for d in sorted(glob.glob(nvm_glob), reverse=True)[:3]:
+        dirs.append(d)
 
     return dirs
 
