@@ -298,6 +298,63 @@ int hubCheckin(const String& hubUrl) {
 #endif
 }
 
+// ── hubCheckinWithConfig ───────────────────────────────────────────────────
+// Extended checkin that includes the registered config schema so the hub
+// can build the settings panel without a separate manifest fetch.
+// Called automatically after espai_init_config() completes.
+void hubCheckinFull(const String& hubUrl) {
+  if (!wifiConnected) return;
+#ifdef HUB_URL
+  HTTPClient http;
+  http.begin(hubUrl + "/api/devices/checkin");
+  http.addHeader("Content-Type", "application/json");
+
+  // Build checkin body with config schema embedded
+  JsonDocument body;
+  body["id"]             = nodeId;
+  body["name"]           = NODE_NAME;
+  body["board"]          = BOARD_ID;
+  body["fw_version"]     = FW_VERSION;
+  body["ip"]             = WiFi.localIP().toString();
+  body["sleep_interval_s"] = sleepIntervalS;
+  body["awake_window_s"]   = awakeWindowS;
+
+  if (_configCount > 0) {
+    JsonArray cfg = body["config"].to<JsonArray>();
+    for (int i = 0; i < _configCount; i++) {
+      JsonObject e = cfg.add<JsonObject>();
+      e["key"]         = _configRegistry[i].key;
+      e["type"]        = _configRegistry[i].type;
+      e["default"]     = _configRegistry[i].default_val;
+      e["description"] = _configRegistry[i].description;
+      if (_configRegistry[i].flags == ESPAI_CONFIG_SECRET) e["secret"] = true;
+    }
+  }
+
+  String bodyStr;
+  serializeJson(body, bodyStr);
+  int code = http.POST(bodyStr);
+  if (code == 200) {
+    JsonDocument resp;
+    deserializeJson(resp, http.getString());
+    Preferences prefs;
+    prefs.begin("espai", false);
+    if (!resp["sleep_interval_s"].isNull()) {
+      sleepIntervalS = resp["sleep_interval_s"].as<int>();
+      prefs.putInt("sleep_s", sleepIntervalS);
+    }
+    if (!resp["awake_window_s"].isNull()) {
+      awakeWindowS = resp["awake_window_s"].as<int>();
+      prefs.putInt("awake_s", awakeWindowS);
+    }
+    prefs.end();
+  }
+  http.end();
+#else
+  return 0;
+#endif
+}
+
 // ── ESPAI Media Upload ─────────────────────────────────────────────────────
 // Upload a binary buffer to the hub media store as multipart/form-data.
 // Returns HTTP status code (201 = success, -1 = no HUB_URL / WiFi down).
@@ -686,11 +743,12 @@ void setup() {
   server.begin();
   Serial.println("[ESPAI] HTTP server started on port 80");
 
-  // Hub checkin on boot — posts identity and retrieves hub-side sleep interval
+  // Hub checkin on boot — posts identity + config schema; reads back sleep intervals
 #ifdef HUB_URL
   if (wifiConnected) {
-    hubCheckin(String(HUB_URL));
-    Serial.printf("[ESPAI] Hub checkin done. sleep_interval_s=%d\n", sleepIntervalS);
+    hubCheckinFull(String(HUB_URL));
+    Serial.printf("[ESPAI] Hub checkin done. sleep_interval_s=%d  config_keys=%d\n",
+                  sleepIntervalS, _configCount);
   }
 #endif
 }

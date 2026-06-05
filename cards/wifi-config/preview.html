@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WiFi & NVS Config Card</title>
+<style>
+  :root {
+    --bg:      #0e1117;
+    --surface: #161b22;
+    --card:    #1c2333;
+    --border:  #30363d;
+    --accent:  #1aafc4;
+    --success: #3fb950;
+    --warning: #d29922;
+    --danger:  #f85149;
+    --text:    #e6edf3;
+    --muted:   #7d8590;
+    --font:    "Segoe UI", system-ui, sans-serif;
+    --mono:    "Cascadia Code", "Fira Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; padding: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .card-title { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
+  .stat-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: var(--muted); min-width: 110px; font-size: 12px; }
+  .stat-value { font-family: var(--mono); font-size: 12px; }
+  .rssi-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .rssi-fill { height: 100%; border-radius: 3px; transition: width .4s; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 600; letter-spacing:.04em; }
+  .badge-ok  { background: rgba(63,185,80,.15); color: var(--success); }
+  .badge-warn{ background: rgba(210,153,34,.15); color: var(--warning); }
+  .badge-err { background: rgba(248,81,73,.15);  color: var(--danger);  }
+  .section-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing:.08em; margin: 14px 0 8px; }
+  .config-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .config-row:last-child { border-bottom: none; }
+  .config-key   { font-family: var(--mono); font-size: 11px; color: var(--accent); min-width: 130px; }
+  .config-type  { font-size: 10px; color: var(--muted); min-width: 40px; }
+  .config-input { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 5px; color: var(--text); padding: 4px 8px; font-size: 12px; font-family: var(--mono); }
+  .config-input:focus { outline: none; border-color: var(--accent); }
+  .config-desc  { font-size: 10px; color: var(--muted); flex: 1.2; line-height: 1.4; }
+  .secret-row   { display: flex; align-items: center; gap: 8px; }
+  .secret-mask  { font-family: var(--mono); letter-spacing: 3px; color: var(--muted); font-size: 13px; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; background: rgba(26,175,196,.12); color: var(--accent); }
+  .tag-secret { background: rgba(248,81,73,.10); color: var(--danger); }
+  .tag-platform { background: rgba(125,133,144,.12); color: var(--muted); }
+  button { cursor: pointer; border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-family: var(--font); transition: opacity .15s; }
+  button:hover { opacity: .85; }
+  .btn-primary  { background: var(--accent); color: #fff; }
+  .btn-secondary{ background: var(--card); border: 1px solid var(--border); color: var(--text); }
+  .btn-sm       { padding: 3px 8px; font-size: 11px; }
+  .wifi-update  { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 10px; display: none; }
+  .wifi-update.open { display: block; }
+  .form-field   { margin-bottom: 8px; }
+  .form-field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .form-field input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); padding: 5px 8px; font-size: 12px; }
+  .form-field input:focus { outline: none; border-color: var(--accent); }
+  .save-bar { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .hint { font-size: 11px; color: var(--muted); line-height: 1.5; padding: 8px; background: rgba(26,175,196,.06); border-left: 3px solid var(--accent); border-radius: 0 5px 5px 0; margin-top: 8px; }
+  .hint code { font-family: var(--mono); font-size: 10px; background: rgba(0,0,0,.3); padding: 1px 4px; border-radius: 3px; }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--success); color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 12px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .offline-banner { background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.25); color: var(--danger); border-radius: 6px; padding: 6px 10px; font-size: 11px; margin-bottom: 10px; display: none; }
+</style>
+</head>
+<body>
+
+<div id="offlineBanner" class="offline-banner">● Offline — showing cached values. Config changes will be queued as commands.</div>
+
+<!-- WiFi Status -->
+<div class="card">
+  <div class="card-title">WiFi Status</div>
+  <div class="stat-row">
+    <span class="stat-label">SSID</span>
+    <span class="stat-value" id="ssid">HomeNetwork-5G</span>
+    <span class="badge badge-ok" id="statusBadge">Connected</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">IP Address</span>
+    <span class="stat-value" id="ip">192.168.1.47</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">RSSI</span>
+    <div class="rssi-bar"><div class="rssi-fill" id="rssiFill" style="width:75%;background:var(--success)"></div></div>
+    <span class="stat-value" id="rssi">-58 dBm</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Channel</span>
+    <span class="stat-value" id="channel">6</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Mode</span>
+    <span class="stat-value">STA</span>
+    <span class="badge badge-ok">Paired</span>
+  </div>
+  <div style="margin-top:12px;display:flex;gap:8px">
+    <button class="btn-secondary btn-sm" onclick="toggleWifiUpdate()" id="btnWifiUpdate"
+      title="Update WiFi credentials — written to NVS by provision firmware, then device reboots">
+      🔑 Update WiFi
+    </button>
+    <span style="font-size:10px;color:var(--muted);align-self:center">
+      Credentials are platform-managed (NVS keys <code style="font-family:monospace;font-size:10px">sta_ssid</code> / <code style="font-family:monospace;font-size:10px">sta_pass</code>)
+    </span>
+  </div>
+  <div class="wifi-update" id="wifiUpdateForm">
+    <div class="form-field">
+      <label>New SSID</label>
+      <input type="text" id="newSsid" placeholder="MyNetwork">
+    </div>
+    <div class="form-field">
+      <label>Password</label>
+      <input type="password" id="newPass" placeholder="••••••••">
+    </div>
+    <div class="hint">
+      Credentials are written to NVS via <code>POST /api/provision/wifi</code> on the device —
+      the hub never stores them. Device reboots and reconnects with the new credentials.
+    </div>
+    <div class="save-bar">
+      <button class="btn-secondary btn-sm" onclick="toggleWifiUpdate()">Cancel</button>
+      <button class="btn-primary btn-sm" onclick="applyWifi()">Apply & Reboot</button>
+    </div>
+  </div>
+</div>
+
+<!-- Operational NVS Config -->
+<div class="card">
+  <div class="card-title">Operational Config <span style="font-size:10px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0">(registered via espai_register_config)</span></div>
+  <div id="configRows">
+    <!-- rendered by JS -->
+  </div>
+  <div class="save-bar" id="saveBar" style="display:none">
+    <button class="btn-secondary btn-sm" onclick="resetConfig()">Reset</button>
+    <button class="btn-primary btn-sm" onclick="saveConfig()">Save Changes</button>
+  </div>
+</div>
+
+<!-- Secret Keys -->
+<div class="card" id="secretCard" style="display:none">
+  <div class="card-title">Injected Secrets <span class="tag tag-secret" style="vertical-align:middle">write-only</span></div>
+  <div id="secretRows"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Simulated device config data ─────────────────────────────────────────────
+const schema = [
+  { key: "tx_power",           type: "int",    default_val: "13",   description: "WiFi TX power in dBm (0–20). 13 is adequate for most setups; lower = less heat.", secret: false },
+  { key: "modem_sleep",        type: "bool",   default_val: "true", description: "Enable WiFi modem sleep between beacons — reduces heat and idle power draw ~30%.", secret: false },
+  { key: "reconnect_interval", type: "int",    default_val: "30",   description: "Seconds between WiFi reconnect attempts when STA drops.", secret: false },
+  { key: "hostname",           type: "string", default_val: "espai-node", description: "mDNS hostname — device reachable at {hostname}.local after reboot.", secret: false },
+  { key: "api_key",            type: "string", default_val: "",     description: "External API key — pushed from hub, never read back.", secret: true },
+];
+const values = { tx_power: "13", modem_sleep: "true", reconnect_interval: "30", hostname: "espai-node" };
+const originalValues = { ...values };
+
+// ── Render config rows ────────────────────────────────────────────────────────
+function renderConfig() {
+  const opKeys = schema.filter(s => !s.secret);
+  const secKeys = schema.filter(s => s.secret);
+
+  const rowsEl = document.getElementById("configRows");
+  rowsEl.innerHTML = "";
+  opKeys.forEach(s => {
+    const row = document.createElement("div");
+    row.className = "config-row";
+    let input = "";
+    if (s.type === "bool") {
+      input = `<select class="config-input" id="cfg_${s.key}" onchange="markDirty()">
+        <option value="true" ${values[s.key]==="true"?"selected":""}>true</option>
+        <option value="false" ${values[s.key]==="false"?"selected":""}>false</option>
+      </select>`;
+    } else if (s.type === "int" || s.type === "float") {
+      input = `<input type="number" class="config-input" id="cfg_${s.key}" value="${values[s.key]||s.default_val}" step="${s.type==="float"?"0.1":"1"}" oninput="markDirty()">`;
+    } else {
+      input = `<input type="text" class="config-input" id="cfg_${s.key}" value="${values[s.key]||s.default_val}" oninput="markDirty()">`;
+    }
+    row.innerHTML = `
+      <span class="config-key">${s.key}</span>
+      <span class="config-type">${s.type}</span>
+      ${input}
+      <span class="config-desc">${s.description}</span>
+    `;
+    rowsEl.appendChild(row);
+  });
+
+  if (secKeys.length) {
+    document.getElementById("secretCard").style.display = "block";
+    const secEl = document.getElementById("secretRows");
+    secEl.innerHTML = "";
+    secKeys.forEach(s => {
+      const row = document.createElement("div");
+      row.className = "config-row";
+      row.innerHTML = `
+        <span class="config-key">${s.key}</span>
+        <span class="config-type">${s.type}</span>
+        <div class="secret-row" style="flex:1">
+          <span class="secret-mask">••••••</span>
+          <button class="btn-secondary btn-sm" onclick="promptSecret('${s.key}')">Update</button>
+          <span class="config-desc">${s.description}</span>
+        </div>
+      `;
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.style.cssText = "margin:4px 0 8px 0;font-size:10px";
+      hint.innerHTML = `Place value in <code>secrets/&lt;device_id&gt;/${s.key}</code> — auto-pushed on next checkin. Hub never stores the value.`;
+      secEl.appendChild(row);
+      secEl.appendChild(hint);
+    });
+  }
+}
+
+function markDirty() {
+  document.getElementById("saveBar").style.display = "flex";
+}
+
+function resetConfig() {
+  Object.keys(originalValues).forEach(k => {
+    const el = document.getElementById("cfg_" + k);
+    if (el) el.value = originalValues[k];
+  });
+  document.getElementById("saveBar").style.display = "none";
+}
+
+function saveConfig() {
+  const updates = {};
+  schema.filter(s => !s.secret).forEach(s => {
+    const el = document.getElementById("cfg_" + s.key);
+    if (el) updates[s.key] = el.value;
+  });
+  // In production: await api.devices.bulkConfig(deviceId, updates)
+  showToast("⚡ Config changes queued — device will apply on next command poll");
+  document.getElementById("saveBar").style.display = "none";
+}
+
+function promptSecret(key) {
+  const val = prompt(`New value for secret "${key}"\n\nThis will be sent to the device and NOT stored by the hub.`);
+  if (val !== null && val.trim()) {
+    showToast(`Secret "${key}" queued for push to device`);
+  }
+}
+
+function toggleWifiUpdate() {
+  const form = document.getElementById("wifiUpdateForm");
+  form.classList.toggle("open");
+  document.getElementById("btnWifiUpdate").textContent = form.classList.contains("open") ? "✕ Cancel" : "🔑 Update WiFi";
+}
+
+function applyWifi() {
+  const ssid = document.getElementById("newSsid").value.trim();
+  const pass = document.getElementById("newPass").value;
+  if (!ssid) { alert("SSID required"); return; }
+  // In production: POST /api/proxy/{deviceIp}/api/provision/wifi
+  showToast("WiFi credentials sent — device rebooting…");
+  toggleWifiUpdate();
+  setTimeout(() => {
+    document.getElementById("ssid").textContent = ssid;
+    document.getElementById("statusBadge").textContent = "Reconnecting…";
+    document.getElementById("statusBadge").className = "badge badge-warn";
+    setTimeout(() => {
+      document.getElementById("statusBadge").textContent = "Connected";
+      document.getElementById("statusBadge").className = "badge badge-ok";
+    }, 3000);
+  }, 1500);
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2800);
+}
+
+// ── Live RSSI animation ───────────────────────────────────────────────────────
+function updateRssi() {
+  const rssi = -55 - Math.floor(Math.random() * 15);
+  const pct = Math.max(10, Math.min(100, ((rssi + 100) / 50) * 100));
+  const color = rssi > -60 ? "var(--success)" : rssi > -75 ? "var(--warning)" : "var(--danger)";
+  document.getElementById("rssi").textContent = rssi + " dBm";
+  document.getElementById("rssiFill").style.width = pct + "%";
+  document.getElementById("rssiFill").style.background = color;
+}
+
+renderConfig();
+setInterval(updateRssi, 4000);
+updateRssi();
+</script>
+</body>
+</html>

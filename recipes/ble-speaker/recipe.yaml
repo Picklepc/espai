@@ -1,0 +1,203 @@
+schema: ESPAI.recipe.v1
+name: BLE Speaker / Bluetooth Audio Source
+category: connectivity.bluetooth
+summary: >
+  Turns an ESP32 into a Bluetooth Classic A2DP audio source that streams PCM audio
+  to any Bluetooth speaker or headset. Audio data can come from an I2S microphone
+  (live capture), a DAC buffer, or WAV files stored on SD or SPIFFS. The hub acts
+  as the control plane: enqueue tracks via the command channel, control volume and
+  playback state, and log connection events.
+
+  Note: this recipe uses Bluetooth Classic (A2DP), not BLE. ESP32 and ESP32-S3
+  support both simultaneously; ESP32-C3 and ESP32-S2 have no Classic BT radio.
+
+compatibility:
+  compatible_boards:
+    - esp32          # original Xtensa — full Classic BT + BLE
+    - esp32s3        # Xtensa — BT5, higher max throughput
+  not_compatible:
+    - esp32c3        # no Classic BT radio (BLE only)
+    - esp32s2        # no BT radio at all
+  tested:
+    - board: esp32
+      speaker: JBL Clip 4 (A2DP sink)
+      status: working
+    - board: esp32s3
+      speaker: Sony WH-1000XM4 (A2DP + AVRCP)
+      status: working
+  notes: >
+    Disable WiFi sleep (WiFi.setSleep(false)) when A2DP is active — BT and WiFi
+    share the radio on ESP32 and coexistence issues cause audio glitches if modem
+    sleep is on.
+
+requires_workers:
+  - name: audio-track-poller   # optional: hub worker that polls a playlist source
+    required: false
+    description: >
+      If you want the hub to push tracks from a queue (e.g. NAS folder, HTTP radio
+      stream URL), this worker manages the queue and sends play_track commands to
+      the device via the command channel.
+
+pipeline:
+  - step: pair_and_connect
+    runs_on: device
+    description: >
+      On boot: scan for the target speaker by name or MAC (stored in NVS).
+      If not found, enter pairing mode for 30 seconds. On connection, start
+      the A2DP source role and announce connection to hub via data push.
+    outputs:
+      - speaker_name
+      - speaker_mac_hash   # SHA-256 of MAC — never stored raw
+      - connected          # bool
+      - rssi
+
+  - step: stream_audio
+    runs_on: device
+    description: >
+      Feed PCM frames to the A2DP callback. Sources can be:
+        - I2S microphone (INMP441): live capture → stream → speaker (walkie-talkie mode)
+        - SD card WAV file: read 512-byte chunks in the A2DP data callback
+        - Generated tone: sin wave for notification sounds or alerts
+      Volume control via AVRCP absolute volume command to the speaker.
+    inputs:
+      - audio_source   # "mic" | "sd_file" | "tone"
+      - track_url      # http URL; device fetches via HTTPClient and streams chunks
+
+  - step: report_playback_state
+    runs_on: device
+    description: >
+      On each track start/stop/pause and every 10 seconds while playing, push
+      playback state to hub data store. The hub rules engine can trigger events
+      on silence detection or end-of-track.
+    outputs:
+      - playback_state     # "playing" | "paused" | "stopped" | "disconnected"
+      - track_progress_s
+      - volume_pct
+      - speaker_battery_pct   # if speaker supports AVRCP battery status
+
+  - step: receive_commands
+    runs_on: device
+    description: >
+      Poll hub command channel (espai_poll_commands). Built-in handlers:
+        play_track   → {url: str}                — HTTP URL to WAV/PCM resource
+        set_volume   → {level: int, 0-100}       — AVRCP absolute volume
+        play_tone    → {freq_hz: int, dur_ms: int} — synthesized tone alert
+        disconnect   → {}                        — cleanly disconnect A2DP
+        reconnect    → {}                        — scan and reconnect
+
+config:
+  speaker:
+    target_name: ""        # partial match, e.g. "JBL" — leave blank for first found
+    target_mac: ""         # full MAC for fixed setups (stored in NVS by provision firmware)
+    auto_reconnect: true   # attempt reconnect every 30s if disconnected
+    reconnect_interval_s: 30
+  audio:
+    source: "sd_file"      # "mic" | "sd_file" | "tone" | "http_stream"
+    sample_rate: 44100     # A2DP standard: 44100 Hz
+    channels: 2            # 1 = mono (upsampled to stereo by codec), 2 = stereo
+    default_volume: 70     # 0-100; set on connection via AVRCP
+  sd:
+    mount_point: "/sdcard"
+    playlist_dir: "/sdcard/music"
+    loop: true
+  http_stream:
+    url: ""                # e.g. http://icecast.example.com/stream.mp3
+    buffer_kb: 32          # pre-buffer before streaming starts
+
+firmware:
+  build_flags:
+    - -D BT_SPEAKER_NAME=\"\"          # partial name match or leave blank
+    - -D AUDIO_SOURCE=\"sd_file\"
+    - -D DEFAULT_VOLUME=70
+    - -D HUB_PROJECT_ID=\"REPLACE_WITH_PROJECT_ID\"
+  libraries:
+    - earlephilhower/ESP8266Audio         # for WAV decoding + SD streaming
+    - pschatzmann/ESP32-A2DP@^1.8.0      # A2DP source + AVRCP control
+  notes: >
+    platformio.ini snippet:
+
+      lib_deps =
+        pschatzmann/ESP32-A2DP@^1.8.0
+        earlephilhower/ESP8266Audio@^1.9.9
+
+      build_flags =
+        -D CONFIG_BT_ENABLED
+        -D CONFIG_CLASSIC_BT_ENABLED
+        -D A2DP_SOURCE_TASK_CORE=0
+        -D WIFI_TASK_CORE=1
+
+    Allocate A2DP on core 0 and WiFi+hub on core 1 to avoid coexistence glitches.
+
+    SD card: SPI mode, CS pin varies by board. TTGO T8 uses GPIO 13 for SD CS.
+    SD must be mounted with SPI.begin() BEFORE Bluetooth.begin().
+
+    Security: never store raw speaker MAC in firmware build flags. Write it to
+    NVS via the provision firmware flow, or register as an espai_register_config
+    secret (hub pushes it on first checkin without storing the value).
+
+    espai_register_config("bt_target_mac", "string", "",
+      "Bluetooth MAC of the target speaker — write-only from hub",
+      [](const char* v) { storeTargetMac(v); },
+      ESPAI_CONFIG_SECRET);
+
+hub_web_app:
+  description: >
+    Playback control panel. Shows connection status (speaker name, RSSI,
+    battery %), current track progress bar, volume slider, and play/pause/next
+    buttons that send commands via the hub command channel. Also shows a
+    playlist queue populated by the audio-track-poller worker (if configured).
+
+variants:
+  walkie_talkie:
+    description: >
+      I2S microphone → A2DP live stream. No SD card or HTTP needed.
+      Push-to-talk triggered by GPIO button or hub command.
+    config_override:
+      audio.source: "mic"
+    firmware_notes: >
+      INMP441 I2S mic → esp32-i2s-driver → PCM buffer ��� A2DP callback.
+      Use I2S_PORT_NUM_0 for mic; A2DP uses a separate internal I2S.
+      Sample rate mismatch: mic typically 16 kHz, A2DP wants 44.1 kHz.
+      Use a simple linear interpolation resampler in the A2DP callback.
+
+  notification_chime:
+    description: >
+      Hub rules engine triggers play_tone command on any event (door sensor,
+      motion alert, job completion). No SD card needed.
+    config_override:
+      audio.source: "tone"
+    pipeline_override:
+      - step: tone_on_event
+        runs_on: hub
+        type: rules_engine
+        description: >
+          Rule: event_type=motion.detected → send_command {type: play_tone,
+          payload: {freq_hz: 880, dur_ms: 300}}
+
+  http_radio:
+    description: >
+      Stream an Icecast/Shoutcast HTTP audio stream. Hub pushes the stream
+      URL via set_config or play_track command.
+    config_override:
+      audio.source: "http_stream"
+    firmware_notes: >
+      Use HTTPClient chunked reads into a circular buffer. Feed A2DP callback
+      from the buffer. Handle HTTP reconnect on drop. MP3 decode via ESP8266Audio
+      AudioGeneratorMP3 + AudioOutputI2S. Bitrate: 128 kbps streams work well;
+      320 kbps may underrun on slow WiFi.
+
+security:
+  notes: >
+    Bluetooth speaker pairing credentials (LTK) are stored in NVS by the
+    Bluetooth stack — not accessible via the hub API. The target speaker's
+    MAC address should be treated as personally identifying and stored only
+    in NVS via the secrets/ convention, never in source code or hub DB.
+    Audio content is streamed device-to-speaker over Bluetooth — the hub
+    never handles audio data.
+
+share_policy:
+  export_public: true
+  exclude:
+    - "*.private.yaml"
+    - local.yaml
+    - secrets.yaml

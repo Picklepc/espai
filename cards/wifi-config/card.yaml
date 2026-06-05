@@ -1,0 +1,97 @@
+schema: ESPAI.card.v1
+name: wifi-config
+display_name: WiFi & NVS Config
+category: system.network
+description: >
+  Shows live WiFi status (SSID, RSSI, IP, channel) and all NVS-registered
+  operational config settings for the device. Credentials (sta_ssid, sta_pass)
+  are platform-managed — this card uses the provision firmware endpoint to
+  update them, not the config bridge. All other registered settings are shown
+  via the M29 config bridge (GET /api/devices/{id}/config) and can be updated
+  live without a reboot.
+
+event_source:
+  type: device_api
+  polling_interval_ms: 15000
+
+config:
+  show_rssi_bar: true
+  show_ip: true
+  show_channel: true
+  show_config_keys: true       # render all espai_register_config keys inline
+  allow_wifi_update: true      # show "Update WiFi" form (uses provision firmware)
+  secret_keys_hint: true       # show secrets/ directory path next to each secret key
+
+firmware_notes: >
+  Required device endpoints (all provided by the ESPAI seed firmware):
+    GET  /api/status            → {ip, wifi_rssi, ap_mode, paired}
+    GET  /api/config            → {key: value, ...}  (operational keys only)
+    GET  /api/manifest          → {config: [{key, type, default, description, secret}]}
+
+  WiFi credential updates go through the provision firmware endpoint:
+    POST /api/provision/wifi    → {ssid: str, password: str}
+    The provision firmware writes sta_ssid + sta_pass to NVS and reboots.
+    This endpoint is NOT part of the config bridge — credentials are
+    platform-managed and the config bridge blocks writes to sta_ssid/sta_pass.
+
+  For non-credential config keys, register them in firmware setup():
+    // Operational — readable and writable from hub
+    espai_register_config("tx_power", "int", "13",
+      "WiFi TX power in dBm (0-20). Lower = less heat, shorter range.",
+      [](const char* v) { WiFi.setTxPower((wifi_power_t)(atoi(v) * 4)); });
+
+    // Operational — bool example
+    espai_register_config("modem_sleep", "bool", "true",
+      "Enable WiFi modem sleep between beacons (reduces power draw ~30%)",
+      [](const char* v) { WiFi.setSleep(strcmp(v, "true") == 0); });
+
+  espai_init_config();  // must be called after all registrations
+
+how_it_works: >
+  1. Card fetches GET /api/devices/{id}/config (hub proxies to device or falls
+     back to cached DB values if offline).
+  2. Card fetches GET /api/devices/{id}/config/schema for field types and
+     descriptions.
+  3. Renders operational keys as inline inputs (toggle for bool, number for
+     int/float, text for string). Secrets show "●●●●●●" + Update button.
+  4. Save sends PUT /api/devices/{id}/config/bulk to queue set_config commands
+     for all changed keys. Device applies each value via its registered callback
+     — no reboot required.
+  5. WiFi credential update: POST /api/provision/wifi on the device (separate
+     from the config bridge). Device writes NVS and reboots to reconnect.
+
+compatible_boards:
+  - esp32
+  - esp32s3
+  - esp32c3
+  - esp32s2
+
+nvs_key_reference:
+  platform_managed:
+    - key: sta_ssid
+      description: WiFi SSID. Written by provision firmware. Never via config bridge.
+    - key: sta_pass
+      description: WiFi password. Written by provision firmware. Never via config bridge.
+    - key: sleep_s
+      description: Deep sleep interval. Written by hub checkin response.
+    - key: awake_s
+      description: Awake window after boot. Written by hub checkin response.
+  suggested_operational:
+    - key: tx_power
+      type: int
+      default: "13"
+      description: "WiFi TX power in dBm (0-20). 13 is adequate for most setups."
+    - key: modem_sleep
+      type: bool
+      default: "true"
+      description: "Enable modem sleep between beacons — reduces heat and power."
+    - key: reconnect_interval_s
+      type: int
+      default: "30"
+      description: "Seconds between WiFi reconnect attempts on STA drop."
+
+example_binding:
+  recipe: any-esp32-project
+
+share_policy:
+  export_public: true
