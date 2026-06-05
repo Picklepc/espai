@@ -121,40 +121,42 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # Read version string from VERSION file for embedding in the exe.
 _ver_str = (ROOT / "VERSION").read_text().strip() if (ROOT / "VERSION").exists() else "0.0.0"
-_ver_tuple = tuple(int(x) for x in (_ver_str.split(".")[:3] + ["0", "0", "0"])[:4])
 
-# Windows VERSIONINFO resource — shown in Explorer → Properties → Details.
-# Also helps SmartScreen / Smart App Control recognize the publisher.
-_win_version_info = VSVersionInfo(
-    ffi=FixedFileInfo(
-        filevers=_ver_tuple,
-        prodvers=_ver_tuple,
-        mask=0x3f,
-        flags=0x0,
-        OS=0x40004,
-        fileType=0x1,
-        subtype=0x0,
-        date=(0, 0),
-    ),
-    kids=[
-        StringFileInfo([
-            StringTable(
-                "040904B0",
-                [
-                    StringStruct("CompanyName",      "ESPAI Project"),
-                    StringStruct("FileDescription",  "ESPAI Hub — Local-first ESP32 fleet management"),
-                    StringStruct("FileVersion",      _ver_str),
-                    StringStruct("InternalName",     "espai"),
-                    StringStruct("LegalCopyright",   "MIT License"),
-                    StringStruct("OriginalFilename", "espai.exe"),
-                    StringStruct("ProductName",      "ESPAI"),
-                    StringStruct("ProductVersion",   _ver_str),
-                ],
-            )
-        ]),
-        VarFileInfo([VarStruct("Translation", [0x0409, 0x04B0])]),
-    ],
-)
+# Windows-only: embed VERSIONINFO PE resource so Explorer and SmartScreen
+# show the publisher name. On Linux the version= param must be None.
+_win_version_info = None
+if sys.platform == "win32":
+    _ver_tuple = tuple(int(x) for x in (_ver_str.split(".")[:3] + ["0", "0", "0"])[:4])
+    _win_version_info = VSVersionInfo(
+        ffi=FixedFileInfo(
+            filevers=_ver_tuple,
+            prodvers=_ver_tuple,
+            mask=0x3f,
+            flags=0x0,
+            OS=0x40004,
+            fileType=0x1,
+            subtype=0x0,
+            date=(0, 0),
+        ),
+        kids=[
+            StringFileInfo([
+                StringTable(
+                    "040904B0",
+                    [
+                        StringStruct("CompanyName",      "ESPAI Project"),
+                        StringStruct("FileDescription",  "ESPAI Hub — Local-first ESP32 fleet management"),
+                        StringStruct("FileVersion",      _ver_str),
+                        StringStruct("InternalName",     "espai"),
+                        StringStruct("LegalCopyright",   "MIT License"),
+                        StringStruct("OriginalFilename", "espai.exe"),
+                        StringStruct("ProductName",      "ESPAI"),
+                        StringStruct("ProductVersion",   _ver_str),
+                    ],
+                )
+            ]),
+            VarFileInfo([VarStruct("Translation", [0x0409, 0x04B0])]),
+        ],
+    )
 
 exe = EXE(
     pyz,
@@ -166,7 +168,9 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,         # no terminal window on launch; hub logs go to data/espai-hub.log
+    # console=False hides the terminal on Windows; keep True on Linux so the
+    # AppImage can still print to stdout when run from a terminal.
+    console=(sys.platform != "win32"),
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
