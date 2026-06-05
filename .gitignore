@@ -10,6 +10,9 @@ worker-requirements.txt
 local.yaml
 secrets.yaml
 firmware/seed/secrets.ini
+# Device injected-secret store (M29 — one file per device per key)
+secrets/
+
 
 # Runtime data — never committed
 data/

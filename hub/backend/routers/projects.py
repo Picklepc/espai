@@ -624,6 +624,31 @@ void pushToHub(float value) {{
 ```
 Set in `platformio.ini`: `build_flags = -D HUB_PROJECT_ID=\\"{project_id}\\"`
 
+### Device settings (NVS config bridge)
+
+Use `espai_register_config()` in `setup()` to expose tunable settings in the hub ⚙ Settings panel.
+Do **not** build custom settings pages — register keys here and let the hub UI handle it.
+
+```cpp
+// In setup(), before connectWifi():
+
+// Operational — hub can read & write; callback fires at boot AND on hub update (no reboot needed)
+espai_register_config("brightness", "int", "128",
+  "Display brightness 0-255",
+  [](const char* v) {{ analogWrite(PIN_BL, atoi(v)); }});
+
+// Injected secret — hub can write but NEVER read back
+espai_register_config("api_key", "string", "",
+  "External API key — write-only from hub",
+  [](const char* v) {{ myService.setKey(v); }},
+  ESPAI_CONFIG_SECRET);
+
+// Call after all registrations (reads NVS, fires callbacks once at boot)
+espai_init_config();
+```
+
+Secrets auto-push: place the value in `secrets/{{device_id}}/{{key}}` (gitignored) — hub pushes on checkin.
+
 ### Build commands
 ```bash
 cd projects/{project_id}/firmware
@@ -638,6 +663,7 @@ pio device monitor        # serial monitor
 - Run `pio run` and fix all errors before committing
 - Hub checkins must be fire-and-forget — never block the main loop
 - AP fallback required: start `ESPAI-{{node_id_suffix}}` hotspot on WiFi fail
+- Never register `sta_ssid`, `sta_pass`, `sleep_s`, `awake_s`, or `espai_*` keys — platform-managed
 """
 
     # ── Integration section ───────────────────────────────────────────────────

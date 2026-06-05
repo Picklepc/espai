@@ -157,6 +157,29 @@ def _migrate(conn) -> None:
         ON rule_fires (rule_id, fired_at DESC)
     """)
 
+    # Device NVS config tables (M29)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS device_config (
+            device_id     TEXT NOT NULL,
+            key           TEXT NOT NULL,
+            value         TEXT,
+            secret_set_at TEXT,
+            updated       TEXT NOT NULL,
+            PRIMARY KEY (device_id, key)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS device_config_schema (
+            device_id   TEXT    NOT NULL,
+            key         TEXT    NOT NULL,
+            type        TEXT    NOT NULL DEFAULT 'string',
+            default_val TEXT,
+            description TEXT,
+            secret      INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (device_id, key)
+        )
+    """)
+
 
 def init_db() -> None:
     with get_conn() as conn:
@@ -366,6 +389,29 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS hub_settings (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+
+        -- ── Device NVS config store (M29) ────────────────────────────────────
+        -- Hub mirror of operational NVS values reported by devices.
+        -- Secrets are tracked by timestamp only — the value column is NULL.
+        CREATE TABLE IF NOT EXISTS device_config (
+            device_id     TEXT NOT NULL,
+            key           TEXT NOT NULL,
+            value         TEXT,               -- NULL for secret keys (value never stored)
+            secret_set_at TEXT,               -- when a secret was last pushed
+            updated       TEXT NOT NULL,
+            PRIMARY KEY (device_id, key)
+        );
+
+        -- Schema declared by the firmware via /api/manifest "config" array.
+        CREATE TABLE IF NOT EXISTS device_config_schema (
+            device_id   TEXT    NOT NULL,
+            key         TEXT    NOT NULL,
+            type        TEXT    NOT NULL DEFAULT 'string',
+            default_val TEXT,
+            description TEXT,
+            secret      INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (device_id, key)
         );
 
         -- ── Geofence zones ───────────────────────────────────────────────────

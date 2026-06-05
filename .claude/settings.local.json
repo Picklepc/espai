@@ -4,7 +4,8 @@
       "PowerShell(python -m pip show platformio 2>$null)",
       "PowerShell($env:PATH += \";C:\\\\Program Files\\\\Git\\\\bin\"; Set-Location \"c:\\\\Users\\\\Roto Router\\\\OneDrive\\\\Documents\\\\ESP32\\\\ESPai\"; git status; git log --oneline -5)",
       "PowerShell($git = \"C:\\\\Users\\\\Roto Router\\\\AppData\\\\Local\\\\GitHubDesktop\\\\app-3.5.12\\\\resources\\\\app\\\\git\\\\cmd\\\\git.exe\"; Set-Location \"c:\\\\Users\\\\Roto Router\\\\OneDrive\\\\Documents\\\\ESP32\\\\ESPai\"; & $git status; & $git log --oneline -8)",
-      "PowerShell($gitPath = Get-ChildItem \"C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe\" -ErrorAction SilentlyContinue; if \\($gitPath\\) { Write-Host $gitPath.FullName } else { Write-Host \"not found\" })"
+      "PowerShell($gitPath = Get-ChildItem \"C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe\" -ErrorAction SilentlyContinue; if \\($gitPath\\) { Write-Host $gitPath.FullName } else { Write-Host \"not found\" })",
+      "PowerShell(Get-Command git -ErrorAction SilentlyContinue)"
     ]
   }
 }

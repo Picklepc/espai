@@ -21,10 +21,23 @@ Use these helpers — never reimplement them from scratch.
 | `hubCheckin(hubUrl)` | POST device identity to hub on boot; reads back `sleep_interval_s` and `awake_window_s`; persists to NVS |
 | `espai_poll_commands(hubUrl)` | Call from `loop()` — self-throttles via `ESPAI_CMD_POLL_MS` (default 2 s); dispatches `reboot`, `set_config`, `run_ota_check`; user callback via `espai_register_cmd_handler()` |
 | `espai_register_cmd_handler(fn)` | Register callback for custom command types before built-in dispatch |
+| `espai_register_config(key, type, default, desc, cb, flags)` | Declare a configurable NVS key; call in `setup()` before `connectWifi()`. `flags`: `ESPAI_CONFIG_OPERATIONAL` (default) or `ESPAI_CONFIG_SECRET` |
+| `espai_init_config()` | Call once in `setup()` after all `espai_register_config()` calls; reads NVS, writes defaults if absent, fires callbacks |
 | `espai_upload_jpeg(hubUrl, projectId, buf, len, deviceId, tags)` | Upload JPEG buffer to hub media store; returns HTTP status code |
 | `enterDeepSleep(seconds)` | Disconnect WiFi, set RTC timer, call `esp_deep_sleep_start()` |
 | `startFallbackAP()` | Start `ESPAI-{node_id_suffix}` hotspot on STA failure |
 | `connectWifi()` | Read NVS credentials first, fall back to build flags, then AP mode |
+
+## NVS config key blocklist
+
+**Do not register** the following keys via `espai_register_config()` — they are platform-managed
+and will be silently dropped or blocked:
+
+- `sta_ssid`, `sta_pass` — WiFi credentials (provision firmware path only)
+- `sleep_s`, `awake_s`, `awake_w` — sleep config (checkin response path only)
+- Any key with the prefix `espai_` — reserved for platform internals
+
+The hub's config API returns HTTP 403 for any read or write targeting these keys.
 
 ## Firmware hardening (required for any ported or new project)
 

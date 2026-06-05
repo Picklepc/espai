@@ -33,6 +33,43 @@ projects. Unmarked rules apply to all project types.
 - **Implement AP fallback** in all project firmware — `ESPAI-{id}` hotspot on WiFi fail.
 - **Make hub checkins fire-and-forget** — never block the firmware loop on the hub.
 
+#### Device settings (NVS config bridge)
+
+Use `espai_register_config()` for any user-tunable setting — **do not build custom settings pages in firmware**.
+
+```cpp
+// Operational: hub can read and write; value applied without reboot
+espai_register_config("rotation", "int", "0",
+  "Display rotation: 0=0deg 1=90deg 2=180deg 3=270deg",
+  [](const char* v) { tft.setRotation(atoi(v)); });
+
+// Injected secret: hub can write but NEVER read back
+espai_register_config("api_key", "string", "",
+  "External API key — write-only from hub",
+  [](const char* v) { myService.setKey(v); },
+  ESPAI_CONFIG_SECRET);
+```
+
+The hub's **⚙ Settings** panel on each device card reads the schema from `/api/manifest`
+and renders a live form. Operational values are cached; secrets show masked display only.
+
+**NVS key categories (non-negotiable):**
+
+| Category | Readable by hub? | Writable by hub? | In config API? |
+|---|---|---|---|
+| **Operational** (`ESPAI_CONFIG_OPERATIONAL`) | Yes | Yes | Yes — current value shown |
+| **Injected secret** (`ESPAI_CONFIG_SECRET`) | Never | Yes (one-way push) | Yes — masked, Update only |
+| **Platform-managed** (`sta_ssid`, `sta_pass`, `sleep_s`, `awake_s`, `espai_*`) | Never | Never via config API | Not in config API |
+
+**Injected secrets auto-push:** place the secret value in `secrets/{device_id}/{key}` (gitignored).
+The hub reads the file on checkin, enqueues a `set_config` command, and **never stores the value in DB**.
+Agents must never write secret values into source files, firmware, or project data — `secrets/` is the only sanctioned path.
+
+**Platform-managed keys** (`sta_ssid`, `sta_pass`, `sleep_s`, `awake_s`, `awake_w`, and any key
+prefixed `espai_`) are blocked by the hub config API — reads and writes return 403. WiFi credentials
+flow through provision firmware; sleep config flows through the checkin response. Never attempt to
+register these keys with `espai_register_config()` or construct custom WiFi credential flows.
+
 ### Integration projects (`device_type: integration` or `hybrid`)
 
 - **Read credentials from environment variables only** — `os.environ.get("KEY")`

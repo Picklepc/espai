@@ -132,6 +132,20 @@ void handleManifest() {
   caps["camera"] = false;
   caps["ble"]    = false;
 
+  // Advertise registered config keys so hub can build the settings schema
+  if (_configCount > 0) {
+    JsonArray cfg = doc["config"].to<JsonArray>();
+    for (int i = 0; i < _configCount; i++) {
+      JsonObject entry = cfg.add<JsonObject>();
+      entry["key"]         = _configRegistry[i].key;
+      entry["type"]        = _configRegistry[i].type;
+      entry["default"]     = _configRegistry[i].default_val;
+      entry["description"] = _configRegistry[i].description;
+      if (_configRegistry[i].flags == ESPAI_CONFIG_SECRET)
+        entry["secret"] = true;
+    }
+  }
+
   sendJson(200, doc);
 }
 
@@ -338,6 +352,98 @@ int espai_upload_jpeg(const String& hubUrl, const String& projectId,
 #endif
 }
 
+// ── ESPAI NVS Config Registration ─────────────────────────────────────────
+// Allows firmware code to declare configurable NVS keys with type, default,
+// description, and an on-change callback. The hub reads the schema from
+// /api/manifest and writes values via the set_config command.
+
+#define ESPAI_CONFIG_OPERATIONAL  0   // readable and writable from hub (default)
+#define ESPAI_CONFIG_SECRET       1   // hub can write but NEVER read back
+
+// Platform-managed keys the config API must never expose or accept writes for.
+static const char* _CONFIG_BLOCKLIST[] = {
+    "sta_ssid", "sta_pass", "sleep_s", "awake_s", "awake_w", nullptr
+};
+
+static bool _isBlockedConfigKey(const char* key) {
+    for (int i = 0; _CONFIG_BLOCKLIST[i] != nullptr; i++) {
+        if (strcmp(key, _CONFIG_BLOCKLIST[i]) == 0) return true;
+    }
+    // Block any key prefixed "espai_"
+    return strncmp(key, "espai_", 6) == 0;
+}
+
+typedef void (*espai_config_cb_t)(const char* new_value);
+
+struct _EspaiConfigEntry {
+    char      key[16];
+    char      type[8];
+    char      default_val[32];
+    char      description[64];
+    espai_config_cb_t cb;
+    uint8_t   flags;
+};
+
+static _EspaiConfigEntry _configRegistry[24];
+static int               _configCount = 0;
+
+// Register a configurable NVS setting. Call once per key in setup() before
+// connectWifi(). The callback fires at boot AND on every set_config command.
+void espai_register_config(
+    const char*       key,
+    const char*       type,
+    const char*       default_val,
+    const char*       description,
+    espai_config_cb_t on_change = nullptr,
+    uint8_t           flags     = ESPAI_CONFIG_OPERATIONAL
+) {
+    if (_configCount >= 24 || !key || _isBlockedConfigKey(key)) return;
+    _EspaiConfigEntry& e = _configRegistry[_configCount++];
+    strncpy(e.key,         key,         sizeof(e.key)         - 1);
+    strncpy(e.type,        type,        sizeof(e.type)        - 1);
+    strncpy(e.default_val, default_val, sizeof(e.default_val) - 1);
+    strncpy(e.description, description, sizeof(e.description) - 1);
+    e.key[sizeof(e.key)-1]               = '\0';
+    e.type[sizeof(e.type)-1]             = '\0';
+    e.default_val[sizeof(e.default_val)-1] = '\0';
+    e.description[sizeof(e.description)-1] = '\0';
+    e.cb    = on_change;
+    e.flags = flags;
+}
+
+// Called once in setup(). Reads each registered key from NVS, writes the
+// compiled-in default if absent, then fires the callback so the app applies
+// the value without any extra boot-time code paths.
+void espai_init_config() {
+    if (_configCount == 0) return;
+    Preferences prefs;
+    prefs.begin("espai", false);
+    for (int i = 0; i < _configCount; i++) {
+        _EspaiConfigEntry& e = _configRegistry[i];
+        String val = prefs.getString(e.key, e.default_val);
+        // Write default to NVS if the key was absent
+        if (!prefs.isKey(e.key)) prefs.putString(e.key, e.default_val);
+        if (e.cb) e.cb(val.c_str());
+        Serial.printf("[cfg] %s = %s%s\n", e.key, val.c_str(),
+                      e.flags == ESPAI_CONFIG_SECRET ? " (secret)" : "");
+    }
+    prefs.end();
+}
+
+// ── GET /api/config — operational keys only ───────────────────────────────
+void handleConfig() {
+    JsonDocument doc;
+    Preferences prefs;
+    prefs.begin("espai", true);
+    for (int i = 0; i < _configCount; i++) {
+        _EspaiConfigEntry& e = _configRegistry[i];
+        if (e.flags == ESPAI_CONFIG_SECRET) continue;  // never expose secrets
+        doc[e.key] = prefs.getString(e.key, e.default_val);
+    }
+    prefs.end();
+    sendJson(200, doc);
+}
+
 // ── ESPAI Command Poll ─────────────────────────────────────────────────────
 // User-supplied callback invoked for each pending command the hub sends.
 // Return true if the command was handled, false to fall through to built-ins.
@@ -395,13 +501,35 @@ void espai_poll_commands(const String& hubUrl) {
         const char* key = pl["key"] | "";
         const char* val = pl["value"] | "";
         if (key[0]) {
-          Preferences prefs;
-          prefs.begin("espai", false);
-          prefs.putString(key, val);
-          prefs.end();
-          Serial.printf("[cmd] set_config: %s = %s\n", key, val);
+          if (_isBlockedConfigKey(key)) {
+            // Blocklisted — NACK (handled=false so ack sends ok:false)
+            Serial.printf("[cmd] set_config BLOCKED: %s\n", key);
+          } else {
+            Preferences prefs;
+            prefs.begin("espai", false);
+            prefs.putString(key, val);
+            prefs.end();
+            Serial.printf("[cmd] set_config: %s = %s\n", key,
+                          // Don't log secret values
+                          ([&](){
+                            for(int i=0;i<_configCount;i++)
+                              if(strcmp(_configRegistry[i].key,key)==0 &&
+                                 _configRegistry[i].flags==ESPAI_CONFIG_SECRET)
+                                return "***";
+                            return val;
+                          })());
+            // Fire registered callback immediately — no reboot required
+            for (int i = 0; i < _configCount; i++) {
+              if (strcmp(_configRegistry[i].key, key) == 0) {
+                if (_configRegistry[i].cb) _configRegistry[i].cb(val);
+                break;
+              }
+            }
+            handled = true;
+          }
+        } else {
+          handled = true;
         }
-        handled = true;
 
       } else if (cmdType == "run_ota_check") {
         hubCheckin(hubUrl);
@@ -513,6 +641,17 @@ void setup() {
   nodeId = deriveNodeId();
   Serial.printf("[ESPAI] Node ID: %s\n", nodeId.c_str());
 
+  // ── Register app-specific config keys here (before connectWifi) ──────────
+  // Example — operational key: hub can read and write, value applied live
+  //   espai_register_config("rotation", "int", "0",
+  //     "Display rotation: 0=0deg 1=90deg 2=180deg 3=270deg",
+  //     [](const char* v){ tft.setRotation(atoi(v)); });
+  // Example — injected secret: hub can write but never read back
+  //   espai_register_config("api_key", "string", "",
+  //     "External API key -- write-only from hub",
+  //     [](const char* v){ myService.setKey(v); },
+  //     ESPAI_CONFIG_SECRET);
+
   // Read sleep config from NVS (set by hub checkin; survives deep sleep)
   {
     Preferences prefs;
@@ -521,6 +660,9 @@ void setup() {
     awakeWindowS   = prefs.getInt("awake_s", 5);
     prefs.end();
   }
+
+  // Apply all registered config keys from NVS (fires callbacks at boot)
+  espai_init_config();
 
   wifiConnected = connectWifi();
 
@@ -534,6 +676,7 @@ void setup() {
 
   // Register HTTP routes
   server.on("/api/manifest",  HTTP_GET,  handleManifest);
+  server.on("/api/config",    HTTP_GET,  handleConfig);
   server.on("/api/status",    HTTP_GET,  handleStatus);
   server.on("/api/checkin",   HTTP_POST, handleCheckin);
   server.on("/api/reboot",    HTTP_POST, handleReboot);

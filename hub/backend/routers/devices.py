@@ -24,6 +24,14 @@ def _now() -> str:
 _SAFE_ID = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 
 
+# ── NVS config blocklist (M29) ────────────────────────────────────────────────
+# These keys are platform-managed and must never be accessible via the config API.
+_CONFIG_BLOCKLIST = frozenset(["sta_ssid", "sta_pass", "sleep_s", "awake_s", "awake_w"])
+
+def _is_blocked_config_key(key: str) -> bool:
+    return key in _CONFIG_BLOCKLIST or key.lower().startswith("espai_")
+
+
 class DeviceCheckin(BaseModel):
     id: str
     name: str | None = None
@@ -33,6 +41,7 @@ class DeviceCheckin(BaseModel):
     ip: str | None = None
     sleep_interval_s: int | None = None   # node reports its configured sleep interval; 0 = awake-always
     awake_window_s:   int | None = None   # node reports how long it stays awake before sleeping
+    config: list[dict] | None = None      # firmware's registered config schema from /api/manifest
 
     @field_validator("id")
     @classmethod
@@ -147,6 +156,10 @@ def checkin(data: DeviceCheckin):
         row = conn.execute(
             "SELECT sleep_interval_s, awake_window_s FROM devices WHERE id=?", (data.id,)
         ).fetchone()
+    # Upsert config schema from manifest and auto-push any matching secrets
+    if data.config:
+        _upsert_config_schema(data.id, data.config, now)
+
     return {
         "status": "ok",
         "paired": bool(paired),
@@ -366,3 +379,237 @@ def browse_lan(subnet: str | None = None):
         "subnet": subnet,
         "found": [r for r in results if r is not None],
     }
+
+
+# ── Device NVS config (M29) ───────────────────────────────────────────────────
+
+def _upsert_config_schema(device_id: str, config: list[dict], now: str) -> None:
+    """Upsert config schema from checkin manifest; auto-push matching secrets."""
+    from ..config import ROOT
+    with get_conn() as conn:
+        for entry in config:
+            key = entry.get("key", "")
+            if not key or _is_blocked_config_key(key):
+                continue
+            conn.execute(
+                """INSERT INTO device_config_schema
+                   (device_id, key, type, default_val, description, secret)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(device_id, key) DO UPDATE SET
+                     type=excluded.type, default_val=excluded.default_val,
+                     description=excluded.description, secret=excluded.secret""",
+                (device_id, key,
+                 entry.get("type", "string"),
+                 entry.get("default", ""),
+                 entry.get("description", ""),
+                 1 if entry.get("secret") else 0),
+            )
+
+    # Auto-push secrets from secrets/{device_id}/
+    secrets_dir = ROOT / "secrets" / device_id
+    if not secrets_dir.exists():
+        return
+    with get_conn() as conn:
+        secret_keys = [
+            r["key"] for r in conn.execute(
+                "SELECT key FROM device_config_schema WHERE device_id=? AND secret=1",
+                (device_id,)
+            ).fetchall()
+        ]
+    for key in secret_keys:
+        secret_file = secrets_dir / key
+        if secret_file.is_file():
+            try:
+                value = secret_file.read_text(encoding="utf-8").strip()
+                if not value:
+                    continue
+                cmd_id = secrets.token_hex(8)
+                with get_conn() as conn:
+                    conn.execute(
+                        "INSERT INTO device_commands"
+                        " (id, device_id, command_type, payload, status, created, ttl_seconds)"
+                        " VALUES (?,?,?,?,?,?,?)",
+                        (cmd_id, device_id, "set_config",
+                         json.dumps({"key": key, "value": value}),
+                         "pending", now, 300),
+                    )
+                    # Record that secret was pushed (no value stored)
+                    conn.execute(
+                        """INSERT INTO device_config
+                           (device_id, key, value, secret_set_at, updated)
+                           VALUES (?,NULL,?,?)
+                           ON CONFLICT(device_id, key) DO UPDATE SET
+                             secret_set_at=excluded.secret_set_at,
+                             updated=excluded.updated""",
+                        (device_id, key, now, now),
+                    )
+            except Exception:
+                pass
+
+
+@router.get("/{device_id}/config/schema")
+def get_device_config_schema(device_id: str):
+    """Return config keys declared by this device's firmware."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM device_config_schema WHERE device_id=? ORDER BY key",
+            (device_id,)
+        ).fetchall()
+    return {"device_id": device_id, "schema": [dict(r) for r in rows]}
+
+
+@router.get("/{device_id}/config")
+def get_device_config(device_id: str):
+    """
+    Return current operational config values.
+    Proxies to the device's GET /api/config when reachable; falls back to
+    the cached DB mirror. Secret key values are never returned.
+    """
+    with get_conn() as conn:
+        dev = conn.execute(
+            "SELECT ip FROM devices WHERE id=?", (device_id,)
+        ).fetchone()
+    if not dev:
+        raise HTTPException(404, f"Device {device_id!r} not found")
+
+    offline = True
+    values: dict = {}
+
+    if dev["ip"]:
+        try:
+            req = urllib.request.Request(
+                f"http://{dev['ip']}/api/config", headers={}
+            )
+            with urllib.request.urlopen(req, timeout=3) as r:
+                values = json.loads(r.read())
+                offline = False
+                # Cache operational values in DB
+                now = _now()
+                with get_conn() as conn:
+                    for k, v in values.items():
+                        if not _is_blocked_config_key(k):
+                            conn.execute(
+                                """INSERT INTO device_config
+                                   (device_id, key, value, updated)
+                                   VALUES (?,?,?,?)
+                                   ON CONFLICT(device_id, key) DO UPDATE SET
+                                     value=excluded.value, updated=excluded.updated""",
+                                (device_id, k, str(v), now),
+                            )
+        except Exception:
+            pass
+
+    if offline:
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT key, value, secret_set_at FROM device_config WHERE device_id=?",
+                (device_id,)
+            ).fetchall()
+        # Return operational cached values; secrets show set status only
+        for r in rows:
+            if r["value"] is not None:
+                values[r["key"]] = r["value"]
+
+    return {"device_id": device_id, "values": values, "offline": offline}
+
+
+@router.put("/{device_id}/config")
+def set_device_config_key(device_id: str, body: dict):
+    """Write a single config key via the command channel."""
+    key   = body.get("key", "").strip()
+    value = str(body.get("value", ""))
+    if not key:
+        raise HTTPException(400, "key required")
+    if _is_blocked_config_key(key):
+        raise HTTPException(403, f"Key {key!r} is platform-managed — use provision firmware for WiFi credentials")
+
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM devices WHERE id=?", (device_id,)).fetchone():
+            raise HTTPException(404, f"Device {device_id!r} not found")
+        schema_row = conn.execute(
+            "SELECT secret FROM device_config_schema WHERE device_id=? AND key=?",
+            (device_id, key)
+        ).fetchone()
+    is_secret = bool(schema_row and schema_row["secret"])
+
+    now    = _now()
+    cmd_id = secrets.token_hex(8)
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO device_commands"
+            " (id, device_id, command_type, payload, status, created, ttl_seconds)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (cmd_id, device_id, "set_config",
+             json.dumps({"key": key, "value": value}), "pending", now, 300),
+        )
+        if is_secret:
+            conn.execute(
+                """INSERT INTO device_config
+                   (device_id, key, value, secret_set_at, updated)
+                   VALUES (?,NULL,?,?)
+                   ON CONFLICT(device_id, key) DO UPDATE SET
+                     secret_set_at=excluded.secret_set_at, updated=excluded.updated""",
+                (device_id, key, now, now),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO device_config (device_id, key, value, updated)
+                   VALUES (?,?,?,?)
+                   ON CONFLICT(device_id, key) DO UPDATE SET
+                     value=excluded.value, updated=excluded.updated""",
+                (device_id, key, value, now),
+            )
+    return {"queued": True, "cmd_id": cmd_id, "key": key, "secret": is_secret}
+
+
+@router.put("/{device_id}/config/bulk")
+def bulk_set_device_config(device_id: str, body: dict):
+    """Write multiple config keys at once via the command channel."""
+    if not isinstance(body, dict) or not body:
+        raise HTTPException(400, "Body must be a non-empty JSON object {key: value}")
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM devices WHERE id=?", (device_id,)).fetchone():
+            raise HTTPException(404, f"Device {device_id!r} not found")
+
+    now     = _now()
+    queued  = []
+    blocked = []
+    for key, value in body.items():
+        if _is_blocked_config_key(key):
+            blocked.append(key)
+            continue
+        with get_conn() as conn:
+            schema_row = conn.execute(
+                "SELECT secret FROM device_config_schema WHERE device_id=? AND key=?",
+                (device_id, key)
+            ).fetchone()
+        is_secret = bool(schema_row and schema_row["secret"])
+        cmd_id = secrets.token_hex(8)
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT INTO device_commands"
+                " (id, device_id, command_type, payload, status, created, ttl_seconds)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (cmd_id, device_id, "set_config",
+                 json.dumps({"key": key, "value": str(value)}), "pending", now, 300),
+            )
+            if is_secret:
+                conn.execute(
+                    """INSERT INTO device_config
+                       (device_id, key, value, secret_set_at, updated)
+                       VALUES (?,NULL,?,?)
+                       ON CONFLICT(device_id, key) DO UPDATE SET
+                         secret_set_at=excluded.secret_set_at, updated=excluded.updated""",
+                    (device_id, key, now, now),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO device_config (device_id, key, value, updated)
+                       VALUES (?,?,?,?)
+                       ON CONFLICT(device_id, key) DO UPDATE SET
+                         value=excluded.value, updated=excluded.updated""",
+                    (device_id, key, str(value), now),
+                )
+        queued.append(key)
+
+    return {"queued": queued, "blocked": blocked}

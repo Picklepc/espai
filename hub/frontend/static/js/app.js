@@ -1012,6 +1012,12 @@ function _renderDeviceCards(listEl, devices, onRefresh) {
       flashBtn.onclick = (e) => { e.stopPropagation(); _openFlashDeviceModal(d); };
       actions.appendChild(flashBtn);
     }
+    if (d.paired) {
+      const settingsBtn = el("button", "btn btn-secondary btn-sm", "⚙ Settings");
+      settingsBtn.dataset.tip = "View and update NVS config settings for this device";
+      settingsBtn.onclick = (e) => { e.stopPropagation(); _openDeviceSettingsModal(d); };
+      actions.appendChild(settingsBtn);
+    }
     if (d.ip) {
       const portalBtn = el("button", "btn btn-secondary btn-sm", "🌐");
       portalBtn.dataset.tip = `Open device web interface at http://${d.ip}/`;
@@ -2386,6 +2392,12 @@ async function renderProjectNodes(project) {
       roleBtn.onclick = () => _openNodeRoleModal(project, node, dev, () => renderProjectNodes(project));
       actions.appendChild(roleBtn);
 
+      if (dev?.paired) {
+        const settingsBtn = el("button", "btn btn-secondary btn-sm", "⚙ Settings");
+        settingsBtn.dataset.tip = "View and update NVS config settings for this device";
+        settingsBtn.onclick = () => _openDeviceSettingsModal(dev);
+        actions.appendChild(settingsBtn);
+      }
       if (dev?.ip) {
         const portalBtn = el("button", "btn btn-secondary btn-sm", "🌐");
         portalBtn.dataset.tip = `Open device portal at http://${dev.ip}/`;
@@ -5870,6 +5882,137 @@ function _abWireEvents() {
       }
     }
   };
+}
+
+// ── Device NVS Config Settings modal (M29) ────────────────────────────────
+async function _openDeviceSettingsModal(device) {
+  const label = device.name || device.id;
+  openModal(`⚙ Settings — ${label}`, `<div class="empty-state" style="font-size:12px">Loading config schema…</div>`, [
+    { label: "Close", cls: "btn btn-secondary", action: closeModal },
+  ], { wide: true });
+
+  let schema = [], values = {}, offline = false;
+  try {
+    const [schemaRes, configRes] = await Promise.all([
+      api.devices.configSchema(device.id),
+      api.devices.getConfig(device.id),
+    ]);
+    schema  = schemaRes.schema  || [];
+    values  = configRes.values  || {};
+    offline = configRes.offline || false;
+  } catch (err) {
+    document.querySelector(".modal-body").innerHTML =
+      `<div class="empty-state" style="color:var(--color-danger)">Failed to load config: ${err.message}</div>`;
+    return;
+  }
+
+  if (!schema.length) {
+    document.querySelector(".modal-body").innerHTML =
+      `<div class="empty-state" style="font-size:12px">This device has no registered config keys.<br>
+       Add <code>espai_register_config()</code> calls in firmware <code>setup()</code> to expose settings here.</div>`;
+    return;
+  }
+
+  const offlineBanner = offline
+    ? `<div style="background:var(--color-warning,#b45309);color:#fff;padding:6px 10px;border-radius:5px;font-size:11px;margin-bottom:12px">
+         ● Offline — showing cached values. Changes will be queued as commands.</div>`
+    : "";
+
+  const operationalKeys = schema.filter(s => !s.secret);
+  const secretKeys      = schema.filter(s =>  s.secret);
+
+  const opRows = operationalKeys.map(s => {
+    const val = values[s.key] ?? s.default_val ?? "";
+    let input = "";
+    if (s.type === "bool") {
+      input = `<select id="cfg_${s.key}" data-tip="Toggle: true or false">
+        <option value="true"  ${val === "true"  ? "selected" : ""}>true</option>
+        <option value="false" ${val === "false" ? "selected" : ""}>false</option>
+      </select>`;
+    } else if (s.type === "int" || s.type === "float") {
+      input = `<input type="number" id="cfg_${s.key}" value="${val}"
+               step="${s.type === 'float' ? '0.1' : '1'}" style="width:100px"
+               data-tip="${s.description || s.key}">`;
+    } else {
+      input = `<input type="text" id="cfg_${s.key}" value="${val}" style="width:180px"
+               data-tip="${s.description || s.key}">`;
+    }
+    return `<div class="form-field" style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <label style="flex:1;font-size:12px;min-width:120px" data-tip="${s.description || ''}">
+        <strong style="font-family:monospace">${s.key}</strong>
+        ${s.description ? `<br><span style="color:var(--color-text-muted);font-size:10px">${s.description}</span>` : ""}
+      </label>
+      ${input}
+    </div>`;
+  }).join("");
+
+  const secretRows = secretKeys.map(s => {
+    const wasSet = !!values[s.key] || schema.find(x => x.key === s.key)?.secret_set_at;
+    return `<div class="form-field" style="margin-bottom:10px">
+      <label style="font-size:12px" data-tip="${s.description || ''}">
+        <strong style="font-family:monospace">${s.key}</strong>
+        ${s.description ? `<span style="color:var(--color-text-muted);font-size:10px;margin-left:6px">${s.description}</span>` : ""}
+        <span class="tag" style="margin-left:6px;font-size:10px" data-tip="Write-only — the hub never stores the value">secret</span>
+      </label>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+        <span style="font-family:monospace;color:var(--color-text-muted);letter-spacing:2px">●●●●●●</span>
+        <button class="btn btn-secondary btn-sm" data-secret-key="${s.key}"
+                data-tip="Push a new value for this secret to the device — the hub will not store it"
+                onclick="_promptSecretUpdate('${device.id}','${s.key}')">Update</button>
+        <span style="font-size:10px;color:var(--color-text-muted)">
+          Place value in <code>secrets/${device.id}/${s.key}</code> — auto-pushed on next checkin
+        </span>
+      </div>
+    </div>`;
+  }).join("");
+
+  const html = `
+    ${offlineBanner}
+    ${operationalKeys.length ? `
+      <p class="section-heading" style="margin-bottom:8px">Operational Settings</p>
+      ${opRows}
+    ` : ""}
+    ${secretKeys.length ? `
+      <p class="section-heading" style="margin-top:14px;margin-bottom:8px">Injected Secrets</p>
+      ${secretRows}
+    ` : ""}
+  `;
+
+  document.querySelector(".modal-body").innerHTML = html;
+
+  // Replace footer buttons to include Save
+  const footer = document.querySelector(".modal-footer");
+  if (footer && operationalKeys.length) {
+    footer.innerHTML = "";
+    const saveBtn = el("button", "btn btn-primary", "Save Settings");
+    saveBtn.dataset.tip = "Write all operational values to the device via the command channel";
+    saveBtn.onclick = async () => {
+      const updates = {};
+      for (const s of operationalKeys) {
+        const inp = document.getElementById(`cfg_${s.key}`);
+        if (inp) updates[s.key] = inp.value;
+      }
+      try {
+        await api.devices.bulkConfig(device.id, updates);
+        saveBtn.textContent = "Queued ✓";
+        setTimeout(() => { saveBtn.textContent = "Save Settings"; }, 1500);
+      } catch (err) { alert("Error: " + err.message); }
+    };
+    const closeBtn = el("button", "btn btn-secondary", "Close");
+    closeBtn.dataset.tip = "Close this dialog";
+    closeBtn.onclick = closeModal;
+    footer.appendChild(saveBtn);
+    footer.appendChild(closeBtn);
+  }
+}
+
+async function _promptSecretUpdate(deviceId, key) {
+  const val = prompt(`New value for secret "${key}" (will be sent to device and NOT stored by hub):`);
+  if (val === null || val.trim() === "") return;
+  try {
+    await api.devices.setConfig(deviceId, key, val);
+    alert(`Secret "${key}" queued for push to device.`);
+  } catch (err) { alert("Error: " + err.message); }
 }
 
 // ── Terminal view ──────────────────────────────────────────────────────────

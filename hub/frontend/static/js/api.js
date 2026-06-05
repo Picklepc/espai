@@ -36,6 +36,11 @@ const api = {
     sendCommand:    (id, body) => apiFetch(`/api/devices/${encodeURIComponent(id)}/commands`, { method: "POST", body: JSON.stringify(body) }),
     commands:       (id, status) => apiFetch(`/api/devices/${encodeURIComponent(id)}/commands${status ? "?status=" + status : ""}`),
     cancelCommand:  (id, cmdId) => apiFetch(`/api/devices/${encodeURIComponent(id)}/commands/${cmdId}`, { method: "DELETE" }),
+    // NVS config bridge (M29)
+    getConfig:      (id)           => apiFetch(`/api/devices/${encodeURIComponent(id)}/config`),
+    setConfig:      (id, key, val) => apiFetch(`/api/devices/${encodeURIComponent(id)}/config`, { method: "PUT", body: JSON.stringify({ key, value: val }) }),
+    bulkConfig:     (id, values)   => apiFetch(`/api/devices/${encodeURIComponent(id)}/config/bulk`, { method: "PUT", body: JSON.stringify(values) }),
+    configSchema:   (id)           => apiFetch(`/api/devices/${encodeURIComponent(id)}/config/schema`),
   },
 
   // Projects
