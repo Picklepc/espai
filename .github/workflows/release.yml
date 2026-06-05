@@ -193,19 +193,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build tags for this variant:
-      #   v0.2.0{suffix}   0.2{suffix}   {floating_tag}  (non-pre-release only)
+      # Build tags for this variant — push both v-prefixed and bare forms so
+      # that both :v0.4.13 and :0.4.13 work. Docker convention is no prefix
+      # but users naturally copy the v from the GitHub release page.
+      #   v0.4.13{suffix}  0.4.13{suffix}  v0.4{suffix}  0.4{suffix}  {floating_tag}
       - name: Compute image tags
         id: tags
         run: |
-          VER="${{ github.ref_name }}"
-          VER="${VER#v}"
-          MINOR="${VER%.*}"
+          FULL_REF="${{ github.ref_name }}"      # e.g. v0.4.13
+          VER="${FULL_REF#v}"                     # e.g.   0.4.13
+          MINOR="${VER%.*}"                        # e.g.   0.4
           SUFFIX="${{ matrix.tag_suffix }}"
           REPO="ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           IS_PRE=$([[ "${{ github.ref_name }}" == *"-"* ]] && echo true || echo false)
 
-          TAGS="${REPO}:${VER}${SUFFIX},${REPO}:${MINOR}${SUFFIX}"
+          # Both bare and v-prefixed so either format works in docker pull
+          TAGS="${REPO}:${VER}${SUFFIX},${REPO}:v${VER}${SUFFIX}"
+          TAGS="${TAGS},${REPO}:${MINOR}${SUFFIX},${REPO}:v${MINOR}${SUFFIX}"
           if [ "$IS_PRE" = "false" ]; then
             TAGS="${TAGS},${REPO}:${{ matrix.floating_tag }}"
           fi
@@ -361,15 +365,18 @@ jobs:
 
             | Tag | Includes | Size |
             |---|---|---|
-            | `:${{ github.ref_name }}-slim` / `:slim` | Hub only | ~350 MB |
-            | `:${{ github.ref_name }}-workers` / `:workers` | + OpenCV, FFmpeg, numpy, scipy | ~750 MB |
-            | `:${{ github.ref_name }}` / `:latest` | + Claude CLI + PlatformIO (full dev) | ~1.1 GB |
+            | `ghcr.io/picklepc/espai:${{ github.ref_name }}-slim` | Hub only | ~350 MB |
+            | `ghcr.io/picklepc/espai:${{ github.ref_name }}-workers` | + OpenCV, FFmpeg, numpy, scipy | ~750 MB |
+            | `ghcr.io/picklepc/espai:${{ github.ref_name }}` | + Claude CLI + PlatformIO (full dev) | ~1.1 GB |
+
+            > Both `:v0.4.x` and `:0.4.x` tag formats work — use whichever you prefer.
 
             ```bash
             # Docker auto-selects amd64 or arm64 — copy .env.example → .env first
-            docker pull ghcr.io/picklepc/espai:latest        # full dev (Claude + PIO)
-            docker pull ghcr.io/picklepc/espai:workers       # pre-packaged worker deps
-            docker pull ghcr.io/picklepc/espai:slim          # hub only
+            docker pull ghcr.io/picklepc/espai:${{ github.ref_name }}   # full dev (Claude + PIO)
+            docker pull ghcr.io/picklepc/espai:${{ github.ref_name }}-workers  # worker deps
+            docker pull ghcr.io/picklepc/espai:${{ github.ref_name }}-slim     # hub only
+            docker pull ghcr.io/picklepc/espai:latest                   # always latest full dev
             docker compose up -d
             ```
 
