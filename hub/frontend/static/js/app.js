@@ -1824,19 +1824,17 @@ async function openProject(p) {
   const uploadBtn = document.getElementById("btnUploadMedia");
   if (uploadBtn) uploadBtn.onclick = () => _openMediaUploadModal(p.id);
 
-  // Wire Terminal shortcut — opens terminal pre-cd'd to this project's folder
+  // Wire Terminal shortcut — opens terminal starting in this project's folder
   const termBtn = document.getElementById("btnProjTerminal");
   if (termBtn) termBtn.onclick = () => {
-    const projPath = `projects/${p.id}`;
     showView("terminal");
     setTimeout(async () => {
       try {
-        const s = await api.terminal.create({ title: `${p.name}` });
+        // Pass project_id so the backend resolves the absolute path server-side.
+        // This avoids the broken ws.send(raw-string) anti-pattern and ensures
+        // Claude Code finds CLAUDE.md when launched from the terminal.
+        const s = await api.terminal.create({ title: p.name, project_id: p.id });
         _termAttach(s.id, s.title);
-        setTimeout(() => {
-          if (_termSessions[s.id]?.ws?.readyState === 1)
-            _termSessions[s.id].ws.send(`cd "${projPath}"\n`);
-        }, 800);
       } catch (_) {}
     }, 150);
   };
@@ -5551,9 +5549,11 @@ function _abWireEvents() {
         try {
           const s = await api.terminal.create({ title });
           _termAttach(s.id, s.title);
+          // Send command as proper JSON input message, not a raw string.
+          // Raw strings hit json.loads() on the server and kill the input loop.
           setTimeout(() => {
             if (_termSessions[s.id]?.ws?.readyState === 1)
-              _termSessions[s.id].ws.send(cmd + "\n");
+              _termSessions[s.id].ws.send(JSON.stringify({ type: "input", data: cmd + "\n" }));
           }, 800);
         } catch (_) {}
       }, 150);

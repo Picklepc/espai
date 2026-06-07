@@ -286,6 +286,7 @@ class SessionCreate(BaseModel):
     title:        Optional[str]       = None
     command:      Optional[list[str]] = None   # None → default shell
     cwd:          Optional[str]       = None
+    project_id:   Optional[str]       = None   # resolved to PROJECTS_DIR/id server-side
     init_cmds:    list[str]           = []     # run after shell starts
 
 
@@ -322,8 +323,16 @@ def create_session(data: SessionCreate):
             "Install pywinpty on Windows or ptyprocess on Linux/macOS, "
             "then restart the hub.",
         )
+    from ..config import PROJECTS_DIR
     command = data.command or _default_shell()
-    cwd     = data.cwd or str(ROOT)
+    # Resolve cwd: explicit path > project_id lookup > ROOT fallback
+    if data.cwd:
+        cwd = data.cwd
+    elif data.project_id:
+        proj_dir = PROJECTS_DIR / data.project_id
+        cwd = str(proj_dir) if proj_dir.exists() else str(ROOT)
+    else:
+        cwd = str(ROOT)
     title   = data.title or Path(command[0]).stem.replace(".exe", "")
 
     try:
