@@ -218,7 +218,7 @@ def _run_agent_stream(
     stdout_text = ""
     try:
         proc = subprocess.Popen(
-            [cli_bin, "--verbose", "--print", "--dangerously-skip-permissions"],
+            [cli_bin, "--verbose", "--print"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -440,26 +440,23 @@ def create_agent_session(data: AgentSessionCreate):
     cbin = str(cli_bin)
 
     if sys.platform == "win32":
-        # Single semicolon-chain so PowerShell never enters continuation mode
         header = (
             f"Write-Host '=== {safe_title} ===' -ForegroundColor Cyan; "
-            f"Write-Host 'Task context auto-injects ~6 s after the Claude prompt appears.' -ForegroundColor Yellow; "
-            f"Write-Host 'First run? Complete login when prompted, then press Enter — context will be sent.' -ForegroundColor DarkGray; "
-            f"Write-Host 'Type follow-up messages freely. Ask Claude to git commit when done.' -ForegroundColor DarkGray"
+            f"Write-Host 'Task brief will be sent once Claude is ready.' -ForegroundColor Yellow; "
+            f"Write-Host 'First run? Log in when prompted then press Enter.' -ForegroundColor DarkGray"
         )
-        start_claude = f"& '{cbin}' --dangerously-skip-permissions"
+        start_claude = f"& '{cbin}'"
         init_cmds = [header, start_claude]
     else:
         header = (
             f"echo '=== {safe_title} ==='; "
-            f"echo 'Context auto-injects ~6s after Claude prompt. First run: log in then press Enter.'"
+            f"echo 'Task brief will be sent once Claude is ready. First run: log in then press Enter.'"
         )
-        start_claude = f"'{cbin}' --dangerously-skip-permissions"
+        start_claude = f"'{cbin}'"
         init_cmds = [header, start_claude]
 
-    # Trigger message injected into claude's REPL after it starts.
-    # Short, ASCII-only, single line — safe to send as PTY keystrokes.
-    # The file path is the only variable; claude reads the brief using its Read tool.
+    # Trigger message injected into Claude's REPL once it shows its prompt.
+    # Wraps the task brief path in a single message so Claude reads and executes it.
     trigger_msg = (
         f"Please read the task brief at '{prompt_path}' and complete it. "
         f"Show me what you're doing as you work. "
@@ -542,18 +539,26 @@ async def terminal_ws(websocket: WebSocket, session_id: str):
             except Exception:
                 pass
 
-        # For interactive agent sessions, inject the trigger message after the
-        # claude REPL has had time to initialize (typically 3-6 s on Windows).
-        # Text and Enter are sent as separate writes so the REPL registers Enter.
+        # For interactive agent sessions, inject the trigger message only once
+        # Claude's REPL prompt is visible in the output stream.
+        # We watch the output buffer for Claude's "> " prompt rather than using
+        # a fixed sleep, so injection works regardless of startup speed.
         meta = _agent_session_meta.get(session_id)
         trigger = meta.get("trigger_msg") if meta else None
         if trigger and not done.is_set():
-            await asyncio.sleep(6)   # wait for claude REPL prompt to appear
+            # Poll the output buffer until we see Claude's prompt character,
+            # or fall back after 30 s (in case the prompt detection misses).
+            _claude_ready = asyncio.Event()
+            meta["_claude_ready"] = _claude_ready
+            try:
+                await asyncio.wait_for(_claude_ready.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                pass
             if not done.is_set():
                 try:
                     session.pty.write(trigger)
                     await asyncio.sleep(0.1)
-                    session.pty.write(nl)   # send Enter as a separate write
+                    session.pty.write(nl)
                 except Exception:
                     pass
 
@@ -567,6 +572,13 @@ async def terminal_ws(websocket: WebSocket, session_id: str):
                     done.set()
                     break
                 await websocket.send_text(json.dumps({"type": "output", "data": data}))
+                # Signal when Claude's REPL prompt is visible so the trigger
+                # message is injected at the right moment instead of a fixed delay.
+                meta = _agent_session_meta.get(session_id)
+                if meta and "_claude_ready" in meta and not meta["_claude_ready"].is_set():
+                    # Claude's interactive prompt starts with "> " or "? "
+                    if "> " in data or "\n> " in data or data.strip().endswith(">"):
+                        meta["_claude_ready"].set()
             except Exception:
                 done.set()
                 break
