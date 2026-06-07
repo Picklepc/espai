@@ -252,24 +252,53 @@ _INSTALLABLE: dict[str, dict] = {
 }
 
 
+_SNAPSHOT_MAX_FILE_BYTES = 256 * 1024   # skip files larger than 256 KB
+_SNAPSHOT_SKIP_EXTS = frozenset({
+    ".bin", ".elf", ".hex", ".o", ".a", ".so", ".dll", ".exe",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp",
+    ".mp4", ".mp3", ".wav", ".ogg", ".flac",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z",
+    ".pdf", ".db", ".sqlite", ".pyc", ".pyo",
+})
+_SNAPSHOT_SKIP_DIRS = frozenset({".pio", ".git", "__pycache__", "node_modules", ".venv", "venv"})
+
+
 def _snapshot_paths(allowed_paths: list[str]) -> dict[str, str | None]:
-    """Capture current file contents for all files under allowed paths."""
+    """
+    Capture text file contents for all files under allowed paths.
+    Skips binary files, large files, and build/cache directories to avoid
+    OOM on routers with limited RAM.
+    """
     snapshot: dict[str, str | None] = {}
+
+    def _should_skip_dir(d: "Path") -> bool:
+        return d.name in _SNAPSHOT_SKIP_DIRS
+
+    def _read_file(f: "Path", key: str) -> None:
+        if f.suffix.lower() in _SNAPSHOT_SKIP_EXTS:
+            return
+        try:
+            if f.stat().st_size > _SNAPSHOT_MAX_FILE_BYTES:
+                return
+        except OSError:
+            return
+        try:
+            snapshot[key] = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            snapshot[key] = None
+
     for rel_path in allowed_paths:
         base = ROOT / rel_path.lstrip("/")
         if base.is_file():
-            try:
-                snapshot[rel_path] = base.read_text(encoding="utf-8", errors="replace")
-            except Exception:
-                snapshot[rel_path] = None
+            _read_file(base, rel_path)
         elif base.is_dir():
             for f in base.rglob("*"):
-                if f.is_file():
-                    key = str(f.relative_to(ROOT)).replace("\\", "/")
-                    try:
-                        snapshot[key] = f.read_text(encoding="utf-8", errors="replace")
-                    except Exception:
-                        snapshot[key] = None
+                if not f.is_file():
+                    continue
+                if any(_should_skip_dir(p) for p in f.parents):
+                    continue
+                key = str(f.relative_to(ROOT)).replace("\\", "/")
+                _read_file(f, key)
     return snapshot
 
 
