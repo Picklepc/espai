@@ -5,7 +5,9 @@
       "PowerShell($env:PATH += \";C:\\\\Program Files\\\\Git\\\\bin\"; Set-Location \"c:\\\\Users\\\\Roto Router\\\\OneDrive\\\\Documents\\\\ESP32\\\\ESPai\"; git status; git log --oneline -5)",
       "PowerShell($git = \"C:\\\\Users\\\\Roto Router\\\\AppData\\\\Local\\\\GitHubDesktop\\\\app-3.5.12\\\\resources\\\\app\\\\git\\\\cmd\\\\git.exe\"; Set-Location \"c:\\\\Users\\\\Roto Router\\\\OneDrive\\\\Documents\\\\ESP32\\\\ESPai\"; & $git status; & $git log --oneline -8)",
       "PowerShell($gitPath = Get-ChildItem \"C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe\" -ErrorAction SilentlyContinue; if \\($gitPath\\) { Write-Host $gitPath.FullName } else { Write-Host \"not found\" })",
-      "PowerShell(Get-Command git -ErrorAction SilentlyContinue)"
+      "PowerShell(Get-Command git -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\Roto Router\\\\OneDrive\\\\Documents\\\\ESP32\\\\ESPai\\\\hub\\\\frontend\\\\static\\\\js\" -Force | ForEach-Object { [PSCustomObject]@{ Name=$_.Name; FullName=$_.FullName; Size=$_.Length; LinkType=\\(if \\($_.LinkType\\) {$_.LinkType} else {\"File\"}\\) } } | Format-Table)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\Roto Router\\\\OneDrive\\\\Documents\\\\ESP32\\\\ESPai\" -Directory -Recurse -Force 2>$null | Where-Object {$_.Name -match \"dist|build|out\"} | Select-Object -Property FullName)"
     ]
   }
 }

@@ -23,14 +23,14 @@ services:
       - ESPAI_PORT=7888
       - ESPAI_DEBUG=0
     volumes:
-      - ../data:/data
-      - ../projects:/projects
-      - ../recipes:/recipes
-      - ../workers:/workers
-      - ../cards:/cards
-      - ../design:/design
-      - ../firmware-catalog:/firmware-catalog
-      - ../policies:/policies
+      - ../data:/app/data
+      - ../projects:/app/projects
+      - ../recipes:/app/recipes
+      - ../workers:/app/workers
+      - ../cards:/app/cards
+      - ../design:/app/design
+      - ../firmware-catalog:/app/firmware-catalog
+      - ../policies:/app/policies
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:7888/api/status')"]
