@@ -61,39 +61,52 @@ RUN if [ "$INSTALL_PIO" = "true" ]; then \
     fi
 
 # ── Core Python dependencies ──────────────────────────────────────────────────
-# Installed before the code copy so this layer is reused on code-only changes.
+# Copied first so this expensive layer is reused whenever only code changes.
 COPY hub/backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ── Application code ──────────────────────────────────────────────────────────
-COPY . .
+# ── Entrypoint (changes rarely) ───────────────────────────────────────────────
+COPY hub/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
-# ── Matter bridge Node.js dependencies ────────────────────────────────────────
-# Pre-install so the bridge can start without needing internet access at runtime.
+# ── Static metadata (almost never changes) ────────────────────────────────────
+COPY schemas/     ./schemas/
+COPY policies/    ./policies/
+COPY agents/      ./agents/
+COPY agent-bench/ ./agent-bench/
+
+# ── Content packs (change occasionally — new recipes/workers/cards per release) ─
+# Separate layer so a recipe tweak doesn't force hub code to rebuild.
+COPY recipes/ ./recipes/
+COPY workers/ ./workers/
+COPY cards/   ./cards/
+COPY design/  ./design/
+
+# ── Matter bridge (changes rarely — own layer so npm install is cached) ───────
+COPY hub/matter/ ./hub/matter/
 RUN if [ -f hub/matter/package.json ]; then \
         cd hub/matter && npm install --omit=dev --no-audit --no-fund \
         || echo "WARNING: Matter bridge npm install failed — Matter will be unavailable"; \
     fi
 
-# Entrypoint handles optional worker dep preloading before starting uvicorn
-COPY hub/docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+# ── Hub application code (changes most often — keep at the bottom) ────────────
+# Split backend and frontend so a JS-only change doesn't invalidate the backend
+# layer (and vice versa), though in practice both are small so the split is
+# mainly for clarity.
+COPY hub/backend/ ./hub/backend/
+COPY hub/frontend/ ./hub/frontend/
+COPY VERSION ./VERSION
+COPY firmware/ ./firmware/
+COPY espai.py ./espai.py
 
 # Keep a read-only copy of bundled content packs so docker-entrypoint.sh can
-# seed and update them at runtime:
-#   - New items (not present in the bind-mount) are always copied in on start.
-#   - Existing official items are updated when the bundled YAML version differs.
-#   - User-configured fields (enabled, startup) are preserved on updates.
-# Each bundled worker/recipe/card YAML must declare: official: true  and a
-# semver version: "x.y.z" field so the entrypoint can compare versions.
-RUN cp -r workers recipes cards /app-bundled-workers/ 2>/dev/null || true; \
-    mkdir -p /app-bundled && \
+# seed and update them at runtime.
+RUN mkdir -p /app-bundled && \
     cp -r workers  /app-bundled/workers  && \
     cp -r recipes  /app-bundled/recipes  && \
     cp -r cards    /app-bundled/cards
 
-# Runtime data directories — override with volume mounts in docker-compose
-# so user data lands on the SSD rather than the container layer.
+# Runtime data directories — override with volume mounts in docker-compose.
 RUN mkdir -p data projects firmware-catalog
 
 EXPOSE 7888

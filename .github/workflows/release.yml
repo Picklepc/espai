@@ -229,8 +229,8 @@ jobs:
             INSTALL_PIO=${{ matrix.install_pio }}
           # Each variant gets its own GHA cache scope to avoid cross-variant
           # cache pollution from differing build args.
-          cache-from: type=gha,scope=docker-v2-${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=docker-v2-${{ matrix.variant }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/espai:buildcache-${{ matrix.variant }}
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/espai:buildcache-${{ matrix.variant }},mode=max
 
   # ── Firmware CI builds (PlatformIO matrix) ──────────────────────────────
   #
