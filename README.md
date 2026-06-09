@@ -1,6 +1,7 @@
 # ESPAI
 
-[![Latest Release](https://img.shields.io/github/v/release/espai/espai?label=download&color=teal)](https://github.com/espai/espai/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/Picklepc/espai?label=download&color=teal)](https://github.com/Picklepc/espai/releases/latest)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fpicklepc%2Fespai-blue?logo=docker)](https://github.com/Picklepc/espai/pkgs/container/espai)
 
 ESPAI is a local-first platform for replacing cloud apps with custom LAN-hosted applications — and for building and deploying custom projects with extended support for ESP32 firmware and development.
 
@@ -8,17 +9,41 @@ Tagline: **A local space for custom connected device projects.**
 
 ## Download
 
-| Platform | File | Notes |
+| Platform | Download | Notes |
 |---|---|---|
-| **Windows** | [ESPAI-Setup.exe](https://github.com/espai/espai/releases/latest) | Run the installer — no admin required |
-| **Linux** | [ESPAI-x86_64.AppImage](https://github.com/espai/espai/releases/latest) | `chmod +x` then run — no install needed |
+| **Windows** | [ESPAI-Setup-\*.exe](https://github.com/Picklepc/espai/releases/latest) | Run the installer — no admin required. Installs to `%LOCALAPPDATA%\Programs\ESPAI`. |
+| **Linux x86-64** | [ESPAI-\*-x86_64.AppImage](https://github.com/Picklepc/espai/releases/latest) | `chmod +x` then run — no install needed |
+| **Docker** (amd64 / arm64) | `ghcr.io/picklepc/espai:latest` | Headless, always-on. Ideal for routers and NAS. |
 
-**Windows:** Run the installer → ESPAI appears silently in the system tray.
-Right-click the icon to open the dashboard, view live logs, or toggle start-at-login.
+**Windows:** Run the installer → ESPAI starts silently in the system tray.
+Right-click the tray icon to open the dashboard, view logs, or toggle start-at-login.
+User data is stored in `%USERPROFILE%\Documents\ESPAI` and survives updates.
 
 **Linux:** Works on Ubuntu, Fedora, Arch, and most x86-64 distros without installation.
-System tray requires a compatible desktop environment (GNOME + AppIndicator extension, KDE Plasma, etc.).
-You can always run `./ESPAI-*.AppImage serve` from a terminal to start the hub directly.
+System tray requires a compatible desktop environment (GNOME + AppIndicator, KDE Plasma, etc.).
+Run `./ESPAI-*.AppImage serve` from a terminal to start the hub directly.
+
+**Docker:**
+```bash
+# Pull and run (amd64 or arm64 selected automatically)
+docker run -d \
+  --name espai \
+  --network host \
+  --restart unless-stopped \
+  -v /your/data/path/data:/app/data \
+  -v /your/data/path/projects:/app/projects \
+  -v /your/data/path/firmware-catalog:/app/firmware-catalog \
+  ghcr.io/picklepc/espai:latest
+
+# Update to latest
+docker pull ghcr.io/picklepc/espai:latest
+docker stop espai && docker rm espai
+# re-run the command above
+```
+
+Three image variants are available — `:latest` (full dev, includes Claude CLI + PlatformIO),
+`:workers` (+ OpenCV/FFmpeg/numpy), and `:slim` (hub only, smallest).
+Both `:v0.x.y` and `:0.x.y` tag formats work for pinning to a specific release.
 
 ## What It Does
 
